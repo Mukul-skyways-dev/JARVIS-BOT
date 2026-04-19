@@ -18,7 +18,8 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-TOKEN = "MTQ5MDY3OTM3MjU0NDIxNzI2MA.G-41d4.XBJ0CrnD7zypaYYgZP9NTBUJLs2NaWXUyzsx0M"
+import os
+TOKEN = os.getenv("TOKEN")
 WELCOME_ROLE_NAME = "Member"
 
 intents = discord.Intents.all()
