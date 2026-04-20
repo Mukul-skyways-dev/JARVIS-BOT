@@ -1079,4 +1079,17 @@ async def on_ready():
     print("✅ BOT READY")
 
 keep_alive()
-bot.run(TOKEN)
+import asyncio
+
+async def safe_start():
+    while True:
+        try:
+            print("🚀 Starting bot...")
+            await bot.start(TOKEN)
+
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            print("⏳ Waiting 5 minutes before retry...")
+            await asyncio.sleep(300)
+
+asyncio.run(safe_start())
