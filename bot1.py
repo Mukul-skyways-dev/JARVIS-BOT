@@ -1,10 +1,17 @@
 import discord
 from discord.ext import commands
 from discord.ui import View, Button
+
 import sqlite3
+import os
+import requests
+
 from flask import Flask
 from threading import Thread
 
+# =========================
+# KEEP ALIVE SERVER
+# =========================
 app = Flask('')
 
 @app.route('/')
@@ -18,14 +25,48 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-import os
+# =========================
+# BOT CONFIG
+# =========================
 TOKEN = os.getenv("TOKEN")
 WELCOME_ROLE_NAME = "Member"
 
-intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-conn = sqlite3.connect("am4_data.db")
+# =========================
+# DATABASE AUTO DOWNLOAD
+# =========================
+
+DB_URL = "https://drive.google.com/file/d/1a0v9Uh28qZ9sJpFl-9PYtsJPO1UbHskS/view?usp=drivesdk"
+DB_FILE = "am4_data.db"
+
+def download_db():
+    print("🔄 Checking database...")
+
+    if not os.path.exists(DB_FILE):
+        print("⬇ Downloading database from cloud...")
+
+        response = requests.get(DB_URL)
+
+        with open(DB_FILE, "wb") as f:
+            f.write(response.content)
+
+        print("✅ Database downloaded successfully")
+
+    else:
+        print("✅ Database already exists (no download needed)")
+
+# ensuring DB is ready BEFORE sqlite connect
+download_db()
+
+# =========================
+# SQLITE CONNECTION
+# =========================
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 cursor = conn.cursor()
 
 # =========================
