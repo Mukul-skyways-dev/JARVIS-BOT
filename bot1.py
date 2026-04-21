@@ -41,26 +41,28 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # DATABASE AUTO DOWNLOAD
 # =========================
 
-DB_URL = "https://drive.google.com/uc?export=download&id=1a0v9Uh28qZ9sJpFl-9PYtsJPO1UbHskS"
+DB_URL = "https://github.com/Mukul-skyways-dev/JARVIS-BOT/releases/download/V1/am4_data.db"
 DB_FILE = "am4_data.db"
 
 def download_db():
     print("🔄 Checking database...")
 
-    if not os.path.exists(DB_FILE):
-        print("⬇ Downloading database from cloud...")
+    # always ensure fresh/correct DB (important for Render issues)
+    print("⬇ Downloading database from GitHub Release...")
 
-        response = requests.get(DB_URL)
+    try:
+        response = requests.get(DB_URL, timeout=30)
+        response.raise_for_status()
 
         with open(DB_FILE, "wb") as f:
             f.write(response.content)
 
         print("✅ Database downloaded successfully")
 
-    else:
-        print("✅ Database already exists (no download needed)")
+    except Exception as e:
+        print("❌ DB download failed:", e)
 
-# ensuring DB is ready BEFORE sqlite connect
+# MUST run BEFORE sqlite connect
 download_db()
 
 # =========================
