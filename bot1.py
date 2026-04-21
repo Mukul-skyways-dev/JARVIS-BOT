@@ -1064,47 +1064,32 @@ async def on_member_join(member):
     if member.guild.system_channel:
         await member.guild.system_channel.send(f"👑 Welcome {member.mention}")
 
+
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
 
-    if message.content.lower() in ["hi","hello","jarvis"]:
+    if message.content.lower() in ["hi", "hello", "jarvis"]:
         await message.channel.send(f"👋 Hello {message.author.mention}")
 
     await bot.process_commands(message)
 
-@bot.event
-async def on_ready():
-    print("✅ BOT READY")
-
-keep_alive()
-import asyncio
 
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     print("🚀 JARVIS is now active and ready")
 
-# Safe startup wrapper (prevents crash loop + spam login)
-async def safe_start():
-    retry = 60  # start 1 min delay
 
-    while True:
-        try:
-            await bot.start(TOKEN)
+# =========================
+# KEEP ALIVE (ONLY ONCE)
+# =========================
+keep_alive()
 
-        except Exception as e:
-            print(f"❌ Bot error: {e}")
 
-            # 429 protection
-            if "429" in str(e):
-                print(f"⏳ Rate limited. Waiting {retry} sec...")
-                await asyncio.sleep(retry)
-                retry = min(retry * 2, 600)  # max 10 min
-
-            else:
-                print("🔁 Restarting safely in 30 sec...")
-                await asyncio.sleep(30)
-
-asyncio.run(safe_start())
+# =========================
+# SAFE START (IMPORTANT FIX)
+# =========================
+if __name__ == "__main__":
+    bot.run(TOKEN)
