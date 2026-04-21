@@ -1079,4 +1079,32 @@ async def on_ready():
     print("✅ BOT READY")
 
 keep_alive()
-bot.run(TOKEN)
+import asyncio
+
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+    print("🚀 JARVIS is now active and ready")
+
+# Safe startup wrapper (prevents crash loop + spam login)
+async def safe_start():
+    retry = 60  # start 1 min delay
+
+    while True:
+        try:
+            await bot.start(TOKEN)
+
+        except Exception as e:
+            print(f"❌ Bot error: {e}")
+
+            # 429 protection
+            if "429" in str(e):
+                print(f"⏳ Rate limited. Waiting {retry} sec...")
+                await asyncio.sleep(retry)
+                retry = min(retry * 2, 600)  # max 10 min
+
+            else:
+                print("🔁 Restarting safely in 30 sec...")
+                await asyncio.sleep(30)
+
+asyncio.run(safe_start())
