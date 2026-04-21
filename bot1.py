@@ -41,7 +41,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # DATABASE AUTO DOWNLOAD
 # =========================
 
-DB_URL = "https://drive.google.com/file/d/1a0v9Uh28qZ9sJpFl-9PYtsJPO1UbHskS/view?usp=drivesdk"
+DB_URL = "https://drive.google.com/uc?export=download&id=1a0v9Uh28qZ9sJpFl-9PYtsJPO1UbHskS"
 DB_FILE = "am4_data.db"
 
 def download_db():
