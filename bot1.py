@@ -183,8 +183,8 @@ async def menu(ctx):
     # server icon (optional)
     guild = ctx.guild
 
-if guild is not None and guild.icon is not None:
-    embed.set_thumbnail(url=guild.icon.url)
+    if guild is not None and guild.icon is not None:
+        embed.set_thumbnail(url=guild.icon.url)
 
     embed.set_footer(text="JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
 
