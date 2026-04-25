@@ -1061,12 +1061,21 @@ async def best_long(ctx, airport, *, plane_name):
 # =========================
 @bot.event
 async def on_member_join(member):
-    role = discord.utils.get(member.guild.roles, name=WELCOME_ROLE_NAME)
-    if role:
-        await member.add_roles(role)
 
-    if member.guild.system_channel:
-        await member.guild.system_channel.send(f"👑 Welcome {member.mention}")
+    channel = member.guild.system_channel
+
+    if channel:
+        embed = discord.Embed(
+            title="👋 Welcome to Aero Crown Dynasty",
+            description=f"{member.mention} welcome onboard!\n\nUse `!menu` to explore JARVIS.",
+            color=0x00ffcc
+        )
+
+        embed.set_thumbnail(url=member.guild.icon.url if member.guild.icon else None)
+
+        embed.set_footer(text="JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
+
+        await channel.send(embed=embed)
 
 
 @bot.event
