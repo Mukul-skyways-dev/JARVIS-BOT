@@ -1,4 +1,5 @@
 import discord
+import random 
 from discord.ext import commands
 from discord.ui import View, Button
 
@@ -1077,14 +1078,64 @@ async def on_member_join(member):
 
         await channel.send(embed=embed)
 
-
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
 
-    if message.content.lower() in ["hi", "hello", "jarvis"]:
-        await message.channel.send(f"👋 Hello {message.author.mention}")
+    msg = message.content.lower().strip()
+
+    # -------- CHECK IF BOT IS MENTIONED --------
+    is_mentioned = bot.user in message.mentions
+
+    # -------- CHECK IF DM --------
+    is_dm = isinstance(message.channel, discord.DMChannel)
+
+    # -------- ALLOW SMART REPLY ONLY IN THESE CASES --------
+    if not (is_mentioned or is_dm):
+        await bot.process_commands(message)
+        return
+
+    # Remove mention text from message for clean processing
+    msg = msg.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+
+    # -------- INTENTS --------
+    greetings = ["hi", "hello", "hey", "jarvis", "yo"]
+    thanks = ["thanks", "thank you", "thx"]
+    help_words = ["help", "support", "what can you do"]
+
+    # -------- GREETING --------
+    if any(word == msg for word in greetings):
+        replies = [
+            f"Hey {message.author.mention} 👋 I'm online and ready.",
+            f"Hello {message.author.mention} ⚡ What do you need?",
+            f"Hi {message.author.mention} 👋 Jarvis is active."
+        ]
+        await message.channel.send(random.choice(replies))
+
+    # -------- THANK YOU --------
+    elif any(word in msg for word in thanks):
+        replies = [
+            f"You're welcome {message.author.mention} 👍",
+            f"Anytime {message.author.mention} ⚡",
+            f"Glad to help {message.author.mention} 😊"
+        ]
+        await message.channel.send(random.choice(replies))
+
+    # -------- HELP --------
+    elif any(word in msg for word in help_words):
+        await message.channel.send(
+            f"🧠 {message.author.mention} I can help with AM4 routes, aircraft data, comparisons, leaderboard, and system commands."
+        )
+
+    # -------- SMART FALLBACK --------
+    else:
+        replies = [
+            f"{message.author.mention} I’m not fully sure, but I can try helping. Can you rephrase?",
+            f"{message.author.mention} 🤔 I need a bit more context.",
+            f"{message.author.mention} I don’t have a direct match for that, but I’m listening."
+        ]
+        await message.channel.send(random.choice(replies))
 
     await bot.process_commands(message)
 
