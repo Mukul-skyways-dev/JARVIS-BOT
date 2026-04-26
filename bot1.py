@@ -42,7 +42,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # DATABASE AUTO DOWNLOAD
 # =========================
 
-DB_URL = "https://github.com/Mukul-skyways-dev/JARVIS-BOT/releases/tag/V1"
+DB_URL = "https://github.com/Mukul-skyways-dev/JARVIS-BOT/releases/download/Dv1/am4_data.db.updated"
 DB_FILE = "am4_data.db"
 
 def download_db():
