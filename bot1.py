@@ -73,6 +73,29 @@ conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 cursor = conn.cursor()
 
 # =========================
+# DIFFICULTY SYSTEM
+# =========================
+def get_user_mode(user_id):
+    cursor.execute(
+        "SELECT difficulty FROM player_settings WHERE user_id=?",
+        (str(user_id),)
+    )
+    row = cursor.fetchone()
+
+    if row and row[0]:
+        return row[0].lower()
+
+    return "realism"
+
+
+def set_user_mode(user_id, mode):
+    cursor.execute(
+        "INSERT OR REPLACE INTO player_settings (user_id, difficulty) VALUES (?, ?)",
+        (str(user_id), mode)
+    )
+    conn.commit()
+
+# =========================
 # MENU VIEW
 # =========================
 class EliteMenu(View):
@@ -261,12 +284,17 @@ def get_plane(name):
     return None
 
 # =========================
-# CALC ENGINE
+# CALC ENGINE (FIXED + DIFFICULTY)
 # =========================
-def calc(route, plane, mods=None):
+def calc(route, plane, user_id, mods=None):
 
-    dist = route["distance"]
-    speed = plane["speed"]
+    # =========================
+    # USER MODE
+    # =========================
+    mode = get_user_mode(user_id)
+
+    dist = float(route["distance"])
+    speed = float(plane["speed"])
 
     if mods and "speed" in mods:
         speed *= 1.1
@@ -274,50 +302,121 @@ def calc(route, plane, mods=None):
     time = dist / speed if speed else 1
     trips = max(1, int(24 / time))
 
-    y, j, f = route["y"], route["j"], route["f"]
+    # =========================
+    # DEMAND
+    # =========================
+    y = int(route["y"])
+    j = int(route["j"])
+    f = int(route["f"])
 
     total = y + j + f
-    cap = plane["capacity"]
+    cap = int(plane["capacity"])
 
-    y_c = int(cap * (y/total)) if total else 0
-    j_c = int(cap * (j/total)) if total else 0
-    f_c = cap - y_c - j_c
+    # =========================
+    # DIFFICULTY SETTINGS
+    # =========================
+    if mode == "easy":
+        lf = 1.0
 
-    y_price = dist * 0.9
-    j_price = dist * 2.2
-    f_price = dist * 4.5
+        y_mul = 0.9
+        j_mul = 2.2
+        f_mul = 4.5
 
-    income_trip = (y_c*y_price)+(j_c*j_price)+(f_c*f_price)
-    income_trip += route["cargo"] * 0.4
+        fuel_mult = 4
+        co2_mult = 1.8
 
-    fuel = dist * plane["fuel"] * 4
-    co2 = dist * 1.8
+        acheck = 20000
+        repair = 15000
+
+        cargo_mul = 0.5
+
+    else:  # REALISM
+        lf = 0.85
+
+        y_mul = 0.6
+        j_mul = 1.4
+        f_mul = 2.8
+
+        fuel_mult = 5.5
+        co2_mult = 2.5
+
+        acheck = 40000
+        repair = 25000
+
+        cargo_mul = 0.35
+
+    # =========================
+    # CONFIGURATION (WITH LF)
+    # =========================
+    y_c = int(cap * (y/total) * lf) if total else 0
+    j_c = int(cap * (j/total) * lf) if total else 0
+    f_c = int(cap * (f/total) * lf) if total else 0
+
+    # =========================
+    # TICKET PRICES (FIXED)
+    # =========================
+    y_price = dist * y_mul
+    j_price = dist * j_mul
+    f_price = dist * f_mul
+
+    # =========================
+    # INCOME
+    # =========================
+    income_trip = (y_c * y_price) + (j_c * j_price) + (f_c * f_price)
+
+    # cargo
+    cargo = float(route.get("cargo", 0))
+    income_trip += cargo * cargo_mul
+
+    # =========================
+    # COSTS
+    # =========================
+    fuel = dist * float(plane["fuel"]) * fuel_mult
+    co2 = dist * co2_mult
 
     if mods:
-        if "fuel" in mods: fuel *= 0.9
-        if "co2" in mods: co2 *= 0.9
+        if "fuel" in mods:
+            fuel *= 0.9
+        if "co2" in mods:
+            co2 *= 0.9
 
     fuel_lb = fuel * 2.2
     co2_q = co2 * 1.1
 
-    acheck = 40000
-    repair = 25000
-
+    # =========================
+    # PROFIT
+    # =========================
     profit_trip = income_trip - fuel - co2 - acheck - repair
-    ci = int((profit_trip / income_trip)*100) if income_trip else 0
 
+    ci = int((profit_trip / income_trip) * 100) if income_trip else 0
+
+    # =========================
+    # RETURN
+    # =========================
     return {
-        "time": time,
+        "mode": mode,
+
+        "time": round(time, 2),
         "trips": trips,
+
+        "y": y_c,
+        "j": j_c,
+        "f": f_c,
+
         "income_trip": int(income_trip),
+
         "fuel": int(fuel),
         "fuel_lb": int(fuel_lb),
+
         "co2": int(co2),
         "co2_q": int(co2_q),
+
         "acheck": acheck,
         "repair": repair,
+
         "profit_trip": int(profit_trip),
         "ci": ci,
+
         "income_day": int(income_trip * trips),
         "fuel_day": int(fuel * trips),
         "co2_day": int(co2 * trips),
@@ -357,6 +456,25 @@ async def leaderboard(ctx):
     embed.set_footer(text="JARVIS - AERO CROWN DYNASTY ™")
 
     await ctx.send(embed=embed)
+
+# =========================
+# DIFFICULTY COMMAND
+# =========================
+@bot.command()
+async def difficulty(ctx, mode=None):
+
+    if not mode:
+        current = get_user_mode(ctx.author.id)
+        return await ctx.send(f"⚙ Your difficulty: **{current.upper()}**")
+
+    mode = mode.lower()
+
+    if mode not in ["easy", "realism"]:
+        return await ctx.send("❌ Use: easy / realism")
+
+    set_user_mode(ctx.author.id, mode)
+
+    await ctx.send(f"✅ Difficulty set to **{mode.upper()}**")
 
 # =========================
 # ROUTE COMMAND
