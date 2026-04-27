@@ -521,7 +521,7 @@ def get_airport_full(iata):
     return iata
 
 # =========================
-# ROUTE COMMAND (FINAL PRO)
+# ROUTE COMMAND
 # =========================
 @bot.command()
 async def route(ctx, frm, to, *, plane_name):
@@ -538,7 +538,7 @@ async def route(ctx, frm, to, *, plane_name):
     plane_range = float(plane["range"])
 
     # =========================
-    # ⚡ FAST STOPOVER (NO LOOP SPAM)
+    # ⚡ FAST STOPOVER
     # =========================
     stop_airport = None
 
@@ -576,44 +576,68 @@ async def route(ctx, frm, to, *, plane_name):
 
     if stop_airport:
         stop_full = get_airport_full(stop_airport)
-        route_text = f"**{from_full}**\n✈️\n**{stop_full}**\n✈️\n**{to_full}**"
+        route_text = f"**{from_full}**\n⬇️\n**{stop_full}**\n⬇️\n**{to_full}**"
     else:
-        route_text = f"**{from_full}**\n✈️\n**{to_full}**"
+        route_text = f"**{from_full}**\n⬇️\n**{to_full}**"
 
     # =========================
     # EMBED
     # =========================
     embed = discord.Embed(
-        title="✈ Route Analysis",
+        title="✈️ JARVIS Route Analysis",
         description=route_text,
         color=0x00ffcc
     )
 
     # MODE
-    embed.add_field(name="⚙ Mode", value=f"`{mode.upper()}`", inline=True)
+    embed.add_field(name="⚙️ Mode", value=f"`{mode.upper()}`", inline=True)
 
     # FLIGHT INFO
     embed.add_field(
-        name="🕒 Flight",
+        name="🕒 Flight Details",
         value=f"""
-Dist: {int(distance_total):,} km
-Time: {format_time(result['time'])}
-Trips: {result['trips']}/day
+📏 Distance: `{int(distance_total):,} km`
+⏱ Time: `{format_time(result['time'])}`
+🔁 Trips: `{result['trips']}/day`
 """,
         inline=True
     )
 
     # CONFIG
     embed.add_field(
-        name="⚙ Config",
-        value=f"Y {result['y']} | J {result['j']} | F {result['f']}",
+        name="⚙️ Configuration",
+        value=f"🟢 Y `{result['y']}`  🔵 J `{result['j']}`  🟣 F `{result['f']}`",
         inline=True
     )
 
     # DEMAND
     embed.add_field(
         name="📊 Demand",
-        value=f"Y {route['y']} | J {route['j']} | F {route['f']}",
+        value=f"Y `{route['y']}` | J `{route['j']}` | F `{route['f']}`",
+        inline=True
+    )
+
+    # =========================
+    # 💺 TICKET PRICES (ADDED)
+    # =========================
+    distance = distance_total
+
+    if mode == "easy":
+        y_price = distance * 0.8
+        j_price = distance * 1.9
+        f_price = distance * 3.5
+    else:
+        y_price = distance * 0.5
+        j_price = distance * 1.2
+        f_price = distance * 2.4
+
+    embed.add_field(
+        name="💺 Ticket Prices",
+        value=f"""
+🟢 Y: `${int(y_price):,}`
+🔵 J: `${int(j_price):,}`
+🟣 F: `${int(f_price):,}`
+""",
         inline=True
     )
 
@@ -621,13 +645,13 @@ Trips: {result['trips']}/day
     embed.add_field(
         name="💰 Per Flight",
         value=f"""
-Income ${result['income_trip']:,}
-Fuel ${result['fuel']:,}
-CO2 ${result['co2']:,}
-Maint ${result['acheck'] + result['repair']:,}
+💵 Income: `${result['income_trip']:,}`
+⛽ Fuel: `${result['fuel']:,}`
+🌍 CO2: `${result['co2']:,}`
+🛠 Maint: `${result['acheck'] + result['repair']:,}`
 
-Profit ${result['profit_trip']:,}
-CI {result['ci']}%
+📈 Profit: `${result['profit_trip']:,}`
+📊 CI: `{result['ci']}%`
 """,
         inline=False
     )
@@ -636,18 +660,18 @@ CI {result['ci']}%
     embed.add_field(
         name="📅 Per Day",
         value=f"""
-Income ${result['income_day']:,}
-Fuel ${result['fuel_day']:,}
-CO2 ${result['co2_day']:,}
-Maint ${(result['acheck'] + result['repair']) * result['trips']:,}
+💵 Income: `${result['income_day']:,}`
+⛽ Fuel: `${result['fuel_day']:,}`
+🌍 CO2: `${result['co2_day']:,}`
+🛠 Maint: `${(result['acheck'] + result['repair']) * result['trips']:,}`
 
-Profit ${result['profit_day']:,}
-Flights {result['trips']}
+📈 Profit: `${result['profit_day']:,}`
+🔁 Flights: `{result['trips']}`
 """,
         inline=False
     )
 
-    embed.set_footer(text="JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
+    embed.set_footer(text="✈️ JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
 
     await ctx.send(embed=embed)
 
