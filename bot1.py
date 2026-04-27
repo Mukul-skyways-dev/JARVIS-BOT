@@ -76,27 +76,20 @@ cursor = conn.cursor()
 # AIRPORT FULL NAME RETRIEVAL 
 # ==========================
 def get_airport_full(iata):
-
     try:
         iata = iata.upper()
-
         cursor.execute("""
         SELECT airport, city, country 
         FROM routes 
         WHERE iata = ?
         LIMIT 1
         """, (iata,))
-
         row = cursor.fetchone()
-
         if row:
             return f"{iata} ({row['airport']}, {row['city']}, {row['country']})"
-
-        return iata
-
-    except Exception as e:
-        print("AIRPORT ERROR:", e)
-        return iata
+    except:
+        pass
+    return iata
 
 # =========================
 # DIFFICULTY SYSTEM
@@ -535,7 +528,6 @@ async def route(ctx, frm, to, *, plane_name):
 
     if not route:
         return await ctx.send("❌ Route not found")
-
     if not plane:
         return await ctx.send("❌ Plane not found")
 
@@ -543,70 +535,27 @@ async def route(ctx, frm, to, *, plane_name):
     plane_range = float(plane["range"])
 
     # =========================
-    # STOPOVER LOGIC (FIXED)
+    # ⚡ FAST STOPOVER (NO LOOP SPAM)
     # =========================
     stop_airport = None
-    leg1 = leg2 = 0
 
     if distance_total > plane_range:
-
         cursor.execute("""
-        SELECT t_iata, distance 
+        SELECT t_iata 
         FROM routes 
-        WHERE distance < ?
-        """, (plane_range,))
+        WHERE distance BETWEEN ? AND ?
+        LIMIT 1
+        """, (distance_total * 0.4, plane_range))
 
-        candidates = cursor.fetchall()
-
-        for row in candidates:
-            try:
-                mid, d1 = row
-                d1 = float(d1)
-
-                d2 = distance_total - d1
-
-                if d1 <= plane_range and d2 <= plane_range:
-                    stop_airport = mid
-                    leg1 = d1
-                    leg2 = d2
-                    break
-            except:
-                continue
-
-        # fallback (always safe)
-        if not stop_airport:
-            stop_airport = "MID"
-            leg1 = distance_total / 2
-            leg2 = distance_total / 2
-
-    else:
-        leg1 = distance_total
-
-    # =========================
-    # BUILD TEMP ROUTE FOR CALC
-    # =========================
-    temp_route = route.copy()
-    temp_route["distance"] = leg1 + (leg2 if stop_airport else 0)
+        row = cursor.fetchone()
+        if row:
+            stop_airport = row["t_iata"]
 
     # =========================
     # CALC ENGINE
     # =========================
-    result = calc(temp_route, plane, ctx.author.id)
+    result = calc(route, plane, ctx.author.id)
     mode = result["mode"]
-
-    distance = temp_route["distance"]
-
-    # =========================
-    # TICKET PRICING FIX
-    # =========================
-    if mode == "easy":
-        y_price = distance * 0.8
-        j_price = distance * 1.9
-        f_price = distance * 3.5
-    else:
-        y_price = distance * 0.5
-        j_price = distance * 1.2
-        f_price = distance * 2.4
 
     # =========================
     # TIME FORMAT
@@ -617,7 +566,7 @@ async def route(ctx, frm, to, *, plane_name):
         return f"{H}h {M}m"
 
     # =========================
-    # FULL AIRPORT DISPLAY
+    # ROUTE DISPLAY
     # =========================
     from_full = get_airport_full(frm)
     to_full = get_airport_full(to)
@@ -629,7 +578,7 @@ async def route(ctx, frm, to, *, plane_name):
         route_text = f"**{from_full}**\n✈️\n**{to_full}**"
 
     # =========================
-    # EMBED UI
+    # EMBED
     # =========================
     embed = discord.Embed(
         title="✈ Route Analysis",
@@ -644,7 +593,7 @@ async def route(ctx, frm, to, *, plane_name):
     embed.add_field(
         name="🕒 Flight",
         value=f"""
-Distance: {int(distance_total):,} km
+Dist: {int(distance_total):,} km
 Time: {format_time(result['time'])}
 Trips: {result['trips']}/day
 """,
@@ -665,23 +614,11 @@ Trips: {result['trips']}/day
         inline=True
     )
 
-    # TICKETS
-    embed.add_field(
-        name="💺 Ticket",
-        value=f"""
-Y ${int(y_price):,}
-J ${int(j_price):,}
-F ${int(f_price):,}
-""",
-        inline=True
-    )
-
     # PER FLIGHT
     embed.add_field(
         name="💰 Per Flight",
         value=f"""
 Income ${result['income_trip']:,}
-
 Fuel ${result['fuel']:,}
 CO2 ${result['co2']:,}
 Maint ${result['acheck'] + result['repair']:,}
@@ -697,7 +634,6 @@ CI {result['ci']}%
         name="📅 Per Day",
         value=f"""
 Income ${result['income_day']:,}
-
 Fuel ${result['fuel_day']:,}
 CO2 ${result['co2_day']:,}
 Maint ${(result['acheck'] + result['repair']) * result['trips']:,}
