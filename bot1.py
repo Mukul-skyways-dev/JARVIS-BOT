@@ -496,7 +496,7 @@ async def difficulty(ctx, mode=None):
     await ctx.send(f"✅ Difficulty set to **{mode.upper()}**")
 
 # =========================
-# AIRPORT FULL NAME HELPER (FINAL)
+# AIRPORT FULL NAME HELPER (FINAL
 # =========================
 def get_airport_full(iata):
 
