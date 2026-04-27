@@ -500,20 +500,23 @@ async def difficulty(ctx, mode=None):
 # =========================
 def get_airport_full(iata):
 
-    iata = iata.upper()
+    try:
+        iata = iata.upper()
 
-    cursor.execute("""
-    SELECT airport, city, country 
-    FROM routes 
-    WHERE iata = ?
-    LIMIT 1
-    """, (iata,))
+        cursor.execute("""
+        SELECT airport, city, country 
+        FROM routes 
+        WHERE iata = ?
+        LIMIT 1
+        """, (iata,))
 
-    row = cursor.fetchone()
+        row = cursor.fetchone()
 
-    if row:
-        airport, city, country = row
-        return f"{iata} ({airport}, {city}, {country})"
+        if row:
+            return f"{iata} ({row['airport']}, {row['city']}, {row['country']})"
+
+    except Exception as e:
+        print("Airport Error:", e)
 
     return iata
 
