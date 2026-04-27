@@ -537,22 +537,36 @@ async def route(ctx, frm, to, *, plane_name):
     distance_total = float(route["distance"])
     plane_range = float(plane["range"])
 
-    # =========================
-    # ⚡ FAST STOPOVER
-    # =========================
-    stop_airport = None
+# =========================
+# SMART STOPOVER FIX (ACCURATE)
+# =========================
+stop_airport = None
+leg1 = leg2 = 0
 
-    if distance_total > plane_range:
-        cursor.execute("""
-        SELECT t_iata 
-        FROM routes 
-        WHERE distance BETWEEN ? AND ?
-        LIMIT 1
-        """, (distance_total * 0.4, plane_range))
+if distance_total > plane_range:
 
-        row = cursor.fetchone()
-        if row:
-            stop_airport = row["t_iata"]
+    # mid distance target
+    target = distance_total / 2
+
+    cursor.execute("""
+    SELECT t_iata, distance 
+    FROM routes
+    WHERE distance < ?
+    ORDER BY ABS(distance - ?) ASC
+    LIMIT 1
+    """, (plane_range, target))
+
+    row = cursor.fetchone()
+
+    if row:
+        stop_airport = row["t_iata"]
+        leg1 = float(row["distance"])
+        leg2 = distance_total - leg1
+
+    else:
+        # fallback (guaranteed split)
+        leg1 = distance_total / 2
+        leg2 = distance_total / 2
 
     # =========================
     # CALC ENGINE
