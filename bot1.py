@@ -521,7 +521,7 @@ def get_airport_full(iata):
     return iata
 
 # =========================
-# ROUTE COMMAND
+# ROUTE COMMAND (FINAL FIXED)
 # =========================
 @bot.command()
 async def route(ctx, frm, to, *, plane_name):
@@ -537,38 +537,37 @@ async def route(ctx, frm, to, *, plane_name):
     distance_total = float(route["distance"])
     plane_range = float(plane["range"])
 
-# =========================
-# SMART STOPOVER FIX (ACCURATE)
-# =========================
-stop_airport = None
-leg1 = leg2 = 0
+    # =========================
+    # SMART STOPOVER FIX
+    # =========================
+    stop_airport = None
+    leg1 = leg2 = 0
 
-if distance_total > plane_range:
+    if distance_total > plane_range:
 
-    target = distance_total / 2
+        target = distance_total / 2
 
-    cursor.execute("""
-    SELECT t_iata, distance 
-    FROM routes
-    WHERE CAST(distance AS REAL) < ?
-    ORDER BY ABS(CAST(distance AS REAL) - ?) ASC
-    LIMIT 1
-    """, (plane_range, target))
+        cursor.execute("""
+        SELECT t_iata, distance 
+        FROM routes
+        WHERE CAST(distance AS REAL) < ?
+        ORDER BY ABS(CAST(distance AS REAL) - ?) ASC
+        LIMIT 1
+        """, (plane_range, target))
 
-    row = cursor.fetchone()
+        row = cursor.fetchone()
 
-    if row:
-        stop_airport = row[0]
-        try:
-            leg1 = float(row[1])
-        except:
+        if row:
+            stop_airport = row[0]
+            try:
+                leg1 = float(row[1])
+            except:
+                leg1 = distance_total / 2
+
+            leg2 = distance_total - leg1
+        else:
             leg1 = distance_total / 2
-
-        leg2 = distance_total - leg1
-
-    else:
-        leg1 = distance_total / 2
-        leg2 = distance_total / 2
+            leg2 = distance_total / 2
 
     # =========================
     # CALC ENGINE
@@ -600,7 +599,7 @@ if distance_total > plane_range:
     # EMBED
     # =========================
     embed = discord.Embed(
-        title="✈️ JARVIS Route Analysis",
+        title="✈️ JARVIS Route Analysis V 2.0.1",
         description=route_text,
         color=0x00ffcc
     )
@@ -634,7 +633,7 @@ if distance_total > plane_range:
     )
 
     # =========================
-    # 💺 TICKET PRICES (ADDED)
+    # TICKET PRICES
     # =========================
     distance = distance_total
 
