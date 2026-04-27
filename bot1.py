@@ -496,24 +496,24 @@ async def difficulty(ctx, mode=None):
     await ctx.send(f"✅ Difficulty set to **{mode.upper()}**")
 
 # =========================
-# AIRPORT FULL NAME HELPER
+# AIRPORT FULL NAME HELPER (FINAL)
 # =========================
 def get_airport_full(iata):
 
     try:
         iata = iata.upper()
 
+        # direct match
         cursor.execute("""
         SELECT airport, city, country 
         FROM routes 
         WHERE iata = ?
         LIMIT 1
         """, (iata,))
-
         row = cursor.fetchone()
 
         if row:
-            return f"{iata} ({row['airport']}, {row['city']}, {row['country']})"
+            return f"{iata} ({row[0]}, {row[1]}, {row[2]})"
 
     except Exception as e:
         print("Airport Error:", e)
