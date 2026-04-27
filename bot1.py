@@ -545,26 +545,28 @@ leg1 = leg2 = 0
 
 if distance_total > plane_range:
 
-    # mid distance target
     target = distance_total / 2
 
     cursor.execute("""
     SELECT t_iata, distance 
     FROM routes
-    WHERE distance < ?
-    ORDER BY ABS(distance - ?) ASC
+    WHERE CAST(distance AS REAL) < ?
+    ORDER BY ABS(CAST(distance AS REAL) - ?) ASC
     LIMIT 1
     """, (plane_range, target))
 
     row = cursor.fetchone()
 
     if row:
-        stop_airport = row["t_iata"]
-        leg1 = float(row["distance"])
+        stop_airport = row[0]
+        try:
+            leg1 = float(row[1])
+        except:
+            leg1 = distance_total / 2
+
         leg2 = distance_total - leg1
 
     else:
-        # fallback (guaranteed split)
         leg1 = distance_total / 2
         leg2 = distance_total / 2
 
