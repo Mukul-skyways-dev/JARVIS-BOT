@@ -828,28 +828,6 @@ def make_graph(self):
 
     return buf
     
-    # =========================
-    # RADAR PAGE
-    # =========================
-    def make_radar(self):
-
-    labels = ["Income", "Profit", "Efficiency", "Speed"]
-
-    # =========================
-    # NORMALIZATION
-    # =========================
-    def norm(a, b):
-        m = max(a, b)
-        return (a/m if m else 0), (b/m if m else 0)
-
-    i1, i2 = norm(self.r1["income_day"], self.r2["income_day"])
-    p1v, p2v = norm(self.r1["profit_day"], self.r2["profit_day"])
-    f1, f2 = norm(self.r1["fuel_day"], self.r2["fuel_day"])
-    s1, s2 = norm(self.p1["speed"], self.p2["speed"])
-
-    v1 = [i1, p1v, 1-f1, s1]
-    v2 = [i2, p2v, 1-f2, s2]
-
 # =========================
 # RADAR PAGE
 # =========================
