@@ -304,7 +304,7 @@ def get_plane(name):
     return None
 
 # =========================
-# CALC ENGINE (FIXED + DIFFICULTY)
+# CALC ENGINE (UNIFIED FINAL)
 # =========================
 def calc(route, plane, user_id, mods=None):
 
@@ -313,6 +313,9 @@ def calc(route, plane, user_id, mods=None):
     # =========================
     mode = get_user_mode(user_id)
 
+    # =========================
+    # BASE VALUES
+    # =========================
     dist = float(route["distance"])
     speed = float(plane["speed"])
 
@@ -366,14 +369,17 @@ def calc(route, plane, user_id, mods=None):
         cargo_mul = 0.35
 
     # =========================
-    # CONFIGURATION (WITH LF)
+    # CONFIGURATION
     # =========================
-    y_c = int(cap * (y/total) * lf) if total else 0
-    j_c = int(cap * (j/total) * lf) if total else 0
-    f_c = int(cap * (f/total) * lf) if total else 0
+    if total > 0:
+        y_c = int(cap * (y / total) * lf)
+        j_c = int(cap * (j / total) * lf)
+        f_c = cap - y_c - j_c
+    else:
+        y_c = j_c = f_c = 0
 
     # =========================
-    # TICKET PRICES (FIXED)
+    # TICKET PRICES
     # =========================
     y_price = dist * y_mul
     j_price = dist * j_mul
@@ -382,9 +388,13 @@ def calc(route, plane, user_id, mods=None):
     # =========================
     # INCOME
     # =========================
-    income_trip = (y_c * y_price) + (j_c * j_price) + (f_c * f_price)
+    income_trip = (
+        (y_c * y_price) +
+        (j_c * j_price) +
+        (f_c * f_price)
+    )
 
-    # cargo
+    # cargo income
     cargo = float(route.get("cargo", 0))
     income_trip += cargo * cargo_mul
 
@@ -407,24 +417,32 @@ def calc(route, plane, user_id, mods=None):
     # PROFIT
     # =========================
     profit_trip = income_trip - fuel - co2 - acheck - repair
-
     ci = int((profit_trip / income_trip) * 100) if income_trip else 0
 
     # =========================
-    # RETURN
+    # RETURN (MASTER DATA)
     # =========================
     return {
         "mode": mode,
 
+        # flight
         "time": round(time, 2),
         "trips": trips,
 
+        # config
         "y": y_c,
         "j": j_c,
         "f": f_c,
 
+        # ticket prices (IMPORTANT)
+        "y_price": int(y_price),
+        "j_price": int(j_price),
+        "f_price": int(f_price),
+
+        # income
         "income_trip": int(income_trip),
 
+        # cost
         "fuel": int(fuel),
         "fuel_lb": int(fuel_lb),
 
@@ -434,15 +452,16 @@ def calc(route, plane, user_id, mods=None):
         "acheck": acheck,
         "repair": repair,
 
+        # profit
         "profit_trip": int(profit_trip),
         "ci": ci,
 
+        # per day
         "income_day": int(income_trip * trips),
         "fuel_day": int(fuel * trips),
         "co2_day": int(co2 * trips),
         "profit_day": int(profit_trip * trips)
     }
-
 # =========================
 # LEADERBOARD
 # =========================
