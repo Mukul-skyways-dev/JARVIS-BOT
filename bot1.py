@@ -438,39 +438,220 @@ def calc(route, plane, user_id, mods=None):
         "profit_day": int(profit_trip * trips)
     }
 
+# ========================
+# Leaderboard 
+# ========================
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    username TEXT,
+    points INTEGER DEFAULT 0,
+    last_used REAL DEFAULT 0
+)
+""")
+conn.commit()
+
+
 # =========================
-# LEADERBOARD
+# LIVE USAGE TRACKER (ANTI-SPAM + LIVE POINTS)
+# =========================
+COOLDOWN = 3  # seconds
+
+def add_usage(user):
+    now = time.time()
+
+    cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
+    row = cursor.fetchone()
+
+    # anti spam protection
+    if row and now - row[0] < COOLDOWN:
+        return
+
+    cursor.execute("""
+    INSERT INTO users (user_id, username, points, last_used)
+    VALUES (?, ?, 1, ?)
+    ON CONFLICT(user_id)
+    DO UPDATE SET
+        points = points + 1,
+        username = excluded.username,
+        last_used = excluded.last_used
+    """, (str(user.id), user.name, now))
+
+    conn.commit()
+
+
+# =========================
+# LEADERBOARD VIEW (LIVE DASHBOARD)
+# =========================
+class LeaderboardView(View):
+
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.page = 0
+        self.data = self.fetch()
+
+    # =========================
+    # FETCH DATA
+    # =========================
+    def fetch(self):
+        cursor.execute("""
+        SELECT username, points
+        FROM users
+        ORDER BY points DESC
+        """)
+        return cursor.fetchall()
+
+    # =========================
+    # PAGINATION
+    # =========================
+    def page_data(self):
+        start = self.page * 10
+        return self.data[start:start + 10]
+
+    # =========================
+    # EMBED UI
+    # =========================
+    def build_embed(self):
+
+        medals = ["🥇", "🥈", "🥉"]
+
+        text = ""
+
+        for i, (name, pts) in enumerate(self.page_data(), start=1):
+            rank = self.page * 10 + i
+            medal = medals[rank - 1] if rank <= 3 else "🔹"
+
+            text += f"{medal} **#{rank} {name}** — `{pts:,}` uses\n"
+
+        embed = discord.Embed(
+            title="📊 LIVE JARVIS USAGE LEADERBOARD",
+            description=text or "No data yet",
+            color=0x1e2b4a
+        )
+
+        embed.set_footer(
+            text=f"Page {self.page + 1} • Live Tracking • AERO CROWN DYNASTY"
+        )
+
+        return embed
+
+    # =========================
+    # GRAPH (ANIMATED STYLE BAR)
+    # =========================
+    def build_graph(self):
+
+        top = self.data[:10]
+
+        names = [x[0][:8] for x in top]
+        values = [x[1] for x in top]
+
+        plt.figure(figsize=(8, 4))
+        plt.style.use("dark_background")
+
+        plt.gca().set_facecolor("#0b1a40")
+        plt.gcf().patch.set_facecolor("#0b1a40")
+
+        bars = plt.bar(names, values, color="#00e5ff")
+
+        # glow effect illusion
+        for bar in bars:
+            bar.set_alpha(0.9)
+
+        plt.xticks(rotation=40)
+        plt.title("LIVE BOT USAGE RANKING", color="white")
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+        buf.seek(0)
+        plt.close()
+
+        return buf
+
+    # =========================
+    # BUTTONS
+    # =========================
+
+    @discord.ui.button(label="⬅ Prev", style=discord.ButtonStyle.secondary)
+    async def prev(self, interaction, button):
+
+        if self.page > 0:
+            self.page -= 1
+
+        await self.update(interaction)
+
+    @discord.ui.button(label="Next ➡", style=discord.ButtonStyle.primary)
+    async def next(self, interaction, button):
+
+        if (self.page + 1) * 10 < len(self.data):
+            self.page += 1
+
+        await self.update(interaction)
+
+    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.success)
+    async def refresh(self, interaction, button):
+
+        self.data = self.fetch()
+        self.page = 0
+
+        await self.update(interaction)
+
+    @discord.ui.button(label="📊 Graph", style=discord.ButtonStyle.grey)
+    async def graph(self, interaction, button):
+
+        buf = self.build_graph()
+        file = discord.File(buf, "leaderboard.png")
+
+        embed = discord.Embed(
+            title="📊 Live Usage Graph",
+            color=0x1e2b4a
+        )
+
+        embed.set_image(url="attachment://leaderboard.png")
+
+        await interaction.response.edit_message(
+            embed=embed,
+            attachments=[file],
+            view=self
+        )
+
+    # =========================
+    # UPDATE ENGINE
+    # =========================
+    async def update(self, interaction):
+
+        self.data = self.fetch()
+
+        await interaction.response.edit_message(
+            embed=self.build_embed(),
+            attachments=[],
+            view=self
+        )
+
+
+# =========================
+# AUTO TRACK EVERY COMMAND USE (GLOBAL HOOK)
+# =========================
+@bot.event
+async def on_command(ctx):
+    add_usage(ctx.author)
+
+
+# =========================
+# LEADERBOARD COMMAND
 # =========================
 @bot.command()
 async def leaderboard(ctx):
 
-    cursor.execute("""
-    SELECT username, points FROM users
-    ORDER BY points DESC LIMIT 10
-    """)
+    view = LeaderboardView()
 
-    data = cursor.fetchall()
+    if not view.data:
+        return await ctx.send("❌ No usage data yet")
 
-    if not data:
-        await ctx.send("❌ No leaderboard data yet")
-        return
-
-    medals = ["🥇", "🥈", "🥉"]
-    text = ""
-
-    for i, (name, pts) in enumerate(data, 1):
-        medal = medals[i-1] if i <= 3 else "🔹"
-        text += f"{medal} **{name}** — {pts} pts\n"
-
-    embed = discord.Embed(
-        title="🏆 Command Leaderboard",
-        description=text,
-        color=0xFFD700
+    await ctx.send(
+        embed=view.build_embed(),
+        view=view
     )
-
-    embed.set_footer(text="JARVIS - AERO CROWN DYNASTY ™")
-
-    await ctx.send(embed=embed)
 
 # =========================
 # DIFFICULTY COMMAND
