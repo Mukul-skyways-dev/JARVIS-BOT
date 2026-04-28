@@ -683,6 +683,47 @@ class CompareView(View):
         self.r2 = r2
         self.page = 0
 
+# =========================
+# COMPARE COMMAND (FINAL)
+# =========================
+@bot.command()
+async def compare(ctx, *, planes_input):
+
+    try:
+        p1_name, p2_name = planes_input.lower().split(" vs ")
+    except:
+        return await ctx.send("❌ Use: !compare A320 vs B737")
+
+    p1 = get_plane(p1_name)
+    p2 = get_plane(p2_name)
+
+    if not p1 or not p2:
+        return await ctx.send("❌ Plane not found")
+
+    # =========================
+    # STANDARD TEST ROUTE (SAME AS BEFORE)
+    # =========================
+    route = {
+        "distance": 5000,
+        "y": 300,
+        "j": 50,
+        "f": 10,
+        "cargo": 10000
+    }
+
+    # =========================
+    # CALC ENGINE USE
+    # =========================
+    r1 = calc(route, p1, ctx.author.id)
+    r2 = calc(route, p2, ctx.author.id)
+
+    # =========================
+    # VIEW LOAD
+    # =========================
+    view = CompareView(p1, p2, r1, r2)
+
+    await ctx.send(embed=view.build_embed(), view=view)
+
     # =========================
     # TEXT PAGE (ULTRA UPGRADED)
     # =========================
