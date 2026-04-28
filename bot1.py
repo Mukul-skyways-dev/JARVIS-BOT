@@ -672,95 +672,105 @@ async def route(ctx, frm, to, *, plane_name):
     await ctx.send(embed=embed)
 
 # =========================
-# COMPARE VIEW (ULTRA PRO)
+# IMPORTS (SAFE MERGE)
+# =========================
+import discord
+from discord.ui import View
+import matplotlib.pyplot as plt
+import numpy as np
+import io
+
+# =========================
+# COMPARE VIEW 
 # =========================
 class CompareView(View):
     def __init__(self, p1, p2, r1, r2):
         super().__init__(timeout=120)
+
         self.p1 = p1
         self.p2 = p2
         self.r1 = r1
         self.r2 = r2
+
         self.page = 0
 
     # =========================
-    # TEXT PAGE (MORE FACTORS)
+    # SAFE FORMATTER
+    # =========================
+    def fmt(self, a, b, reverse=False):
+        try:
+            a = float(a)
+            b = float(b)
+        except:
+            return f"{a}"
+
+        if reverse:
+            return f"**{a:,.0f}**" if a < b else f"{a:,.0f}"
+        return f"**{a:,.0f}**" if a > b else f"{a:,.0f}"
+
+    # =========================
+    # PAGE 1 - TEXT EMBED
     # =========================
     def build_embed(self):
 
-        def fmt(a, b, reverse=False):
-            if reverse:
-                return f"**{a:,}**" if a < b else f"{a:,}"
-            return f"**{a:,}**" if a > b else f"{a:,}"
-
         embed = discord.Embed(
-            title=f"{self.p1['name']}  vs  {self.p2['name']}",
-            description="```Advanced Aircraft Analytics```",
-            color=0x2b2d31
+            title=f"{self.p1['name']}  VS  {self.p2['name']}",
+            description="```Advanced Aircraft Analytics Engine```",
+            color=0x1e2b4a  # DARK BLUE THEME
         )
 
-        # =========================
-        # SPECIFICATIONS
-        # =========================
+        # ================= SPEC =================
         embed.add_field(
             name="✦ Specifications",
             value=(
-                f"Capacity → {fmt(self.p1['capacity'], self.p2['capacity'])} │ {fmt(self.p2['capacity'], self.p1['capacity'])}\n"
-                f"Range → {fmt(int(self.p1['range']), int(self.p2['range']))} │ {fmt(int(self.p2['range']), int(self.p1['range']))}\n"
-                f"Speed → {fmt(int(self.p1['speed']), int(self.p2['speed']))} │ {fmt(int(self.p2['speed']), int(self.p1['speed']))}\n"
-                f"Fuel → {fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {fmt(self.p2['fuel'], self.p1['fuel'], True)}"
+                f"Capacity → {self.fmt(self.p1['capacity'], self.p2['capacity'])} │ {self.fmt(self.p2['capacity'], self.p1['capacity'])}\n"
+                f"Range → {self.fmt(self.p1['range'], self.p2['range'])} │ {self.fmt(self.p2['range'], self.p1['range'])}\n"
+                f"Speed → {self.fmt(self.p1['speed'], self.p2['speed'])} │ {self.fmt(self.p2['speed'], self.p1['speed'])}\n"
+                f"Fuel → {self.fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {self.fmt(self.p2['fuel'], self.p1['fuel'], True)}"
             ),
             inline=False
         )
 
-        # =========================
-        # OPERATIONS
-        # =========================
+        # ================= OPS =================
         embed.add_field(
             name="✦ Operations",
             value=(
-                f"Trips/Day → {fmt(self.r1['trips'], self.r2['trips'])} │ {fmt(self.r2['trips'], self.r1['trips'])}\n"
-                f"Flight Time → {fmt(self.r1['time'], self.r2['time'], True)} │ {fmt(self.r2['time'], self.r1['time'], True)}\n"
-                f"CI Score → {fmt(self.r1['ci'], self.r2['ci'])}% │ {fmt(self.r2['ci'], self.r1['ci'])}%"
+                f"Trips/Day → {self.fmt(self.r1['trips'], self.r2['trips'])} │ {self.fmt(self.r2['trips'], self.r1['trips'])}\n"
+                f"Flight Time → {self.fmt(self.r1['time'], self.r2['time'], True)} │ {self.fmt(self.r2['time'], self.r1['time'], True)}\n"
+                f"CI Score → {self.fmt(self.r1['ci'], self.r2['ci'])}% │ {self.fmt(self.r2['ci'], self.r1['ci'])}%"
             ),
             inline=False
         )
 
-        # =========================
-        # REVENUE
-        # =========================
+        # ================= REVENUE =================
         embed.add_field(
             name="✦ Revenue",
             value=(
-                f"Income/Flight → {fmt(self.r1['income_trip'], self.r2['income_trip'])} │ {fmt(self.r2['income_trip'], self.r1['income_trip'])}\n"
-                f"Profit/Flight → {fmt(self.r1['profit_trip'], self.r2['profit_trip'])} │ {fmt(self.r2['profit_trip'], self.r1['profit_trip'])}\n"
-                f"Income/Day → {fmt(self.r1['income_day'], self.r2['income_day'])} │ {fmt(self.r2['income_day'], self.r1['income_day'])}\n"
-                f"Profit/Day → {fmt(self.r1['profit_day'], self.r2['profit_day'])} │ {fmt(self.r2['profit_day'], self.r1['profit_day'])}"
+                f"Income/Flight → {self.fmt(self.r1['income_trip'], self.r2['income_trip'])} │ {self.fmt(self.r2['income_trip'], self.r1['income_trip'])}\n"
+                f"Profit/Flight → {self.fmt(self.r1['profit_trip'], self.r2['profit_trip'])} │ {self.fmt(self.r2['profit_trip'], self.r1['profit_trip'])}\n"
+                f"Income/Day → {self.fmt(self.r1['income_day'], self.r2['income_day'])} │ {self.fmt(self.r2['income_day'], self.r1['income_day'])}\n"
+                f"Profit/Day → {self.fmt(self.r1['profit_day'], self.r2['profit_day'])} │ {self.fmt(self.r2['profit_day'], self.r1['profit_day'])}"
             ),
             inline=False
         )
 
-        # =========================
-        # COST ANALYSIS
-        # =========================
+        # ================= COST =================
         embed.add_field(
             name="✦ Cost Analysis",
             value=(
-                f"Fuel/Flight → {fmt(self.r1['fuel'], self.r2['fuel'], True)} │ {fmt(self.r2['fuel'], self.r1['fuel'], True)}\n"
-                f"CO2/Flight → {fmt(self.r1['co2'], self.r2['co2'], True)} │ {fmt(self.r2['co2'], self.r1['co2'], True)}\n"
-                f"Maint → {fmt(self.r1['acheck']+self.r1['repair'], self.r2['acheck']+self.r2['repair'], True)} │ {fmt(self.r2['acheck']+self.r2['repair'], self.r1['acheck']+self.r1['repair'], True)}"
+                f"Fuel/Flight → {self.fmt(self.r1['fuel'], self.r2['fuel'], True)} │ {self.fmt(self.r2['fuel'], self.r1['fuel'], True)}\n"
+                f"CO2/Flight → {self.fmt(self.r1['co2'], self.r2['co2'], True)} │ {self.fmt(self.r2['co2'], self.r1['co2'], True)}\n"
+                f"Maint → {self.fmt(self.r1['acheck'] + self.r1['repair'], self.r2['acheck'] + self.r2['repair'], True)} │ {self.fmt(self.r2['acheck'] + self.r2['repair'], self.r1['acheck'] + self.r1['repair'], True)}"
             ),
             inline=False
         )
 
-        # =========================
-        # EFFICIENCY
-        # =========================
+        # ================= EFF =================
         embed.add_field(
             name="✦ Efficiency",
             value=(
-                f"Fuel(lb) → {fmt(self.r1['fuel_lb'], self.r2['fuel_lb'], True)} │ {fmt(self.r2['fuel_lb'], self.r1['fuel_lb'], True)}\n"
-                f"CO2(q) → {fmt(self.r1['co2_q'], self.r2['co2_q'], True)} │ {fmt(self.r2['co2_q'], self.r1['co2_q'], True)}"
+                f"Fuel(lb) → {self.fmt(self.r1['fuel_lb'], self.r2['fuel_lb'], True)} │ {self.fmt(self.r2['fuel_lb'], self.r1['fuel_lb'], True)}\n"
+                f"CO2(q) → {self.fmt(self.r1['co2_q'], self.r2['co2_q'], True)} │ {self.fmt(self.r2['co2_q'], self.r1['co2_q'], True)}"
             ),
             inline=False
         )
@@ -771,142 +781,197 @@ class CompareView(View):
         return embed
 
     # =========================
-    # GRAPH
+    # GRAPH (FIXED NORMALIZATION + STABLE)
     # =========================
     def make_graph(self):
 
-        labels = ["Income", "Profit", "Fuel", "CO2"]
+        labels = ["Income", "Profit", "Fuel", "CO2", "Trips"]
 
-        p1_vals = [self.r1["income_day"], self.r1["profit_day"], self.r1["fuel_day"], self.r1["co2_day"]]
-        p2_vals = [self.r2["income_day"], self.r2["profit_day"], self.r2["fuel_day"], self.r2["co2_day"]]
+        p1_vals = [
+            self.r1["income_day"],
+            self.r1["profit_day"],
+            self.r1["fuel_day"],
+            self.r1["co2_day"],
+            self.r1["trips"]
+        ]
 
-        def norm(a,b):
-            m = [max(x,y) for x,y in zip(a,b)]
-            return ([x/i if i else 0 for x,i in zip(a,m)],
-                    [y/i if i else 0 for y,i in zip(b,m)])
+        p2_vals = [
+            self.r2["income_day"],
+            self.r2["profit_day"],
+            self.r2["fuel_day"],
+            self.r2["co2_day"],
+            self.r2["trips"]
+        ]
 
-        p1n,p2n = norm(p1_vals,p2_vals)
+        # SAFE NORMALIZATION (NO FLAT LINE BUG)
+        max_vals = [max(a, b) if max(a, b) != 0 else 1 for a, b in zip(p1_vals, p2_vals)]
+        p1n = [a / m for a, m in zip(p1_vals, max_vals)]
+        p2n = [b / m for b, m in zip(p2_vals, max_vals)]
 
         x = range(len(labels))
 
-        plt.figure(figsize=(9,5))
-        plt.style.use('dark_background')
+        plt.figure(figsize=(9, 5))
+        plt.style.use("dark_background")
 
-        plt.plot(x,p1n,marker='o',linewidth=2.5,label=self.p1["name"])
-        plt.plot(x,p2n,marker='s',linewidth=2.5,linestyle='--',label=self.p2["name"])
+        # DARK BLUE BACKGROUND
+        plt.gca().set_facecolor("#0b1a40")
+        plt.gcf().patch.set_facecolor("#0b1a40")
 
-        plt.xticks(x,labels)
+        # PLOTS
+        plt.plot(x, p1n, marker='o', linewidth=2.5, label=self.p1["name"])
+        plt.plot(x, p2n, marker='s', linewidth=2.5, linestyle='--', label=self.p2["name"])
+
+        plt.xticks(x, labels)
+        plt.grid(alpha=0.4, linestyle=":")
         plt.legend()
-        plt.grid(True,linestyle=':',alpha=0.6)
 
-        buf=io.BytesIO()
-        plt.savefig(buf,format='png',bbox_inches='tight')
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=300)
         buf.seek(0)
         plt.close()
 
         return buf
 
     # =========================
-    # RADAR
+    # RADAR (FIXED SCALING)
     # =========================
     def make_radar(self):
 
-        labels=["Income","Profit","Efficiency","Speed"]
+        labels = ["Income", "Profit", "Efficiency", "Speed", "Trips"]
 
-        def n(a,b):
-            m=max(a,b)
-            return (a/m if m else 0),(b/m if m else 0)
+        def safe(a, b):
+            m = max(a, b)
+            return (a / m if m else 0), (b / m if m else 0)
 
-        i1,i2=n(self.r1["income_day"],self.r2["income_day"])
-        p1v,p2v=n(self.r1["profit_day"],self.r2["profit_day"])
-        f1,f2=n(self.r1["fuel_day"],self.r2["fuel_day"])
-        s1,s2=n(self.p1["speed"],self.p2["speed"])
+        i1, i2 = safe(self.r1["income_day"], self.r2["income_day"])
+        p1v, p2v = safe(self.r1["profit_day"], self.r2["profit_day"])
+        s1, s2 = safe(self.p1["speed"], self.p2["speed"])
+        t1, t2 = safe(self.r1["trips"], self.r2["trips"])
 
-        v1=[i1,p1v,1-f1,s1]
-        v2=[i2,p2v,1-f2,s2]
+        e1 = (i1 + p1v) / 2
+        e2 = (i2 + p2v) / 2
 
-        angles=np.linspace(0,2*np.pi,len(labels),endpoint=False).tolist()
+        v1 = [i1, p1v, e1, s1, t1]
+        v2 = [i2, p2v, e2, s2, t2]
 
-        v1+=v1[:1]
-        v2+=v2[:1]
-        angles+=angles[:1]
+        angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
 
-        plt.figure(figsize=(6,6))
-        ax=plt.subplot(111,polar=True)
+        v1 += v1[:1]
+        v2 += v2[:1]
+        angles += angles[:1]
 
-        ax.plot(angles,v1,linewidth=2.5,label=self.p1["name"])
-        ax.plot(angles,v2,linewidth=2.5,linestyle='--',label=self.p2["name"])
+        plt.figure(figsize=(6, 6))
+        ax = plt.subplot(111, polar=True)
 
-        ax.fill(angles,v1,alpha=0.1)
-        ax.fill(angles,v2,alpha=0.1)
+        ax.set_facecolor("#0b1a40")
+        plt.gcf().patch.set_facecolor("#0b1a40")
+
+        ax.plot(angles, v1, linewidth=2.5, label=self.p1["name"])
+        ax.plot(angles, v2, linewidth=2.5, linestyle="--", label=self.p2["name"])
+
+        ax.fill(angles, v1, alpha=0.15)
+        ax.fill(angles, v2, alpha=0.15)
 
         ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(labels)
+        ax.set_xticklabels(labels, color="white")
 
         plt.legend()
 
-        buf=io.BytesIO()
-        plt.savefig(buf,format='png',bbox_inches='tight')
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=300)
         buf.seek(0)
         plt.close()
 
         return buf
 
+    # =========================
+    # BUTTONS
+    # =========================
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction, button):
-        self.page=(self.page-1)%3
+        self.page = (self.page - 1) % 3
         await self.update(interaction)
 
     @discord.ui.button(label="▶", style=discord.ButtonStyle.primary)
     async def next_btn(self, interaction, button):
-        self.page=(self.page+1)%3
+        self.page = (self.page + 1) % 3
         await self.update(interaction)
 
+    # =========================
+    # UPDATE ENGINE
+    # =========================
     async def update(self, interaction):
 
-        if self.page==0:
-            await interaction.response.edit_message(embed=self.build_embed(),attachments=[])
+        if self.page == 0:
+            await interaction.response.edit_message(
+                embed=self.build_embed(),
+                attachments=[],
+                view=self
+            )
 
-        elif self.page==1:
-            buf=self.make_graph()
-            file=discord.File(buf,"graph.png")
-            embed=discord.Embed(title="Performance Graph",color=0x2b2d31)
+        elif self.page == 1:
+            buf = self.make_graph()
+            file = discord.File(buf, "graph.png")
+
+            embed = discord.Embed(
+                title="📊 Performance Graph",
+                color=0x1e2b4a
+            )
             embed.set_image(url="attachment://graph.png")
-            await interaction.response.edit_message(embed=embed,attachments=[file])
 
-        elif self.page==2:
-            buf=self.make_radar()
-            file=discord.File(buf,"radar.png")
-            embed=discord.Embed(title="Radar Analysis",color=0x2b2d31)
+            await interaction.response.edit_message(
+                embed=embed,
+                attachments=[file],
+                view=self
+            )
+
+        elif self.page == 2:
+            buf = self.make_radar()
+            file = discord.File(buf, "radar.png")
+
+            embed = discord.Embed(
+                title="🧭 Radar Analysis",
+                color=0x1e2b4a
+            )
             embed.set_image(url="attachment://radar.png")
-            await interaction.response.edit_message(embed=embed,attachments=[file])
 
+            await interaction.response.edit_message(
+                embed=embed,
+                attachments=[file],
+                view=self
+            )
 
 # =========================
 # COMMAND
 # =========================
 @bot.command()
-async def compare(ctx,*,planes_input):
+async def compare(ctx, *, planes_input):
 
     try:
-        p1_name,p2_name=planes_input.lower().split(" vs ")
+        p1_name, p2_name = planes_input.lower().split(" vs ")
     except:
         return await ctx.send("❌ Use: !compare A320 vs B737")
 
-    p1=get_plane(p1_name)
-    p2=get_plane(p2_name)
+    p1 = get_plane(p1_name)
+    p2 = get_plane(p2_name)
 
     if not p1 or not p2:
         return await ctx.send("❌ Plane not found")
 
-    route={"distance":5000,"y":300,"j":50,"f":10,"cargo":10000}
+    route = {
+        "distance": 5000,
+        "y": 300,
+        "j": 50,
+        "f": 10,
+        "cargo": 10000
+    }
 
-    r1=calc(route,p1,ctx.author.id)
-    r2=calc(route,p2,ctx.author.id)
+    r1 = calc(route, p1, ctx.author.id)
+    r2 = calc(route, p2, ctx.author.id)
 
-    view=CompareView(p1,p2,r1,r2)
+    view = CompareView(p1, p2, r1, r2)
 
-    await ctx.send(embed=view.build_embed(),view=view)
+    await ctx.send(embed=view.build_embed(), view=view)
 
 # =========================
 # BEST PLANE
