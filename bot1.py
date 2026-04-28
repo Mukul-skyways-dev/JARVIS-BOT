@@ -3,6 +3,10 @@ import random
 from discord.ext import commands
 from discord.ui import View, Button
 
+import matplotlib.pyplot as plt
+import numpy as np
+import io
+
 import sqlite3
 import os
 import requests
@@ -666,7 +670,117 @@ async def route(ctx, frm, to, *, plane_name):
     await ctx.send(embed=embed)
 
 # =========================
-# COMPARE COMMAND
+# COMPARE VIEW (BUTTON UI)
+# =========================
+class CompareView(View):
+    def __init__(self, p1, p2, r1, r2):
+        super().__init__(timeout=60)
+        self.p1 = p1
+        self.p2 = p2
+        self.r1 = r1
+        self.r2 = r2
+
+    # =========================
+    # GRAPH BUTTON
+    # =========================
+    @discord.ui.button(label="Graph", style=discord.ButtonStyle.primary)
+    async def graph_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        labels = ["Income", "Profit", "Fuel", "CO2"]
+
+        p1_vals = [
+            self.r1["income_day"],
+            self.r1["profit_day"],
+            self.r1["fuel_day"],
+            self.r1["co2_day"]
+        ]
+
+        p2_vals = [
+            self.r2["income_day"],
+            self.r2["profit_day"],
+            self.r2["fuel_day"],
+            self.r2["co2_day"]
+        ]
+
+        x = range(len(labels))
+
+        plt.figure()
+        plt.plot(x, p1_vals, marker='o')
+        plt.plot(x, p2_vals, marker='o')
+        plt.xticks(x, labels)
+        plt.title(f"{self.p1['name']} vs {self.p2['name']}")
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+
+        file = discord.File(buf, filename="graph.png")
+
+        embed = discord.Embed(
+            title="Comparison Graph",
+            description="Income / Profit / Fuel / CO2",
+            color=0x2b2d31
+        )
+        embed.set_image(url="attachment://graph.png")
+
+        await interaction.response.send_message(embed=embed, file=file)
+
+    # =========================
+    # RADAR BUTTON
+    # =========================
+    @discord.ui.button(label="Radar", style=discord.ButtonStyle.secondary)
+    async def radar_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        labels = ["Income", "Profit", "Efficiency", "Speed"]
+
+        def norm(a, b):
+            m = max(a, b)
+            return (a/m if m else 0), (b/m if m else 0)
+
+        i1, i2 = norm(self.r1["income_day"], self.r2["income_day"])
+        p1v, p2v = norm(self.r1["profit_day"], self.r2["profit_day"])
+        f1, f2 = norm(self.r1["fuel_day"], self.r2["fuel_day"])
+        s1, s2 = norm(self.p1["speed"], self.p2["speed"])
+
+        values1 = [i1, p1v, 1 - f1, s1]
+        values2 = [i2, p2v, 1 - f2, s2]
+
+        angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
+
+        values1 += values1[:1]
+        values2 += values2[:1]
+        angles += angles[:1]
+
+        plt.figure()
+        ax = plt.subplot(111, polar=True)
+
+        ax.plot(angles, values1)
+        ax.fill(angles, values1, alpha=0.1)
+
+        ax.plot(angles, values2)
+        ax.fill(angles, values2, alpha=0.1)
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels)
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+
+        file = discord.File(buf, filename="radar.png")
+
+        embed = discord.Embed(
+            title="Radar Analysis",
+            description="Visual performance comparison",
+            color=0x2b2d31
+        )
+        embed.set_image(url="attachment://radar.png")
+
+        await interaction.response.send_message(embed=embed, file=file)
+
+
+# =========================
+# COMPARE COMMAND (FINAL PRO)
 # =========================
 @bot.command()
 async def compare(ctx, *, planes_input):
@@ -674,162 +788,87 @@ async def compare(ctx, *, planes_input):
     try:
         p1_name, p2_name = planes_input.lower().split(" vs ")
     except:
-        await ctx.send("❌ Use: !compare A320 vs B737")
-        return
+        return await ctx.send("❌ Use: !compare A320 vs B737")
 
     p1 = get_plane(p1_name)
     p2 = get_plane(p2_name)
 
     if not p1 or not p2:
-        await ctx.send("❌ Plane not found")
-        return
+        return await ctx.send("❌ Plane not found")
 
-    # ===== EXTRA DATA CLEAN =====
-    def safe_cost(x):
-        try:
-            return int(str(x).replace("$","").replace(",","").strip())
-        except:
-            return 0
+    # =========================
+    # STANDARD ROUTE (FAIR COMPARISON)
+    # =========================
+    route = {
+        "distance": 5000,
+        "y": 300,
+        "j": 50,
+        "f": 10,
+        "cargo": 10000
+    }
 
-    p1["cost"] = safe_cost(p1.get("cost",0))
-    p2["cost"] = safe_cost(p2.get("cost",0))
+    # =========================
+    # REAL CALC ENGINE
+    # =========================
+    r1 = calc(route, p1, ctx.author.id)
+    r2 = calc(route, p2, ctx.author.id)
 
-    # ===== VISUAL COMPARISON =====
-    def better(a,b,reverse=False):
+    # =========================
+    # CLEAN COMPARE FORMAT
+    # =========================
+    def highlight(a, b, reverse=False):
         if reverse:
-            return "🟢 __"+str(a)+"__" if a < b else "🔴 __"+str(a)+"__"
-        return "🟢 __"+str(a)+"__" if a > b else "🔴 __"+str(a)+"__"
+            return f"**{a}**" if a < b else str(a)
+        return f"**{a}**" if a > b else str(a)
 
-    def vs(a,b): return f"{a}   ×   {b}"
-
-    # ===== DERIVED VALUES =====
-    runway1 = int(p1["range"] * 2.5)
-    runway2 = int(p2["range"] * 2.5)
-
-    maint1 = int(p1["speed"] / 100)
-    maint2 = int(p2["speed"] / 100)
-
-    # Income estimation
-    inc1 = p1["capacity"] * 1200
-    inc2 = p2["capacity"] * 1200
-
-    inc1_r = int(inc1 * 1.4)
-    inc2_r = int(inc2 * 1.4)
-
-    # ===== EMBED =====
     embed = discord.Embed(
-        title=f"⚔ {p1['name']}  VS  {p2['name']}",
-        color=0xffcc00
+        title=f"{p1['name']} vs {p2['name']}",
+        color=0x2b2d31
     )
 
-    # COST
-    embed.add_field(name="💰 Cost",
-        value=vs(
-            better(money(p1["cost"]), money(p2["cost"]), True),
-            better(money(p2["cost"]), money(p1["cost"]), True)
+    embed.add_field(
+        name="Core",
+        value=(
+            f"Capacity: {highlight(p1['capacity'], p2['capacity'])} │ {highlight(p2['capacity'], p1['capacity'])}\n"
+            f"Range: {highlight(int(p1['range']), int(p2['range']))} │ {highlight(int(p2['range']), int(p1['range']))}\n"
+            f"Speed: {highlight(int(p1['speed']), int(p2['speed']))} │ {highlight(int(p2['speed']), int(p1['speed']))}"
         ),
-        inline=False)
-
-    # CAPACITY
-    embed.add_field(name="👥 Capacity",
-        value=vs(
-            better(p1["capacity"], p2["capacity"]),
-            better(p2["capacity"], p1["capacity"])
-        ),
-        inline=False)
-
-    # RANGE
-    embed.add_field(name="📏 Range",
-        value=vs(
-            better(int(p1["range"]), int(p2["range"])),
-            better(int(p2["range"]), int(p1["range"]))
-        ),
-        inline=False)
-
-    # SPEED
-    embed.add_field(name="✈ Cruise Speed",
-        value=vs(
-            better(int(p1["speed"]), int(p2["speed"])),
-            better(int(p2["speed"]), int(p1["speed"]))
-        ),
-        inline=False)
-
-    # FUEL
-    embed.add_field(name="⛽ Fuel Consumption",
-        value=vs(
-            better(p1["fuel"], p2["fuel"], True),
-            better(p2["fuel"], p1["fuel"], True)
-        ),
-        inline=False)
-
-    # CO2
-    embed.add_field(name="🌍 CO2 Emission",
-        value=vs(
-            better(1.8, 1.8, True),
-            better(1.8, 1.8, True)
-        ),
-        inline=False)
-
-    # RUNWAY
-    embed.add_field(name="🛬 Runway Required",
-        value=vs(
-            better(runway1, runway2, True),
-            better(runway2, runway1, True)
-        ),
-        inline=False)
-
-    # MAINTENANCE
-    embed.add_field(name="🛠 Maintenance",
-        value=vs(
-            better(maint1, maint2, True),
-            better(maint2, maint1, True)
-        ),
-        inline=False)
-
-    # A-CHECK
-    embed.add_field(name="🔧 A-Check",
-        value=f"""
-Easy: {vs(better(40000,40000,True), better(40000,40000,True))}
-Realism: {vs(better(60000,60000,True), better(60000,60000,True))}
-""",
-        inline=False)
-
-    # INCOME FLIGHT
-    embed.add_field(name="💵 Income / Flight",
-        value=f"""
-Easy: {vs(better(inc1,inc2), better(inc2,inc1))}
-Realism: {vs(better(inc1_r,inc2_r), better(inc2_r,inc1_r))}
-""",
-        inline=False)
-
-    # INCOME DAY
-    embed.add_field(name="📅 Income / Day",
-        value=f"""
-Easy: {vs(better(inc1*5,inc2*5), better(inc2*5,inc1*5))}
-Realism: {vs(better(inc1_r*5,inc2_r*5), better(inc2_r*5,inc1_r*5))}
-""",
-        inline=False)
-
-    # WINNER LOGIC
-    score1 = (
-        p1["capacity"]*2 +
-        p1["range"] +
-        p1["speed"]*2 -
-        p1["fuel"]*100
+        inline=False
     )
 
-    score2 = (
-        p2["capacity"]*2 +
-        p2["range"] +
-        p2["speed"]*2 -
-        p2["fuel"]*100
+    embed.add_field(
+        name="Efficiency",
+        value=(
+            f"Fuel: {highlight(p1['fuel'], p2['fuel'], True)} │ {highlight(p2['fuel'], p1['fuel'], True)}\n"
+            f"CO2: {highlight(r1['co2'], r2['co2'], True)} │ {highlight(r2['co2'], r1['co2'], True)}"
+        ),
+        inline=False
     )
 
-    winner = p1["name"] if score1 > score2 else p2["name"]
+    embed.add_field(
+        name="Performance",
+        value=(
+            f"Income/Flight: {highlight(r1['income_trip'], r2['income_trip'])} │ {highlight(r2['income_trip'], r1['income_trip'])}\n"
+            f"Profit/Flight: {highlight(r1['profit_trip'], r2['profit_trip'])} │ {highlight(r2['profit_trip'], r1['profit_trip'])}\n"
+            f"Income/Day: {highlight(r1['income_day'], r2['income_day'])} │ {highlight(r2['income_day'], r1['income_day'])}\n"
+            f"Profit/Day: {highlight(r1['profit_day'], r2['profit_day'])} │ {highlight(r2['profit_day'], r1['profit_day'])}"
+        ),
+        inline=False
+    )
 
-    embed.set_footer(text=f"🏆 Overall Winner: {winner} | JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
+    # =========================
+    # WINNER
+    # =========================
+    winner = p1["name"] if r1["profit_day"] > r2["profit_day"] else p2["name"]
 
-    await ctx.send(embed=embed)
+    embed.set_footer(text=f"Winner: {winner} • Based on Profit/Day")
+
+    # =========================
+    # SEND WITH BUTTONS
+    # =========================
+    view = CompareView(p1, p2, r1, r2)
+    await ctx.send(embed=embed, view=view)
+
 # =========================
 # BEST PLANE
 # =========================
