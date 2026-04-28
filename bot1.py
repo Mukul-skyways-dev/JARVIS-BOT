@@ -341,9 +341,9 @@ def calc(route, plane, user_id, mods=None):
     if mode == "easy":
         lf = 1.0
 
-        y_mul = 0.9
-        j_mul = 2.2
-        f_mul = 4.5
+        y_mul = 0.35
+        j_mul = 0.9
+        f_mul = 1.8
 
         fuel_mult = 4
         co2_mult = 1.8
@@ -356,9 +356,9 @@ def calc(route, plane, user_id, mods=None):
     else:  # REALISM
         lf = 0.85
 
-        y_mul = 0.6
-        j_mul = 1.4
-        f_mul = 2.8
+        y_mul = 0.28
+        j_mul = 0.7
+        f_mul = 1.4
 
         fuel_mult = 5.5
         co2_mult = 2.5
