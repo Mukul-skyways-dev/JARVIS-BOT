@@ -765,84 +765,173 @@ class CompareView(View):
     # =========================
     def make_graph(self):
 
-        labels = ["Income", "Profit", "Fuel", "CO2"]
+    labels = ["Income", "Profit", "Fuel", "CO2"]
 
-        p1_vals = [
-            self.r1["income_day"],
-            self.r1["profit_day"],
-            self.r1["fuel_day"],
-            self.r1["co2_day"]
-        ]
+    p1_vals_raw = [
+        self.r1["income_day"],
+        self.r1["profit_day"],
+        self.r1["fuel_day"],
+        self.r1["co2_day"]
+    ]
 
-        p2_vals = [
-            self.r2["income_day"],
-            self.r2["profit_day"],
-            self.r2["fuel_day"],
-            self.r2["co2_day"]
-        ]
+    p2_vals_raw = [
+        self.r2["income_day"],
+        self.r2["profit_day"],
+        self.r2["fuel_day"],
+        self.r2["co2_day"]
+    ]
 
-        x = range(len(labels))
+    # =========================
+    # NORMALIZATION (SMART FIX)
+    # =========================
+    def normalize(a, b):
+        max_vals = [max(x, y) for x, y in zip(a, b)]
+        n1 = [(x/m if m else 0) for x, m in zip(a, max_vals)]
+        n2 = [(y/m if m else 0) for y, m in zip(b, max_vals)]
+        return n1, n2
 
-        plt.figure(figsize=(8,5))
-        plt.style.use('dark_background')
+    p1_vals, p2_vals = normalize(p1_vals_raw, p2_vals_raw)
 
-        plt.plot(x, p1_vals, marker='o', linewidth=2)
-        plt.plot(x, p2_vals, marker='o', linewidth=2)
+    x = range(len(labels))
 
-        plt.xticks(x, labels)
-        plt.title("Performance Graph")
+    plt.figure(figsize=(9,5))
+    plt.style.use('dark_background')
 
-        plt.grid(True, linestyle='--', alpha=0.6)
+    # =========================
+    # PLANE 1 (GLOW + LINE)
+    # =========================
+    plt.plot(x, p1_vals, linewidth=6, alpha=0.15)
+    plt.plot(
+        x, p1_vals,
+        marker='o',
+        linewidth=2.5,
+        linestyle='-',
+        label=self.p1["name"]
+    )
 
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close()
+    # =========================
+    # PLANE 2 (GLOW + LINE)
+    # =========================
+    plt.plot(x, p2_vals, linewidth=6, alpha=0.15)
+    plt.plot(
+        x, p2_vals,
+        marker='s',
+        linewidth=2.5,
+        linestyle='--',
+        label=self.p2["name"]
+    )
 
-        return buf
+    # =========================
+    # FILL AREA
+    # =========================
+    plt.fill_between(x, p1_vals, alpha=0.08)
+    plt.fill_between(x, p2_vals, alpha=0.08)
+
+    # =========================
+    # LABELS & TITLE
+    # =========================
+    plt.xticks(x, labels)
+    plt.ylim(0, 1.1)
+
+    plt.title("Aircraft Performance Comparison", fontsize=14)
+    plt.suptitle("Normalized Metrics (Fair Comparison)", fontsize=9, alpha=0.7)
+
+    # =========================
+    # LEGEND (FIX MAIN ISSUE)
+    # =========================
+    plt.legend()
+
+    # =========================
+    # GRID
+    # =========================
+    plt.grid(True, linestyle=':', linewidth=0.8, alpha=0.6)
+
+    # =========================
+    # VALUE LABELS (OPTIONAL BUT NICE)
+    # =========================
+    for i, v in enumerate(p1_vals):
+        plt.text(i, v, f"{p1_vals_raw[i]:,}", fontsize=7, ha='center')
+
+    for i, v in enumerate(p2_vals):
+        plt.text(i, v, f"{p2_vals_raw[i]:,}", fontsize=7, ha='center')
+
+    # =========================
+    # SAVE
+    # =========================
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+
+    return buf
 
     # =========================
     # RADAR PAGE
     # =========================
     def make_radar(self):
 
-        labels = ["Income", "Profit", "Efficiency", "Speed"]
+    labels = ["Income", "Profit", "Efficiency", "Speed"]
 
-        def norm(a, b):
-            m = max(a, b)
-            return (a/m if m else 0), (b/m if m else 0)
+    # =========================
+    # NORMALIZATION
+    # =========================
+    def norm(a, b):
+        m = max(a, b)
+        return (a/m if m else 0), (b/m if m else 0)
 
-        i1, i2 = norm(self.r1["income_day"], self.r2["income_day"])
-        p1v, p2v = norm(self.r1["profit_day"], self.r2["profit_day"])
-        f1, f2 = norm(self.r1["fuel_day"], self.r2["fuel_day"])
-        s1, s2 = norm(self.p1["speed"], self.p2["speed"])
+    i1, i2 = norm(self.r1["income_day"], self.r2["income_day"])
+    p1v, p2v = norm(self.r1["profit_day"], self.r2["profit_day"])
+    f1, f2 = norm(self.r1["fuel_day"], self.r2["fuel_day"])
+    s1, s2 = norm(self.p1["speed"], self.p2["speed"])
 
-        v1 = [i1, p1v, 1-f1, s1]
-        v2 = [i2, p2v, 1-f2, s2]
+    v1 = [i1, p1v, 1-f1, s1]
+    v2 = [i2, p2v, 1-f2, s2]
 
-        angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
-        v1 += v1[:1]
-        v2 += v2[:1]
-        angles += angles[:1]
+    angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
 
-        plt.figure()
-        ax = plt.subplot(111, polar=True)
+    v1 += v1[:1]
+    v2 += v2[:1]
+    angles += angles[:1]
 
-        ax.plot(angles, v1)
-        ax.fill(angles, v1, alpha=0.1)
+    # =========================
+    # STYLE
+    # =========================
+    plt.figure(figsize=(6,6))
+    ax = plt.subplot(111, polar=True)
 
-        ax.plot(angles, v2)
-        ax.fill(angles, v2, alpha=0.1)
+    # glow
+    ax.plot(angles, v1, linewidth=6, alpha=0.1)
+    ax.plot(angles, v2, linewidth=6, alpha=0.1)
 
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(labels)
+    # main lines
+    ax.plot(angles, v1, linewidth=2.5, label=self.p1["name"])
+    ax.plot(angles, v2, linewidth=2.5, linestyle='--', label=self.p2["name"])
 
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close()
+    # fill
+    ax.fill(angles, v1, alpha=0.08)
+    ax.fill(angles, v2, alpha=0.08)
 
-        return buf
+    # labels
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels)
+
+    # clean grid
+    ax.grid(True, linestyle=':', alpha=0.5)
+
+    # legend (IMPORTANT)
+    plt.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+
+    plt.title("Radar Performance Analysis", size=12)
+
+    # =========================
+    # SAVE
+    # =========================
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+
+    return buf
 
     # =========================
     # BUTTONS
