@@ -761,9 +761,9 @@ class CompareView(View):
         return embed
 
     # =========================
-    # GRAPH PAGE
-    # =========================
-    def make_graph(self):
+# GRAPH PAGE
+# =========================
+def make_graph(self):
 
     labels = ["Income", "Profit", "Fuel", "CO2"]
 
@@ -781,9 +781,7 @@ class CompareView(View):
         self.r2["co2_day"]
     ]
 
-    # =========================
-    # NORMALIZATION (SMART FIX)
-    # =========================
+    # NORMALIZATION
     def normalize(a, b):
         max_vals = [max(x, y) for x, y in zip(a, b)]
         n1 = [(x/m if m else 0) for x, m in zip(a, max_vals)]
@@ -797,74 +795,40 @@ class CompareView(View):
     plt.figure(figsize=(9,5))
     plt.style.use('dark_background')
 
-    # =========================
-    # PLANE 1 (GLOW + LINE)
-    # =========================
+    # Plane 1
     plt.plot(x, p1_vals, linewidth=6, alpha=0.15)
-    plt.plot(
-        x, p1_vals,
-        marker='o',
-        linewidth=2.5,
-        linestyle='-',
-        label=self.p1["name"]
-    )
+    plt.plot(x, p1_vals, marker='o', linewidth=2.5, label=self.p1["name"])
 
-    # =========================
-    # PLANE 2 (GLOW + LINE)
-    # =========================
+    # Plane 2
     plt.plot(x, p2_vals, linewidth=6, alpha=0.15)
-    plt.plot(
-        x, p2_vals,
-        marker='s',
-        linewidth=2.5,
-        linestyle='--',
-        label=self.p2["name"]
-    )
+    plt.plot(x, p2_vals, marker='s', linewidth=2.5, linestyle='--', label=self.p2["name"])
 
-    # =========================
-    # FILL AREA
-    # =========================
+    # Fill
     plt.fill_between(x, p1_vals, alpha=0.08)
     plt.fill_between(x, p2_vals, alpha=0.08)
 
-    # =========================
-    # LABELS & TITLE
-    # =========================
     plt.xticks(x, labels)
     plt.ylim(0, 1.1)
 
-    plt.title("Aircraft Performance Comparison", fontsize=14)
-    plt.suptitle("Normalized Metrics (Fair Comparison)", fontsize=9, alpha=0.7)
-
-    # =========================
-    # LEGEND (FIX MAIN ISSUE)
-    # =========================
+    plt.title("Aircraft Performance Comparison")
     plt.legend()
 
-    # =========================
-    # GRID
-    # =========================
-    plt.grid(True, linestyle=':', linewidth=0.8, alpha=0.6)
+    plt.grid(True, linestyle=':', alpha=0.6)
 
-    # =========================
-    # VALUE LABELS (OPTIONAL BUT NICE)
-    # =========================
+    # value labels
     for i, v in enumerate(p1_vals):
         plt.text(i, v, f"{p1_vals_raw[i]:,}", fontsize=7, ha='center')
 
     for i, v in enumerate(p2_vals):
         plt.text(i, v, f"{p2_vals_raw[i]:,}", fontsize=7, ha='center')
 
-    # =========================
-    # SAVE
-    # =========================
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     plt.close()
 
     return buf
-
+    
     # =========================
     # RADAR PAGE
     # =========================
