@@ -672,7 +672,7 @@ async def route(ctx, frm, to, *, plane_name):
     await ctx.send(embed=embed)
 
 # =========================
-# COMPARE VIEW 
+# COMPARE VIEW (ULTRA PRO)
 # =========================
 class CompareView(View):
     def __init__(self, p1, p2, r1, r2):
@@ -683,49 +683,8 @@ class CompareView(View):
         self.r2 = r2
         self.page = 0
 
-# =========================
-# COMPARE COMMAND
-# =========================
-@bot.command()
-async def compare(ctx, *, planes_input):
-
-    try:
-        p1_name, p2_name = planes_input.lower().split(" vs ")
-    except:
-        return await ctx.send("❌ Use: !compare A320 vs B737")
-
-    p1 = get_plane(p1_name)
-    p2 = get_plane(p2_name)
-
-    if not p1 or not p2:
-        return await ctx.send("❌ Plane not found")
-
     # =========================
-    # STANDARD TEST ROUTE (SAME AS BEFORE)
-    # =========================
-    route = {
-        "distance": 5000,
-        "y": 300,
-        "j": 50,
-        "f": 10,
-        "cargo": 10000
-    }
-
-    # =========================
-    # CALC ENGINE USE
-    # =========================
-    r1 = calc(route, p1, ctx.author.id)
-    r2 = calc(route, p2, ctx.author.id)
-
-    # =========================
-    # VIEW LOAD
-    # =========================
-    view = CompareView(p1, p2, r1, r2)
-
-    await ctx.send(embed=view.build_embed(), view=view)
-
-    # =========================
-    # TEXT PAGE (ULTRA UPGRADED)
+    # TEXT PAGE (MORE FACTORS)
     # =========================
     def build_embed(self):
 
@@ -736,20 +695,20 @@ async def compare(ctx, *, planes_input):
 
         embed = discord.Embed(
             title=f"{self.p1['name']}  vs  {self.p2['name']}",
-            description="```Aircraft Comparison Dashboard```",
+            description="```Advanced Aircraft Analytics```",
             color=0x2b2d31
         )
 
         # =========================
-        # BASIC
+        # SPECIFICATIONS
         # =========================
         embed.add_field(
-            name="Specifications",
+            name="✦ Specifications",
             value=(
-                f"Capacity   → {fmt(self.p1['capacity'], self.p2['capacity'])} │ {fmt(self.p2['capacity'], self.p1['capacity'])}\n"
-                f"Range      → {fmt(int(self.p1['range']), int(self.p2['range']))} │ {fmt(int(self.p2['range']), int(self.p1['range']))}\n"
-                f"Speed      → {fmt(int(self.p1['speed']), int(self.p2['speed']))} │ {fmt(int(self.p2['speed']), int(self.p1['speed']))}\n"
-                f"Fuel Usage → {fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {fmt(self.p2['fuel'], self.p1['fuel'], True)}"
+                f"Capacity → {fmt(self.p1['capacity'], self.p2['capacity'])} │ {fmt(self.p2['capacity'], self.p1['capacity'])}\n"
+                f"Range → {fmt(int(self.p1['range']), int(self.p2['range']))} │ {fmt(int(self.p2['range']), int(self.p1['range']))}\n"
+                f"Speed → {fmt(int(self.p1['speed']), int(self.p2['speed']))} │ {fmt(int(self.p2['speed']), int(self.p1['speed']))}\n"
+                f"Fuel → {fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {fmt(self.p2['fuel'], self.p1['fuel'], True)}"
             ),
             inline=False
         )
@@ -758,11 +717,11 @@ async def compare(ctx, *, planes_input):
         # OPERATIONS
         # =========================
         embed.add_field(
-            name="Operations",
+            name="✦ Operations",
             value=(
-                f"Trips/Day   → {fmt(self.r1['trips'], self.r2['trips'])} │ {fmt(self.r2['trips'], self.r1['trips'])}\n"
+                f"Trips/Day → {fmt(self.r1['trips'], self.r2['trips'])} │ {fmt(self.r2['trips'], self.r1['trips'])}\n"
                 f"Flight Time → {fmt(self.r1['time'], self.r2['time'], True)} │ {fmt(self.r2['time'], self.r1['time'], True)}\n"
-                f"CI Score    → {fmt(self.r1['ci'], self.r2['ci'])}% │ {fmt(self.r2['ci'], self.r1['ci'])}%"
+                f"CI Score → {fmt(self.r1['ci'], self.r2['ci'])}% │ {fmt(self.r2['ci'], self.r1['ci'])}%"
             ),
             inline=False
         )
@@ -771,26 +730,25 @@ async def compare(ctx, *, planes_input):
         # REVENUE
         # =========================
         embed.add_field(
-            name="Revenue Performance",
+            name="✦ Revenue",
             value=(
                 f"Income/Flight → {fmt(self.r1['income_trip'], self.r2['income_trip'])} │ {fmt(self.r2['income_trip'], self.r1['income_trip'])}\n"
                 f"Profit/Flight → {fmt(self.r1['profit_trip'], self.r2['profit_trip'])} │ {fmt(self.r2['profit_trip'], self.r1['profit_trip'])}\n"
-                f"Income/Day    → {fmt(self.r1['income_day'], self.r2['income_day'])} │ {fmt(self.r2['income_day'], self.r1['income_day'])}\n"
-                f"Profit/Day    → {fmt(self.r1['profit_day'], self.r2['profit_day'])} │ {fmt(self.r2['profit_day'], self.r1['profit_day'])}"
+                f"Income/Day → {fmt(self.r1['income_day'], self.r2['income_day'])} │ {fmt(self.r2['income_day'], self.r1['income_day'])}\n"
+                f"Profit/Day → {fmt(self.r1['profit_day'], self.r2['profit_day'])} │ {fmt(self.r2['profit_day'], self.r1['profit_day'])}"
             ),
             inline=False
         )
 
         # =========================
-        # COST
+        # COST ANALYSIS
         # =========================
         embed.add_field(
-            name="Cost Analysis",
+            name="✦ Cost Analysis",
             value=(
                 f"Fuel/Flight → {fmt(self.r1['fuel'], self.r2['fuel'], True)} │ {fmt(self.r2['fuel'], self.r1['fuel'], True)}\n"
-                f"CO2/Flight  → {fmt(self.r1['co2'], self.r2['co2'], True)} │ {fmt(self.r2['co2'], self.r1['co2'], True)}\n"
-                f"Fuel/Day    → {fmt(self.r1['fuel_day'], self.r2['fuel_day'], True)} │ {fmt(self.r2['fuel_day'], self.r1['fuel_day'], True)}\n"
-                f"CO2/Day     → {fmt(self.r1['co2_day'], self.r2['co2_day'], True)} │ {fmt(self.r2['co2_day'], self.r1['co2_day'], True)}"
+                f"CO2/Flight → {fmt(self.r1['co2'], self.r2['co2'], True)} │ {fmt(self.r2['co2'], self.r1['co2'], True)}\n"
+                f"Maint → {fmt(self.r1['acheck']+self.r1['repair'], self.r2['acheck']+self.r2['repair'], True)} │ {fmt(self.r2['acheck']+self.r2['repair'], self.r1['acheck']+self.r1['repair'], True)}"
             ),
             inline=False
         )
@@ -799,163 +757,156 @@ async def compare(ctx, *, planes_input):
         # EFFICIENCY
         # =========================
         embed.add_field(
-            name="Efficiency Metrics",
+            name="✦ Efficiency",
             value=(
                 f"Fuel(lb) → {fmt(self.r1['fuel_lb'], self.r2['fuel_lb'], True)} │ {fmt(self.r2['fuel_lb'], self.r1['fuel_lb'], True)}\n"
-                f"CO2(q)   → {fmt(self.r1['co2_q'], self.r2['co2_q'], True)} │ {fmt(self.r2['co2_q'], self.r1['co2_q'], True)}"
+                f"CO2(q) → {fmt(self.r1['co2_q'], self.r2['co2_q'], True)} │ {fmt(self.r2['co2_q'], self.r1['co2_q'], True)}"
             ),
             inline=False
         )
 
         winner = self.p1["name"] if self.r1["profit_day"] > self.r2["profit_day"] else self.p2["name"]
-        embed.set_footer(text=f"Page 1/3 • JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT • Winner: {winner}")
+        embed.set_footer(text=f"Page 1/3 • Winner: {winner}")
 
         return embed
 
     # =========================
-    # GRAPH PAGE
+    # GRAPH
     # =========================
     def make_graph(self):
 
         labels = ["Income", "Profit", "Fuel", "CO2"]
 
-        p1_vals = [
-            self.r1["income_day"],
-            self.r1["profit_day"],
-            self.r1["fuel_day"],
-            self.r1["co2_day"]
-        ]
+        p1_vals = [self.r1["income_day"], self.r1["profit_day"], self.r1["fuel_day"], self.r1["co2_day"]]
+        p2_vals = [self.r2["income_day"], self.r2["profit_day"], self.r2["fuel_day"], self.r2["co2_day"]]
 
-        p2_vals = [
-            self.r2["income_day"],
-            self.r2["profit_day"],
-            self.r2["fuel_day"],
-            self.r2["co2_day"]
-        ]
+        def norm(a,b):
+            m = [max(x,y) for x,y in zip(a,b)]
+            return ([x/i if i else 0 for x,i in zip(a,m)],
+                    [y/i if i else 0 for y,i in zip(b,m)])
 
-        def normalize(a, b):
-            max_vals = [max(x, y) for x, y in zip(a, b)]
-            return ([x/m if m else 0 for x, m in zip(a, max_vals)],
-                    [y/m if m else 0 for y, m in zip(b, max_vals)])
-
-        p1n, p2n = normalize(p1_vals, p2_vals)
+        p1n,p2n = norm(p1_vals,p2_vals)
 
         x = range(len(labels))
 
         plt.figure(figsize=(9,5))
         plt.style.use('dark_background')
 
-        plt.plot(x, p1n, linewidth=6, alpha=0.1)
-        plt.plot(x, p1n, marker='o', linewidth=2.5, label=self.p1["name"])
+        plt.plot(x,p1n,marker='o',linewidth=2.5,label=self.p1["name"])
+        plt.plot(x,p2n,marker='s',linewidth=2.5,linestyle='--',label=self.p2["name"])
 
-        plt.plot(x, p2n, linewidth=6, alpha=0.1)
-        plt.plot(x, p2n, marker='s', linewidth=2.5, linestyle='--', label=self.p2["name"])
-
-        plt.fill_between(x, p1n, alpha=0.08)
-        plt.fill_between(x, p2n, alpha=0.08)
-
-        plt.xticks(x, labels)
+        plt.xticks(x,labels)
         plt.legend()
-        plt.grid(True, linestyle=':', alpha=0.6)
+        plt.grid(True,linestyle=':',alpha=0.6)
 
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
+        buf=io.BytesIO()
+        plt.savefig(buf,format='png',bbox_inches='tight')
         buf.seek(0)
         plt.close()
 
         return buf
 
     # =========================
-    # RADAR PAGE (FIXED + GLOW)
+    # RADAR
     # =========================
     def make_radar(self):
 
-        labels = ["Income", "Profit", "Efficiency", "Speed"]
+        labels=["Income","Profit","Efficiency","Speed"]
 
-        def norm(a, b):
-            m = max(a, b)
-            return (a/m if m else 0), (b/m if m else 0)
+        def n(a,b):
+            m=max(a,b)
+            return (a/m if m else 0),(b/m if m else 0)
 
-        i1, i2 = norm(self.r1["income_day"], self.r2["income_day"])
-        p1v, p2v = norm(self.r1["profit_day"], self.r2["profit_day"])
-        f1, f2 = norm(self.r1["fuel_day"], self.r2["fuel_day"])
-        s1, s2 = norm(self.p1["speed"], self.p2["speed"])
+        i1,i2=n(self.r1["income_day"],self.r2["income_day"])
+        p1v,p2v=n(self.r1["profit_day"],self.r2["profit_day"])
+        f1,f2=n(self.r1["fuel_day"],self.r2["fuel_day"])
+        s1,s2=n(self.p1["speed"],self.p2["speed"])
 
-        v1 = [i1, p1v, 1-f1, s1]
-        v2 = [i2, p2v, 1-f2, s2]
+        v1=[i1,p1v,1-f1,s1]
+        v2=[i2,p2v,1-f2,s2]
 
-        angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
+        angles=np.linspace(0,2*np.pi,len(labels),endpoint=False).tolist()
 
-        v1 += v1[:1]
-        v2 += v2[:1]
-        angles += angles[:1]
+        v1+=v1[:1]
+        v2+=v2[:1]
+        angles+=angles[:1]
 
         plt.figure(figsize=(6,6))
-        ax = plt.subplot(111, polar=True)
+        ax=plt.subplot(111,polar=True)
 
-        ax.plot(angles, v1, linewidth=6, alpha=0.1)
-        ax.plot(angles, v2, linewidth=6, alpha=0.1)
+        ax.plot(angles,v1,linewidth=2.5,label=self.p1["name"])
+        ax.plot(angles,v2,linewidth=2.5,linestyle='--',label=self.p2["name"])
 
-        ax.plot(angles, v1, linewidth=2.5, label=self.p1["name"])
-        ax.plot(angles, v2, linewidth=2.5, linestyle='--', label=self.p2["name"])
-
-        ax.fill(angles, v1, alpha=0.08)
-        ax.fill(angles, v2, alpha=0.08)
+        ax.fill(angles,v1,alpha=0.1)
+        ax.fill(angles,v2,alpha=0.1)
 
         ax.set_xticks(angles[:-1])
         ax.set_xticklabels(labels)
 
-        ax.grid(True, linestyle=':', alpha=0.5)
+        plt.legend()
 
-        plt.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
+        buf=io.BytesIO()
+        plt.savefig(buf,format='png',bbox_inches='tight')
         buf.seek(0)
         plt.close()
 
         return buf
 
-    # =========================
-    # BUTTONS
-    # =========================
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction, button):
-        self.page = (self.page - 1) % 3
+        self.page=(self.page-1)%3
         await self.update(interaction)
 
     @discord.ui.button(label="▶", style=discord.ButtonStyle.primary)
     async def next_btn(self, interaction, button):
-        self.page = (self.page + 1) % 3
+        self.page=(self.page+1)%3
         await self.update(interaction)
 
-    # =========================
-    # UPDATE
-    # =========================
     async def update(self, interaction):
 
-        if self.page == 0:
-            await interaction.response.edit_message(embed=self.build_embed(), attachments=[])
+        if self.page==0:
+            await interaction.response.edit_message(embed=self.build_embed(),attachments=[])
 
-        elif self.page == 1:
-            buf = self.make_graph()
-            file = discord.File(buf, filename="graph.png")
-
-            embed = discord.Embed(title="Performance Graph", color=0x2b2d31)
+        elif self.page==1:
+            buf=self.make_graph()
+            file=discord.File(buf,"graph.png")
+            embed=discord.Embed(title="Performance Graph",color=0x2b2d31)
             embed.set_image(url="attachment://graph.png")
-            embed.set_footer(text="Page 2/3")
+            await interaction.response.edit_message(embed=embed,attachments=[file])
 
-            await interaction.response.edit_message(embed=embed, attachments=[file])
-
-        elif self.page == 2:
-            buf = self.make_radar()
-            file = discord.File(buf, filename="radar.png")
-
-            embed = discord.Embed(title="Radar Analysis", color=0x2b2d31)
+        elif self.page==2:
+            buf=self.make_radar()
+            file=discord.File(buf,"radar.png")
+            embed=discord.Embed(title="Radar Analysis",color=0x2b2d31)
             embed.set_image(url="attachment://radar.png")
-            embed.set_footer(text="Page 3/3")
+            await interaction.response.edit_message(embed=embed,attachments=[file])
 
-            await interaction.response.edit_message(embed=embed, attachments=[file])
+
+# =========================
+# COMMAND
+# =========================
+@bot.command()
+async def compare(ctx,*,planes_input):
+
+    try:
+        p1_name,p2_name=planes_input.lower().split(" vs ")
+    except:
+        return await ctx.send("❌ Use: !compare A320 vs B737")
+
+    p1=get_plane(p1_name)
+    p2=get_plane(p2_name)
+
+    if not p1 or not p2:
+        return await ctx.send("❌ Plane not found")
+
+    route={"distance":5000,"y":300,"j":50,"f":10,"cargo":10000}
+
+    r1=calc(route,p1,ctx.author.id)
+    r2=calc(route,p2,ctx.author.id)
+
+    view=CompareView(p1,p2,r1,r2)
+
+    await ctx.send(embed=view.build_embed(),view=view)
 
 # =========================
 # BEST PLANE
