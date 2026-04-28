@@ -73,25 +73,6 @@ conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
 
-# ==========================
-# AIRPORT FULL NAME RETRIEVAL 
-# ==========================
-def get_airport_full(iata):
-    try:
-        iata = iata.upper()
-        cursor.execute("""
-        SELECT airport, city, country 
-        FROM routes 
-        WHERE iata = ?
-        LIMIT 1
-        """, (iata,))
-        row = cursor.fetchone()
-        if row:
-            return f"{iata} ({row['airport']}, {row['city']}, {row['country']})"
-    except:
-        pass
-    return iata
-
 # =========================
 # DIFFICULTY SYSTEM
 # =========================
@@ -341,31 +322,19 @@ def calc(route, plane, user_id, mods=None):
     if mode == "easy":
         lf = 1.0
 
-        y_mul = 0.35
-        j_mul = 0.9
-        f_mul = 1.8
+        y_mul, j_mul, f_mul = 0.35, 0.9, 1.8
+        fuel_mult, co2_mult = 4, 1.8
 
-        fuel_mult = 4
-        co2_mult = 1.8
-
-        acheck = 20000
-        repair = 15000
-
+        acheck, repair = 20000, 15000
         cargo_mul = 0.5
 
     else:  # REALISM
         lf = 0.85
 
-        y_mul = 0.28
-        j_mul = 0.7
-        f_mul = 1.4
+        y_mul, j_mul, f_mul = 0.28, 0.7, 1.4
+        fuel_mult, co2_mult = 5.5, 2.5
 
-        fuel_mult = 5.5
-        co2_mult = 2.5
-
-        acheck = 40000
-        repair = 25000
-
+        acheck, repair = 40000, 25000
         cargo_mul = 0.35
 
     # =========================
@@ -420,7 +389,7 @@ def calc(route, plane, user_id, mods=None):
     ci = int((profit_trip / income_trip) * 100) if income_trip else 0
 
     # =========================
-    # RETURN (MASTER DATA)
+    # RETURN DATA
     # =========================
     return {
         "mode": mode,
@@ -434,7 +403,7 @@ def calc(route, plane, user_id, mods=None):
         "j": j_c,
         "f": f_c,
 
-        # ticket prices (IMPORTANT)
+        # ticket prices
         "y_price": int(y_price),
         "j_price": int(j_price),
         "f_price": int(f_price),
@@ -462,6 +431,7 @@ def calc(route, plane, user_id, mods=None):
         "co2_day": int(co2 * trips),
         "profit_day": int(profit_trip * trips)
     }
+
 # =========================
 # LEADERBOARD
 # =========================
@@ -548,7 +518,7 @@ def airport_name(iata):
     return iata  # no "Unknown" spam
 
 # =========================
-# ROUTE COMMAND (FINAL PRO CLEAN)
+# ROUTE COMMAND (FINAL)
 # =========================
 @bot.command()
 async def route(ctx, frm, to, *, plane_name):
@@ -565,7 +535,7 @@ async def route(ctx, frm, to, *, plane_name):
     plane_range = float(plane["range"])
 
     # =========================
-    # SMART STOPOVER (FAST + REAL)
+    # STOPOVER (FAST + REAL)
     # =========================
     stop_airport = None
 
@@ -590,22 +560,8 @@ async def route(ctx, frm, to, *, plane_name):
     mode = result["mode"]
 
     # =========================
-    # AIRPORT NAME FIX
+    # ROUTE DISPLAY
     # =========================
-    def airport_name(iata):
-        try:
-            cursor.execute("""
-            SELECT airport, city, country FROM routes
-            WHERE iata = ?
-            LIMIT 1
-            """, (iata,))
-            row = cursor.fetchone()
-            if row:
-                return f"{iata} — {row[1]}, {row[2]}"
-        except:
-            pass
-        return f"{iata} — Unknown"
-
     from_txt = airport_name(frm)
     to_txt = airport_name(to)
 
@@ -616,29 +572,15 @@ async def route(ctx, frm, to, *, plane_name):
         route_display = f"{from_txt}\n→ {to_txt}"
 
     # =========================
-    # TICKET PRICING
-    # =========================
-    dist = distance_total
-
-    if mode == "easy":
-        y_price = dist * 0.8
-        j_price = dist * 1.9
-        f_price = dist * 3.5
-    else:
-        y_price = dist * 0.5
-        j_price = dist * 1.2
-        f_price = dist * 2.4
-
-    # =========================
-    # EMBED UI
+    # EMBED
     # =========================
     embed = discord.Embed(
-        title=f"{plane['name']} • Route Analysis V 2.0.1",
+        title=f"{plane['name']} • Route Analysis V2.0.1",
         description=f"```{route_display}```",
         color=0x2b2d31
     )
 
-    # MODE + BASIC INFO
+    # FLIGHT INFO
     embed.add_field(
         name="Flight Info",
         value=(
@@ -649,7 +591,7 @@ async def route(ctx, frm, to, *, plane_name):
         inline=False
     )
 
-    # DEMAND (SEPARATE)
+    # DEMAND
     embed.add_field(
         name="Demand",
         value=(
@@ -660,7 +602,7 @@ async def route(ctx, frm, to, *, plane_name):
         inline=True
     )
 
-    # CONFIG (SEPARATE)
+    # CONFIG
     embed.add_field(
         name="Configuration",
         value=(
@@ -671,13 +613,13 @@ async def route(ctx, frm, to, *, plane_name):
         inline=True
     )
 
-    # TICKETS
+    # TICKET PRICING (FROM CALC)
     embed.add_field(
         name="Ticket Pricing",
         value=(
-            f"Y ${int(y_price):,}\n"
-            f"J ${int(j_price):,}\n"
-            f"F ${int(f_price):,}"
+            f"Y ${result['y_price']:,}\n"
+            f"J ${result['j_price']:,}\n"
+            f"F ${result['f_price']:,}"
         ),
         inline=True
     )
