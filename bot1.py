@@ -684,7 +684,7 @@ class CompareView(View):
         self.page = 0
 
 # =========================
-# COMPARE COMMAND (FINAL)
+# COMPARE COMMAND
 # =========================
 @bot.command()
 async def compare(ctx, *, planes_input):
@@ -808,7 +808,7 @@ async def compare(ctx, *, planes_input):
         )
 
         winner = self.p1["name"] if self.r1["profit_day"] > self.r2["profit_day"] else self.p2["name"]
-        embed.set_footer(text=f"Page 1/3 • Winner: {winner}")
+        embed.set_footer(text=f"Page 1/3 • JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT • Winner: {winner}")
 
         return embed
 
