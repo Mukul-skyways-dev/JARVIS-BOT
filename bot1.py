@@ -486,36 +486,36 @@ async def difficulty(ctx, mode=None):
     await ctx.send(f"✅ Difficulty set to **{mode.upper()}**")
 
 # =========================
-# AIRPORT FULL NAME HELPER (FINAL)
+# AIRPORT HELPER (FINAL)
 # =========================
 def airport_name(iata):
     try:
         iata = iata.upper()
 
-        # try direct iata match
+        # try FROM side first (reliable)
         cursor.execute("""
-        SELECT airport, city, country FROM routes
-        WHERE iata = ?
+        SELECT city, country FROM routes
+        WHERE f_iata = ?
         LIMIT 1
         """, (iata,))
         row = cursor.fetchone()
 
+        # fallback TO side
         if not row:
-            # fallback (VERY IMPORTANT)
             cursor.execute("""
-            SELECT airport, city, country FROM routes
-            WHERE f_iata = ? OR t_iata = ?
+            SELECT city, country FROM routes
+            WHERE t_iata = ?
             LIMIT 1
-            """, (iata, iata))
+            """, (iata,))
             row = cursor.fetchone()
 
         if row:
-            return f"{iata} — {row[1]}, {row[2]}"
+            return f"{iata} — {row[0]}, {row[1]}"
 
     except:
         pass
 
-    return iata  # no "Unknown" spam
+    return iata
 
 # =========================
 # ROUTE COMMAND (FINAL)
