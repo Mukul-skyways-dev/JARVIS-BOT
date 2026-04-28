@@ -70,6 +70,7 @@ download_db()
 # SQLITE CONNECTION
 # =========================
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
 
 # ==========================
