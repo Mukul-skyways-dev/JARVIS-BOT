@@ -3,6 +3,8 @@ import random
 from discord.ext import commands
 from discord.ui import View, Button
 
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import io
@@ -681,9 +683,9 @@ class CompareView(View):
         self.r2 = r2
 
     # =========================
-    # GRAPH BUTTON
+    # GRAPH BUTTON (COLORED)
     # =========================
-    @discord.ui.button(label="Graph", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="📊 Graph", style=discord.ButtonStyle.primary)
     async def graph_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         labels = ["Income", "Profit", "Fuel", "CO2"]
@@ -704,31 +706,38 @@ class CompareView(View):
 
         x = range(len(labels))
 
-        plt.figure()
-        plt.plot(x, p1_vals, marker='o')
-        plt.plot(x, p2_vals, marker='o')
+        plt.figure(figsize=(6,4))
+
+        # ✅ Colored lines
+        plt.plot(x, p1_vals, marker='o', color='cyan', label=self.p1["name"])
+        plt.plot(x, p2_vals, marker='o', color='orange', label=self.p2["name"])
+
         plt.xticks(x, labels)
-        plt.title(f"{self.p1['name']} vs {self.p2['name']}")
+        plt.title("Performance Comparison")
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.5)
 
         buf = io.BytesIO()
-        plt.savefig(buf, format='png')
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        plt.close()  # ✅ memory fix
         buf.seek(0)
 
         file = discord.File(buf, filename="graph.png")
 
         embed = discord.Embed(
-            title="Comparison Graph",
-            description="Income / Profit / Fuel / CO2",
+            title="📊 Comparison Graph",
+            description="Income / Profit / Fuel / CO2 (Per Day)",
             color=0x2b2d31
         )
         embed.set_image(url="attachment://graph.png")
 
         await interaction.response.send_message(embed=embed, file=file)
 
+
     # =========================
-    # RADAR BUTTON
+    # RADAR BUTTON (IMPROVED)
     # =========================
-    @discord.ui.button(label="Radar", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🧠 Radar", style=discord.ButtonStyle.secondary)
     async def radar_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         labels = ["Income", "Profit", "Efficiency", "Speed"]
@@ -751,27 +760,31 @@ class CompareView(View):
         values2 += values2[:1]
         angles += angles[:1]
 
-        plt.figure()
+        plt.figure(figsize=(5,5))
         ax = plt.subplot(111, polar=True)
 
-        ax.plot(angles, values1)
-        ax.fill(angles, values1, alpha=0.1)
+        # ✅ Colored radar
+        ax.plot(angles, values1, color='cyan', linewidth=2, label=self.p1["name"])
+        ax.fill(angles, values1, color='cyan', alpha=0.2)
 
-        ax.plot(angles, values2)
-        ax.fill(angles, values2, alpha=0.1)
+        ax.plot(angles, values2, color='orange', linewidth=2, label=self.p2["name"])
+        ax.fill(angles, values2, color='orange', alpha=0.2)
 
         ax.set_xticks(angles[:-1])
         ax.set_xticklabels(labels)
 
+        plt.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+
         buf = io.BytesIO()
-        plt.savefig(buf, format='png')
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        plt.close()  # ✅ memory fix
         buf.seek(0)
 
         file = discord.File(buf, filename="radar.png")
 
         embed = discord.Embed(
-            title="Radar Analysis",
-            description="Visual performance comparison",
+            title="🧠 Radar Analysis",
+            description="Normalized performance comparison",
             color=0x2b2d31
         )
         embed.set_image(url="attachment://radar.png")
@@ -797,7 +810,7 @@ async def compare(ctx, *, planes_input):
         return await ctx.send("❌ Plane not found")
 
     # =========================
-    # STANDARD ROUTE (FAIR COMPARISON)
+    # STANDARD ROUTE
     # =========================
     route = {
         "distance": 5000,
@@ -808,13 +821,13 @@ async def compare(ctx, *, planes_input):
     }
 
     # =========================
-    # REAL CALC ENGINE
+    # DIFFICULTY BASED CALC
     # =========================
-    r1 = calc(route, p1, ctx.author.id)
+    r1 = calc(route, p1, ctx.author.id)  # 👈 already difficulty based
     r2 = calc(route, p2, ctx.author.id)
 
     # =========================
-    # CLEAN COMPARE FORMAT
+    # FORMAT
     # =========================
     def highlight(a, b, reverse=False):
         if reverse:
@@ -827,7 +840,7 @@ async def compare(ctx, *, planes_input):
     )
 
     embed.add_field(
-        name="Core",
+        name="✈️ Core",
         value=(
             f"Capacity: {highlight(p1['capacity'], p2['capacity'])} │ {highlight(p2['capacity'], p1['capacity'])}\n"
             f"Range: {highlight(int(p1['range']), int(p2['range']))} │ {highlight(int(p2['range']), int(p1['range']))}\n"
@@ -837,7 +850,7 @@ async def compare(ctx, *, planes_input):
     )
 
     embed.add_field(
-        name="Efficiency",
+        name="⚙️ Efficiency",
         value=(
             f"Fuel: {highlight(p1['fuel'], p2['fuel'], True)} │ {highlight(p2['fuel'], p1['fuel'], True)}\n"
             f"CO2: {highlight(r1['co2'], r2['co2'], True)} │ {highlight(r2['co2'], r1['co2'], True)}"
@@ -846,7 +859,7 @@ async def compare(ctx, *, planes_input):
     )
 
     embed.add_field(
-        name="Performance",
+        name="📈 Performance",
         value=(
             f"Income/Flight: {highlight(r1['income_trip'], r2['income_trip'])} │ {highlight(r2['income_trip'], r1['income_trip'])}\n"
             f"Profit/Flight: {highlight(r1['profit_trip'], r2['profit_trip'])} │ {highlight(r2['profit_trip'], r1['profit_trip'])}\n"
@@ -861,10 +874,10 @@ async def compare(ctx, *, planes_input):
     # =========================
     winner = p1["name"] if r1["profit_day"] > r2["profit_day"] else p2["name"]
 
-    embed.set_footer(text=f"Winner: {winner} • Based on Profit/Day")
+    embed.set_footer(text=f"🏆 Winner: {winner} • Based on Profit/Day")
 
     # =========================
-    # SEND WITH BUTTONS
+    # SEND
     # =========================
     view = CompareView(p1, p2, r1, r2)
     await ctx.send(embed=embed, view=view)
