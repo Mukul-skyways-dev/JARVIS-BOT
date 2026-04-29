@@ -984,7 +984,7 @@ class CompareView(View):
             self.r2["trips"]
         ]
 
-        # SAFE NORMALIZATION (NO FLAT LINE BUG)
+        # SAFE NORMALIZATION 
         max_vals = [max(a, b) if max(a, b) != 0 else 1 for a, b in zip(p1_vals, p2_vals)]
         p1n = [a / m for a, m in zip(p1_vals, max_vals)]
         p2n = [b / m for b, m in zip(p2_vals, max_vals)]
