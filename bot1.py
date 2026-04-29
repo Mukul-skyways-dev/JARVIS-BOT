@@ -985,14 +985,21 @@ class CompareView(View):
         ]
 
         # SAFE NORMALIZATION (NO FLAT LINE BUG)
-        max_vals = [max(a, b) if max(a, b) != 0 else 1 for a, b in zip(p1_vals, p2_vals)]
-        p1n = [a / m for a, m in zip(p1_vals, max_vals)]
-        p2n = [b / m for b, m in zip(p2_vals, max_vals)]
+        def normalize(a, b):
 
-        x = range(len(labels))
+    combined = a + b
+    max_val = max(combined) if combined else 1
 
-        plt.figure(figsize=(9, 5))
-        plt.style.use("dark_background")
+    # prevent flatline domination
+    min_floor = 0.15 * max_val
+
+    def scale(x):
+        return x / max_val if max_val else 0
+
+    n1 = [max(scale(x), 0.05) for x in a]
+    n2 = [max(scale(x), 0.05) for x in b]
+
+    return n1, n2
 
         # DARK BLUE BACKGROUND
         plt.gca().set_facecolor("#0b1a40")
