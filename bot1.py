@@ -12,6 +12,7 @@ import io
 import sqlite3
 import os
 import requests
+import pytz
 
 from flask import Flask
 from threading import Thread
@@ -1588,6 +1589,10 @@ async def testfuel(ctx):
 
     await ctx.send(f"```{msg}```")
 
+# =========================
+# CHANNEL ID 
+# =========================
+CHANNEL ID = os.getenv("CHANNEL ID")
 # =========================
 # FUEL COMMAND
 # =========================
