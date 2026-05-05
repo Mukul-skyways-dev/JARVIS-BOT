@@ -1928,7 +1928,7 @@ async def graph(ctx, member: discord.User=None):
 
 # ================= COMPARE =================
 @bot.command()
-async def compare(ctx, a: discord.User, b: discord.User):
+async def compareplayer(ctx, a: discord.User, b: discord.User):
 
     d1 = [x["value"] for x in cursor_dyn.execute(
         "SELECT value FROM shares WHERE user_id=?", (str(a.id),)
@@ -1971,7 +1971,7 @@ async def compare(ctx, a: discord.User, b: discord.User):
     embed.add_field(name=b.name, value=f"Avg: {money(avg2)}\nEntries: {len(d2)}")
     embed.add_field(name="Winner", value=winner.mention, inline=False)
 
-    await ctx.send(embed=embed, file=discord.File(buf, "compare.png"))
+    await ctx.send(embed=embed, file=discord.File(buf, "compareplayer.png"))
 
 
 # ================= STATS =================
