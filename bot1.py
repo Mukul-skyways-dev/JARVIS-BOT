@@ -1,7 +1,7 @@
 import discord
 import random 
 from discord.ext import commands
-from discord.ui import View, Button
+from discord.ui import Modal, TextInput, View, Button
 
 import matplotlib
 matplotlib.use('Agg')
