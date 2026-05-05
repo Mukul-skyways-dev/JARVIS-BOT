@@ -1726,6 +1726,302 @@ async def fuelgraph(ctx):
 
     await ctx.send(file=discord.File(buf, "fuel.png"))
 
+# ================= STS - DB (USE EXISTING conn_dyn) =================
+cursor_dyn.execute("CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, username TEXT)")
+cursor_dyn.execute("CREATE TABLE IF NOT EXISTS shares (user_id TEXT, value REAL, date TEXT, window_id TEXT)")
+cursor_dyn.execute("""CREATE TABLE IF NOT EXISTS activity (
+user_id TEXT PRIMARY KEY,
+total INT DEFAULT 0, attended INT DEFAULT 0, missed INT DEFAULT 0,
+streak INT DEFAULT 0, last_window TEXT, miss_streak INT DEFAULT 0)""")
+conn_dyn.commit()
+
+
+# ================= GLOBAL =================
+current_window = {"id": None, "open_time": None}
+
+
+# ================= UI SYSTEM =================
+class UI:
+
+    @staticmethod
+    def embed(title, desc="", color=0x0A1AFF):
+        e = discord.Embed(title=title, description=desc, color=color)
+        e.set_footer(text="JARVIS • AM4 System")
+        return e
+
+    # 🔥 matplotlib graph (UPGRADE)
+    @staticmethod
+    def graph_image(data):
+        if not data:
+            return None
+
+        plt.figure()
+        plt.plot(data)
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        return buf
+
+    # keep same logic but cleaner UI
+    @staticmethod
+    def vertical_compare(v1, v2, name1, name2):
+        maxv = max(v1, v2) or 1
+        h1 = int((v1/maxv)*10)
+        h2 = int((v2/maxv)*10)
+
+        lines = ""
+        for lvl in range(10,0,-1):
+            col1 = "🟩" if h1>=lvl else "⬛"
+            col2 = "🟦" if h2>=lvl else "⬛"
+            lines += f"{col1}   {col2}\n"
+
+        lines += "—"*10 + "\n"
+        lines += f"{name1[:3]}   {name2[:3]}"
+
+        return f"```{lines}```"
+
+
+# ================= HELPERS =================
+def now(): return datetime.now()
+def window_id(): return now().date().isoformat()
+def money(x): return f"${x:,.2f}"
+
+def parse(v):
+    try:
+        v=v.lower().replace(",","").strip()
+        if "b" in v: return float(v.replace("b",""))*1e9
+        if "m" in v: return float(v.replace("m",""))*1e6
+        return float(v)
+    except:
+        return None
+
+
+# ================= REGISTER =================
+async def register(user):
+    uid=str(user.id)
+    cursor_dyn.execute("SELECT * FROM users WHERE user_id=?", (uid,))
+    if not cursor_dyn.fetchone():
+        cursor_dyn.execute("INSERT INTO users VALUES (?,?)",(uid,str(user)))
+        cursor_dyn.execute("INSERT INTO activity VALUES (?,0,0,0,0,NULL,0)",(uid,))
+        conn_dyn.commit()
+
+
+# ================= MODAL =================
+class ShareModal(Modal, title="Submit Value 🚀"):
+    value = TextInput(label="Enter Value")
+
+    async def on_submit(self, interaction):
+        val = parse(self.value.value)
+        if val is None or val<=0:
+            return await interaction.response.send_message("Invalid value",ephemeral=True)
+
+        uid=str(interaction.user.id)
+        await register(interaction.user)
+
+        cursor_dyn.execute("SELECT * FROM shares WHERE user_id=? AND window_id=?", (uid,current_window["id"]))
+        if cursor_dyn.fetchone():
+            return await interaction.response.send_message("Already submitted",ephemeral=True)
+
+        cursor_dyn.execute("INSERT INTO shares VALUES (?,?,?,?)",(uid,val,now().isoformat(),current_window["id"]))
+        cursor_dyn.execute("""UPDATE activity SET attended=attended+1,total=total+1,
+        streak=streak+1,miss_streak=0,last_window=? WHERE user_id=?""",(current_window["id"],uid))
+        conn_dyn.commit()
+
+        await interaction.response.send_message(f"✅ Submitted {money(val)}",ephemeral=True)
+
+
+# ================= VIEW =================
+class ShareView(View):
+    @discord.ui.button(label="Submit Value",style=discord.ButtonStyle.green)
+    async def submit(self,interaction,button):
+        if not current_window["id"]:
+            return await interaction.response.send_message("Window closed",ephemeral=True)
+        await interaction.response.send_modal(ShareModal())
+
+
+# ================= ADMIN =================
+class AdminPanel(View):
+
+    async def interaction_check(self, interaction):
+        return interaction.guild and interaction.user.guild_permissions.manage_guild
+
+    @discord.ui.button(label="Open Window",style=discord.ButtonStyle.green)
+    async def open_w(self,interaction,button):
+        current_window["id"]=window_id()
+        current_window["open_time"]=now()
+
+        ch=bot.get_channel(CHANNEL_ID)
+        if ch:
+            await ch.send(embed=UI.embed("📢 Window Open"),view=ShareView())
+
+        await interaction.response.send_message("Opened")
+
+    @discord.ui.button(label="Close Window",style=discord.ButtonStyle.red)
+    async def close_w(self,interaction,button):
+        current_window["id"]=None
+        current_window["open_time"]=None
+        await interaction.response.send_message("Closed")
+
+    @discord.ui.button(label="Today Data",style=discord.ButtonStyle.blurple)
+    async def today(self,interaction,button):
+        data=cursor_dyn.execute("SELECT user_id,value FROM shares WHERE window_id=?", (window_id(),)).fetchall()
+        txt="\n".join([f"<@{u}> → {money(v)}" for u,v in data]) or "No data"
+        await interaction.response.send_message(embed=UI.embed("📊 Today Data",txt))
+
+    @discord.ui.button(label="Reset Today",style=discord.ButtonStyle.gray)
+    async def reset(self,interaction,button):
+        cursor_dyn.execute("DELETE FROM shares WHERE window_id=?", (window_id(),))
+        conn_dyn.commit()
+        await interaction.response.send_message("Reset done")
+
+
+# ================= COMMAND =================
+@bot.command(aliases=["admin"])
+async def panel(ctx):
+    if not ctx.guild:
+        return await ctx.send("Server only")
+    if not ctx.author.guild_permissions.manage_guild:
+        return await ctx.send("Admin only")
+
+    await ctx.send(embed=UI.embed("⚙ Control Panel"),view=AdminPanel())
+
+# ================= GRAPH =================
+@bot.command()
+async def graph(ctx, member: discord.User=None):
+    member = member or ctx.author
+    await register(member)
+
+    uid = str(member.id)
+
+    data = [x["value"] for x in cursor_dyn.execute(
+        "SELECT value FROM shares WHERE user_id=? ORDER BY date", (uid,)
+    ).fetchall()]
+
+    if not data:
+        return await ctx.send("No data")
+
+    avg = sum(data)/len(data)
+    mx = max(data)
+    mn = min(data)
+
+    # 🔥 matplotlib dark blue graph
+    plt.figure()
+    plt.plot(data)
+    plt.gca().set_facecolor("#0A1AFF")
+    plt.gcf().patch.set_facecolor("#0A1AFF")
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    embed = UI.embed(f"📊 Full Growth - {member}")
+    embed.add_field(name="Average", value=money(avg))
+    embed.add_field(name="High", value=money(mx))
+    embed.add_field(name="Low", value=money(mn))
+    embed.add_field(name="Total Entries", value=str(len(data)))
+
+    await ctx.send(embed=embed, file=discord.File(buf, "graph.png"))
+
+
+# ================= COMPARE =================
+@bot.command()
+async def compare(ctx, a: discord.User, b: discord.User):
+
+    d1 = [x["value"] for x in cursor_dyn.execute(
+        "SELECT value FROM shares WHERE user_id=?", (str(a.id),)
+    ).fetchall()]
+
+    d2 = [x["value"] for x in cursor_dyn.execute(
+        "SELECT value FROM shares WHERE user_id=?", (str(b.id),)
+    ).fetchall()]
+
+    if not d1 or not d2:
+        return await ctx.send("Not enough data")
+
+    avg1 = sum(d1)/len(d1)
+    avg2 = sum(d2)/len(d2)
+
+    # 🔥 matplotlib vertical bar (dark blue)
+    labels = [a.name, b.name]
+    values = [avg1, avg2]
+
+    plt.figure()
+    bars = plt.bar(labels, values)
+
+    plt.gca().set_facecolor("#0A1AFF")
+    plt.gcf().patch.set_facecolor("#0A1AFF")
+
+    for bar in bars:
+        h = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2, h, int(h),
+                 ha='center', va='bottom')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    winner = a if avg1 > avg2 else b
+
+    embed = UI.embed("⚔ Player Comparison")
+    embed.add_field(name=a.name, value=f"Avg: {money(avg1)}\nEntries: {len(d1)}")
+    embed.add_field(name=b.name, value=f"Avg: {money(avg2)}\nEntries: {len(d2)}")
+    embed.add_field(name="Winner", value=winner.mention, inline=False)
+
+    await ctx.send(embed=embed, file=discord.File(buf, "compare.png"))
+
+
+# ================= STATS =================
+@bot.command()
+async def stats(ctx, member: discord.User=None):
+    member = member or ctx.author
+    await register(member)
+
+    uid = str(member.id)
+
+    latest = cursor_dyn.execute(
+        "SELECT value FROM shares WHERE user_id=? ORDER BY date DESC LIMIT 1", (uid,)
+    ).fetchone()
+
+    act = cursor_dyn.execute(
+        "SELECT total,attended,missed,streak FROM activity WHERE user_id=?", (uid,)
+    ).fetchone()
+
+    if not latest or not act:
+        return await ctx.send("No data")
+
+    total, attended, missed, streak = act
+    cons = (attended/total*100) if total else 0
+
+    embed = UI.embed(f"📊 Detailed Stats - {member}")
+    embed.add_field(name="Latest", value=money(latest["value"]))
+    embed.add_field(name="Consistency", value=f"{cons:.1f}%")
+    embed.add_field(name="Rank", value=rank(cons))
+    embed.add_field(name="Streak", value=streak)
+    embed.add_field(name="Missed", value=missed)
+    embed.add_field(name="Total Entries", value=total)
+
+    await ctx.send(embed=embed)
+
+
+# ================= LEADERBOARD =================
+@bot.command()
+async def leaderboard(ctx):
+
+    data = cursor_dyn.execute("""
+    SELECT users.username, AVG(shares.value) as avg_val
+    FROM shares JOIN users ON users.user_id=shares.user_id
+    GROUP BY shares.user_id ORDER BY avg_val DESC LIMIT 5
+    """).fetchall()
+
+    txt = "\n".join([f"{i+1}. {u} → {money(v)}" for i,(u,v) in enumerate(
+        [(r["username"], r["avg_val"]) for r in data]
+    )])
+
+    await ctx.send(embed=UI.embed("🏆 Leaderboard", txt))
 
 # =========================
 # START TASKS
