@@ -80,6 +80,13 @@ conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
 
 # =========================
+# DYNAMIC DB (NEW FEATURES)
+# =========================
+conn_dyn = sqlite3.connect("new_am4.db", check_same_thread=False)
+conn_dyn.row_factory = sqlite3.Row
+cursor_dyn = conn_dyn.cursor()
+
+# =========================
 # DIFFICULTY SYSTEM
 # =========================
 def get_user_mode(user_id):
@@ -1563,12 +1570,29 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+# =========================
+# TESTING FUEL DB
+# =========================
+@bot.command()
+async def testfuel(ctx):
+    cursor_dyn.execute("SELECT * FROM fuel_data LIMIT 5")
+    rows = cursor_dyn.fetchall()
 
+    if not rows:
+        await ctx.send("No data found")
+        return
+
+    msg = ""
+    for r in rows:
+        msg += f"{r['day']} | {r['time']} | {r['fuel']} | {r['co2']}\n"
+
+    await ctx.send(f"```{msg}```")
+
+# =========READY==============
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     print("🚀 JARVIS is now active and ready")
-
 
 # =========================
 # KEEP ALIVE (ONLY ONCE)
