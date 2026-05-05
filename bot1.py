@@ -1588,11 +1588,148 @@ async def testfuel(ctx):
 
     await ctx.send(f"```{msg}```")
 
-# =========READY==============
+# =========================
+# FUEL COMMAND
+# =========================
+@bot.command()
+async def fuel(ctx):
+    cursor_dyn.execute("""
+        SELECT fuel, co2 
+        FROM fuel_data 
+        ORDER BY day DESC, time DESC 
+        LIMIT 6
+    """)
+    rows = cursor_dyn.fetchall()
+
+    if len(rows) < 2:
+        await ctx.send("Not enough data")
+        return
+
+    fuels = [r["fuel"] for r in rows]
+    co2s = [r["co2"] for r in rows]
+
+    avg_fuel = sum(fuels) / len(fuels)
+    avg_co2 = sum(co2s) / len(co2s)
+
+    last_fuel = fuels[0]
+    last_co2 = co2s[0]
+
+    trend = "🔺 Rising" if last_fuel > fuels[1] else "🔻 Falling"
+
+    embed = discord.Embed(title="⛽ Fuel Prediction", color=0x0A1AFF)
+    embed.add_field(name="Current Fuel", value=f"{last_fuel}", inline=True)
+    embed.add_field(name="Predicted", value=f"{int(avg_fuel)}", inline=True)
+    embed.add_field(name="Trend", value=trend, inline=True)
+    embed.add_field(name="CO2", value=f"{last_co2}", inline=True)
+    embed.add_field(name="CO2 Avg", value=f"{int(avg_co2)}", inline=True)
+
+    await ctx.send(embed=embed)
+
+
+# =========================
+# AUTO ALERT LOOP
+# =========================
+async def fuel_alert_loop():
+    await bot.wait_until_ready()
+    channel = bot.get_channel(FUEL_CHANNEL_ID)
+
+    last_sent = None
+
+    while not bot.is_closed():
+        cursor_dyn.execute("""
+            SELECT fuel FROM fuel_data 
+            ORDER BY day DESC, time DESC 
+            LIMIT 5
+        """)
+        rows = cursor_dyn.fetchall()
+
+        fuels = [r["fuel"] for r in rows]
+        avg = sum(fuels) / len(fuels)
+        current = fuels[0]
+
+        msg = None
+        if current < avg - 100:
+            msg = f"🟢 Fuel Low Alert: {current}"
+        elif current > avg + 100:
+            msg = f"🔴 Fuel High Alert: {current}"
+
+        if msg and msg != last_sent and channel:
+            await channel.send(msg)
+            last_sent = msg
+
+        await asyncio.sleep(1800)  # 30 min
+
+
+# =========================
+# DAILY FORECAST
+# =========================
+async def daily_forecast():
+    await bot.wait_until_ready()
+    channel = bot.get_channel(FUEL_CHANNEL_ID)
+
+    IST = pytz.timezone("Asia/Kolkata")
+
+    while not bot.is_closed():
+        now = datetime.now(IST)
+
+        if now.hour == 0 and now.minute == 0:
+            cursor_dyn.execute("""
+                SELECT fuel FROM fuel_data 
+                ORDER BY day DESC, time DESC 
+                LIMIT 24
+            """)
+            rows = cursor_dyn.fetchall()
+
+            fuels = [r["fuel"] for r in rows]
+            avg = sum(fuels) / len(fuels)
+
+            embed = discord.Embed(
+                title="🌙 24h Fuel Forecast",
+                description=f"Expected Avg Fuel: {int(avg)}",
+                color=0x0A1AFF
+            )
+
+            if channel:
+                await channel.send(embed=embed)
+
+            await asyncio.sleep(60)
+
+        await asyncio.sleep(30)
+
+
+# =========================
+# GRAPH COMMAND
+# =========================
+@bot.command()
+async def fuelgraph(ctx):
+    cursor_dyn.execute("""
+        SELECT fuel FROM fuel_data 
+        ORDER BY day DESC, time DESC 
+        LIMIT 10
+    """)
+    rows = cursor_dyn.fetchall()
+
+    fuels = [r["fuel"] for r in rows][::-1]
+
+    plt.figure()
+    plt.plot(fuels)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    await ctx.send(file=discord.File(buf, "fuel.png"))
+
+
+# =========================
+# START TASKS
+# =========================
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-    print("🚀 JARVIS is now active and ready")
+    print(f"Logged in as {bot.user}")
+    bot.loop.create_task(fuel_alert_loop())
+    bot.loop.create_task(daily_forecast())
 
 # =========================
 # KEEP ALIVE (ONLY ONCE)
