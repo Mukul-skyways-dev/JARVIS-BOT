@@ -1592,7 +1592,7 @@ async def testfuel(ctx):
 # =========================
 # CHANNEL ID 
 # =========================
-CHANNEL ID = os.getenv("CHANNEL ID")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 # =========================
 # FUEL COMMAND
 # =========================
@@ -1636,7 +1636,7 @@ async def fuel(ctx):
 # =========================
 async def fuel_alert_loop():
     await bot.wait_until_ready()
-    channel = bot.get_channel(FUEL_CHANNEL_ID)
+    channel = bot.get_channel(CHANNEL_ID)
 
     last_sent = None
 
@@ -1670,7 +1670,7 @@ async def fuel_alert_loop():
 # =========================
 async def daily_forecast():
     await bot.wait_until_ready()
-    channel = bot.get_channel(FUEL_CHANNEL_ID)
+    channel = bot.get_channel(CHANNEL_ID)
 
     IST = pytz.timezone("Asia/Kolkata")
 
