@@ -2007,9 +2007,9 @@ async def stats(ctx, member: discord.User=None):
     await ctx.send(embed=embed)
 
 
-# ================= LEADERBOARD =================
+# ================= LEADERBOARD (Share rank) =================
 @bot.command()
-async def leaderboard(ctx):
+async def shareboard (ctx):
 
     data = cursor_dyn.execute("""
     SELECT users.username, AVG(shares.value) as avg_val
