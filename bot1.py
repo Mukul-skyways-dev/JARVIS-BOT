@@ -12,6 +12,7 @@ import io
 import sqlite3
 import os
 import requests
+from openai import OpenAI
 import pytz
 
 from flask import Flask
