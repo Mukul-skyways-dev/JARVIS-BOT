@@ -38,6 +38,12 @@ def keep_alive():
 # BOT CONFIG
 # =========================
 TOKEN = os.getenv("TOKEN")
+
+groq = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
+)
+
 WELCOME_ROLE_NAME = "Member"
 
 intents = discord.Intents.default()
@@ -2032,6 +2038,41 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     bot.loop.create_task(fuel_alert_loop())
     bot.loop.create_task(daily_forecast())
+
+# =========================
+# AI COMMAND 
+# =========================
+@bot.command()
+async def ask(ctx, *, question):
+
+    msg = await ctx.send("🧠 Thinking...")
+
+    response = groq.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+                You are JARVIS, an AM4 aviation intelligence assistant.
+                Main expertise:
+                - Airline Manager 4
+                - routes
+                - fuel
+                - airline growth
+                - aircraft
+                You also casually chat naturally.
+                """
+            },
+            {
+                "role": "user",
+                "content": question
+            }
+        ]
+    )
+
+    reply = response.choices[0].message.content
+
+    await msg.edit(content=reply[:2000])
 
 # =========================
 # KEEP ALIVE (ONLY ONCE)
