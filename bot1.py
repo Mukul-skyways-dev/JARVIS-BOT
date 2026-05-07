@@ -2047,38 +2047,52 @@ async def ask(ctx, *, question):
 
     msg = await ctx.send("🧠 Thinking...")
 
-    response = groq.chat.completions.create(
-        model="llama3-70b-8192",
-        messages=[
-            {
-                "role": "system",
-                "content": """
-                You are JARVIS, an AM4 aviation intelligence assistant.
-                Main expertise:
-                - Airline Manager 4
-                - routes
-                - fuel
-                - airline growth
-                - aircraft
-                You also casually chat naturally.
-                """
-            },
-            {
-                "role": "user",
-                "content": question
-            }
-        ]
-    )
+    try:
+        response = groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
 
-    reply = response.choices[0].message.content
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+                    You are JARVIS, an advanced AM4 aviation intelligence assistant.
 
-    await msg.edit(content=reply[:2000])
+                    Your main expertise:
+                    - Airline Manager 4
+                    - routes
+                    - fuel strategy
+                    - aircraft comparison
+                    - airline growth
+                    - alliance systems
+                    - aviation analytics
+
+                    You also casually chat naturally like a smart AI assistant.
+
+                    Keep responses clean, smart, and helpful.
+                    """
+                },
+
+                {
+                    "role": "user",
+                    "content": question
+                }
+            ],
+
+            temperature=0.7,
+            max_tokens=700
+        )
+
+        reply = response.choices[0].message.content
+
+        await msg.edit(content=reply[:2000])
+
+    except Exception as e:
+        await msg.edit(content=f"❌ AI Error:\n```{e}```")
 
 # =========================
 # KEEP ALIVE (ONLY ONCE)
 # =========================
 keep_alive()
-
 
 # =========================
 # SAFE START (IMPORTANT FIX)
