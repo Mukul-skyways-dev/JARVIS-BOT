@@ -991,14 +991,16 @@ import numpy as np
 import io
 
 # =========================
-# COMPARE VIEW 
+# COMPARE VIEW V3
 # =========================
 class CompareView(View):
+
     def __init__(self, p1, p2, r1, r2):
         super().__init__(timeout=120)
 
         self.p1 = p1
         self.p2 = p2
+
         self.r1 = r1
         self.r2 = r2
 
@@ -1008,35 +1010,38 @@ class CompareView(View):
     # SAFE FORMATTER
     # =========================
     def fmt(self, a, b, reverse=False):
+
         try:
             a = float(a)
             b = float(b)
+
         except:
             return f"{a}"
 
         if reverse:
             return f"**{a:,.0f}**" if a < b else f"{a:,.0f}"
+
         return f"**{a:,.0f}**" if a > b else f"{a:,.0f}"
 
     # =========================
-    # PAGE 1 - TEXT EMBED
+    # PAGE 1
     # =========================
     def build_embed(self):
 
         embed = discord.Embed(
             title=f"{self.p1['name']}  VS  {self.p2['name']}",
             description="```Advanced Aircraft Analytics Engine```",
-            color=0x1e2b4a  # DARK BLUE THEME
+            color=0x2b2d31
         )
 
         # ================= SPEC =================
         embed.add_field(
             name="✦ Specifications",
             value=(
-                f"Capacity → {self.fmt(self.p1['capacity'], self.p2['capacity'])} │ {self.fmt(self.p2['capacity'], self.p1['capacity'])}\n"
-                f"Range → {self.fmt(self.p1['range'], self.p2['range'])} │ {self.fmt(self.p2['range'], self.p1['range'])}\n"
-                f"Speed → {self.fmt(self.p1['speed'], self.p2['speed'])} │ {self.fmt(self.p2['speed'], self.p1['speed'])}\n"
-                f"Fuel → {self.fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {self.fmt(self.p2['fuel'], self.p1['fuel'], True)}"
+                f"**Capacity** → {self.fmt(self.p1['capacity'], self.p2['capacity'])} │ {self.fmt(self.p2['capacity'], self.p1['capacity'])}\n"
+                f"**Range** → {self.fmt(self.p1['range'], self.p2['range'])} │ {self.fmt(self.p2['range'], self.p1['range'])}\n"
+                f"**Speed** → {self.fmt(self.p1['speed'], self.p2['speed'])} │ {self.fmt(self.p2['speed'], self.p1['speed'])}\n"
+                f"**Fuel** → {self.fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {self.fmt(self.p2['fuel'], self.p1['fuel'], True)}"
             ),
             inline=False
         )
@@ -1045,9 +1050,9 @@ class CompareView(View):
         embed.add_field(
             name="✦ Operations",
             value=(
-                f"Trips/Day → {self.fmt(self.r1['trips'], self.r2['trips'])} │ {self.fmt(self.r2['trips'], self.r1['trips'])}\n"
-                f"Flight Time → {self.fmt(self.r1['time'], self.r2['time'], True)} │ {self.fmt(self.r2['time'], self.r1['time'], True)}\n"
-                f"CI Score → {self.fmt(self.r1['ci'], self.r2['ci'])}% │ {self.fmt(self.r2['ci'], self.r1['ci'])}%"
+                f"**Trips/Day** → {self.fmt(self.r1['trips'], self.r2['trips'])} │ {self.fmt(self.r2['trips'], self.r1['trips'])}\n"
+                f"**Flight Time** → {self.fmt(self.r1['time'], self.r2['time'], True)} │ {self.fmt(self.r2['time'], self.r1['time'], True)}\n"
+                f"**CI Score** → {self.fmt(self.r1['ci'], self.r2['ci'])}% │ {self.fmt(self.r2['ci'], self.r1['ci'])}%"
             ),
             inline=False
         )
@@ -1056,10 +1061,10 @@ class CompareView(View):
         embed.add_field(
             name="✦ Revenue",
             value=(
-                f"Income/Flight → {self.fmt(self.r1['income_trip'], self.r2['income_trip'])} │ {self.fmt(self.r2['income_trip'], self.r1['income_trip'])}\n"
-                f"Profit/Flight → {self.fmt(self.r1['profit_trip'], self.r2['profit_trip'])} │ {self.fmt(self.r2['profit_trip'], self.r1['profit_trip'])}\n"
-                f"Income/Day → {self.fmt(self.r1['income_day'], self.r2['income_day'])} │ {self.fmt(self.r2['income_day'], self.r1['income_day'])}\n"
-                f"Profit/Day → {self.fmt(self.r1['profit_day'], self.r2['profit_day'])} │ {self.fmt(self.r2['profit_day'], self.r1['profit_day'])}"
+                f"**Income/Flight** → {self.fmt(self.r1['income_trip'], self.r2['income_trip'])} │ {self.fmt(self.r2['income_trip'], self.r1['income_trip'])}\n"
+                f"**Profit/Flight** → {self.fmt(self.r1['profit_trip'], self.r2['profit_trip'])} │ {self.fmt(self.r2['profit_trip'], self.r1['profit_trip'])}\n"
+                f"**Income/Day** → {self.fmt(self.r1['income_day'], self.r2['income_day'])} │ {self.fmt(self.r2['income_day'], self.r1['income_day'])}\n"
+                f"**Profit/Day** → {self.fmt(self.r1['profit_day'], self.r2['profit_day'])} │ {self.fmt(self.r2['profit_day'], self.r1['profit_day'])}"
             ),
             inline=False
         )
@@ -1068,9 +1073,9 @@ class CompareView(View):
         embed.add_field(
             name="✦ Cost Analysis",
             value=(
-                f"Fuel/Flight → {self.fmt(self.r1['fuel'], self.r2['fuel'], True)} │ {self.fmt(self.r2['fuel'], self.r1['fuel'], True)}\n"
-                f"CO2/Flight → {self.fmt(self.r1['co2'], self.r2['co2'], True)} │ {self.fmt(self.r2['co2'], self.r1['co2'], True)}\n"
-                f"Maint → {self.fmt(self.r1['acheck'] + self.r1['repair'], self.r2['acheck'] + self.r2['repair'], True)} │ {self.fmt(self.r2['acheck'] + self.r2['repair'], self.r1['acheck'] + self.r1['repair'], True)}"
+                f"**Fuel/Flight** → {self.fmt(self.r1['fuel'], self.r2['fuel'], True)} │ {self.fmt(self.r2['fuel'], self.r1['fuel'], True)}\n"
+                f"**CO2/Flight** → {self.fmt(self.r1['co2'], self.r2['co2'], True)} │ {self.fmt(self.r2['co2'], self.r1['co2'], True)}\n"
+                f"**Maint** → {self.fmt(self.r1['acheck'] + self.r1['repair'], self.r2['acheck'] + self.r2['repair'], True)} │ {self.fmt(self.r2['acheck'] + self.r2['repair'], self.r1['acheck'] + self.r1['repair'], True)}"
             ),
             inline=False
         )
@@ -1079,30 +1084,43 @@ class CompareView(View):
         embed.add_field(
             name="✦ Efficiency",
             value=(
-                f"Fuel(lb) → {self.fmt(self.r1['fuel_lb'], self.r2['fuel_lb'], True)} │ {self.fmt(self.r2['fuel_lb'], self.r1['fuel_lb'], True)}\n"
-                f"CO2(q) → {self.fmt(self.r1['co2_q'], self.r2['co2_q'], True)} │ {self.fmt(self.r2['co2_q'], self.r1['co2_q'], True)}"
+                f"**Fuel(lb)** → {self.fmt(self.r1['fuel_lb'], self.r2['fuel_lb'], True)} │ {self.fmt(self.r2['fuel_lb'], self.r1['fuel_lb'], True)}\n"
+                f"**CO2(q)** → {self.fmt(self.r1['co2_q'], self.r2['co2_q'], True)} │ {self.fmt(self.r2['co2_q'], self.r1['co2_q'], True)}"
             ),
             inline=False
         )
 
-        winner = self.p1["name"] if self.r1["profit_day"] > self.r2["profit_day"] else self.p2["name"]
-        embed.set_footer(text=f"Page 1/3 • Winner: {winner}")
+        winner = (
+            self.p1["name"]
+            if self.r1["profit_day"] > self.r2["profit_day"]
+            else self.p2["name"]
+        )
+
+        embed.set_footer(
+            text=f"Page 1/3 • Winner: {winner}"
+        )
 
         return embed
 
     # =========================
-    # GRAPH (FIXED NORMALIZATION + STABLE)
+    # PERFORMANCE GRAPH
     # =========================
     def make_graph(self):
 
-        labels = ["Income", "Profit", "Fuel", "CO2", "Trips"]
+        labels = [
+            "Income",
+            "Profit",
+            "Fuel",
+            "CO2",
+            "Trips"
+        ]
 
         p1_vals = [
             self.r1["income_day"],
             self.r1["profit_day"],
             self.r1["fuel_day"],
             self.r1["co2_day"],
-            self.r1["trips"]
+            self.r1["trips"] * 100000
         ]
 
         p2_vals = [
@@ -1110,53 +1128,138 @@ class CompareView(View):
             self.r2["profit_day"],
             self.r2["fuel_day"],
             self.r2["co2_day"],
-            self.r2["trips"]
+            self.r2["trips"] * 100000
         ]
 
-        # SAFE NORMALIZATION 
-        max_vals = [max(a, b) if max(a, b) != 0 else 1 for a, b in zip(p1_vals, p2_vals)]
-        p1n = [a / m for a, m in zip(p1_vals, max_vals)]
-        p2n = [b / m for b, m in zip(p2_vals, max_vals)]
+        # BETTER NORMALIZATION
+        max_val = max(
+            max(p1_vals),
+            max(p2_vals)
+        )
 
-        x = range(len(labels))
+        if max_val == 0:
+            max_val = 1
 
-        plt.figure(figsize=(9, 5))
-        plt.style.use("dark_background")
+        p1n = [v / max_val for v in p1_vals]
+        p2n = [v / max_val for v in p2_vals]
 
-        # DARK BLUE BACKGROUND
-        plt.gca().set_facecolor("#0b1a40")
-        plt.gcf().patch.set_facecolor("#0b1a40")
+        x = np.arange(len(labels))
 
-        # PLOTS
-        plt.plot(x, p1n, marker='o', linewidth=2.5, label=self.p1["name"])
-        plt.plot(x, p2n, marker='s', linewidth=2.5, linestyle='--', label=self.p2["name"])
+        # ================= FIGURE =================
+        fig, ax = plt.subplots(figsize=(9, 5))
 
-        plt.xticks(x, labels)
-        plt.grid(alpha=0.4, linestyle=":")
-        plt.legend()
+        # LIGHT PROFESSIONAL DARK GRAY
+        fig.patch.set_facecolor("#1f1f1f")
+        ax.set_facecolor("#2b2d31")
 
+        # ================= GLOW EFFECT =================
+        for lw, alpha in [(10, 0.05), (7, 0.08), (5, 0.12)]:
+            ax.plot(
+                x,
+                p1n,
+                linewidth=lw,
+                alpha=alpha
+            )
+
+        ax.plot(
+            x,
+            p1n,
+            marker='o',
+            linewidth=2.8,
+            label=self.p1["name"]
+        )
+
+        for lw, alpha in [(10, 0.05), (7, 0.08), (5, 0.12)]:
+            ax.plot(
+                x,
+                p2n,
+                linewidth=lw,
+                linestyle='--',
+                alpha=alpha
+            )
+
+        ax.plot(
+            x,
+            p2n,
+            marker='s',
+            linewidth=2.8,
+            linestyle='--',
+            label=self.p2["name"]
+        )
+
+        # ================= STYLE =================
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+
+        ax.grid(
+            alpha=0.18,
+            linestyle=':'
+        )
+
+        ax.legend()
+
+        for spine in ax.spines.values():
+            spine.set_color("#555555")
+
+        ax.tick_params(colors="white")
+
+        # ================= SAVE =================
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+
+        plt.savefig(
+            buf,
+            format='png',
+            bbox_inches='tight',
+            dpi=300
+        )
+
         buf.seek(0)
+
         plt.close()
 
         return buf
 
     # =========================
-    # RADAR (FIXED SCALING)
+    # RADAR
     # =========================
     def make_radar(self):
 
-        labels = ["Income", "Profit", "Efficiency", "Speed", "Trips"]
+        labels = [
+            "Income",
+            "Profit",
+            "Efficiency",
+            "Speed",
+            "Trips"
+        ]
 
         def safe(a, b):
-            m = max(a, b)
-            return (a / m if m else 0), (b / m if m else 0)
 
-        i1, i2 = safe(self.r1["income_day"], self.r2["income_day"])
-        p1v, p2v = safe(self.r1["profit_day"], self.r2["profit_day"])
-        s1, s2 = safe(self.p1["speed"], self.p2["speed"])
-        t1, t2 = safe(self.r1["trips"], self.r2["trips"])
+            m = max(a, b)
+
+            return (
+                (a / m if m else 0),
+                (b / m if m else 0)
+            )
+
+        i1, i2 = safe(
+            self.r1["income_day"],
+            self.r2["income_day"]
+        )
+
+        p1v, p2v = safe(
+            self.r1["profit_day"],
+            self.r2["profit_day"]
+        )
+
+        s1, s2 = safe(
+            self.p1["speed"],
+            self.p2["speed"]
+        )
+
+        t1, t2 = safe(
+            self.r1["trips"],
+            self.r2["trips"]
+        )
 
         e1 = (i1 + p1v) / 2
         e2 = (i2 + p2v) / 2
@@ -1164,32 +1267,73 @@ class CompareView(View):
         v1 = [i1, p1v, e1, s1, t1]
         v2 = [i2, p2v, e2, s2, t2]
 
-        angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
+        angles = np.linspace(
+            0,
+            2 * np.pi,
+            len(labels),
+            endpoint=False
+        ).tolist()
 
         v1 += v1[:1]
         v2 += v2[:1]
+
         angles += angles[:1]
 
-        plt.figure(figsize=(6, 6))
+        # ================= FIGURE =================
+        fig = plt.figure(figsize=(6, 6))
+
         ax = plt.subplot(111, polar=True)
 
-        ax.set_facecolor("#0b1a40")
-        plt.gcf().patch.set_facecolor("#0b1a40")
+        fig.patch.set_facecolor("#1f1f1f")
+        ax.set_facecolor("#2b2d31")
 
-        ax.plot(angles, v1, linewidth=2.5, label=self.p1["name"])
-        ax.plot(angles, v2, linewidth=2.5, linestyle="--", label=self.p2["name"])
+        # ================= PLOTS =================
+        ax.plot(
+            angles,
+            v1,
+            linewidth=2.5,
+            label=self.p1["name"]
+        )
 
-        ax.fill(angles, v1, alpha=0.15)
-        ax.fill(angles, v2, alpha=0.15)
+        ax.plot(
+            angles,
+            v2,
+            linewidth=2.5,
+            linestyle='--',
+            label=self.p2["name"]
+        )
+
+        ax.fill(
+            angles,
+            v1,
+            alpha=0.12
+        )
+
+        ax.fill(
+            angles,
+            v2,
+            alpha=0.12
+        )
 
         ax.set_xticks(angles[:-1])
         ax.set_xticklabels(labels, color="white")
 
+        ax.grid(alpha=0.2)
+
         plt.legend()
 
+        # ================= SAVE =================
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+
+        plt.savefig(
+            buf,
+            format='png',
+            bbox_inches='tight',
+            dpi=300
+        )
+
         buf.seek(0)
+
         plt.close()
 
         return buf
@@ -1197,14 +1341,24 @@ class CompareView(View):
     # =========================
     # BUTTONS
     # =========================
-    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        label="◀",
+        style=discord.ButtonStyle.secondary
+    )
     async def prev_btn(self, interaction, button):
+
         self.page = (self.page - 1) % 3
+
         await self.update(interaction)
 
-    @discord.ui.button(label="▶", style=discord.ButtonStyle.primary)
+    @discord.ui.button(
+        label="▶",
+        style=discord.ButtonStyle.primary
+    )
     async def next_btn(self, interaction, button):
+
         self.page = (self.page + 1) % 3
+
         await self.update(interaction)
 
     # =========================
@@ -1213,6 +1367,7 @@ class CompareView(View):
     async def update(self, interaction):
 
         if self.page == 0:
+
             await interaction.response.edit_message(
                 embed=self.build_embed(),
                 attachments=[],
@@ -1220,14 +1375,22 @@ class CompareView(View):
             )
 
         elif self.page == 1:
+
             buf = self.make_graph()
-            file = discord.File(buf, "graph.png")
+
+            file = discord.File(
+                buf,
+                "graph.png"
+            )
 
             embed = discord.Embed(
                 title="📊 Performance Graph",
-                color=0x1e2b4a
+                color=0x2b2d31
             )
-            embed.set_image(url="attachment://graph.png")
+
+            embed.set_image(
+                url="attachment://graph.png"
+            )
 
             await interaction.response.edit_message(
                 embed=embed,
@@ -1236,14 +1399,22 @@ class CompareView(View):
             )
 
         elif self.page == 2:
+
             buf = self.make_radar()
-            file = discord.File(buf, "radar.png")
+
+            file = discord.File(
+                buf,
+                "radar.png"
+            )
 
             embed = discord.Embed(
                 title="🧭 Radar Analysis",
-                color=0x1e2b4a
+                color=0x2b2d31
             )
-            embed.set_image(url="attachment://radar.png")
+
+            embed.set_image(
+                url="attachment://radar.png"
+            )
 
             await interaction.response.edit_message(
                 embed=embed,
@@ -1259,14 +1430,19 @@ async def compare(ctx, *, planes_input):
 
     try:
         p1_name, p2_name = planes_input.lower().split(" vs ")
+
     except:
-        return await ctx.send("❌ Use: !compare A320 vs B737")
+        return await ctx.send(
+            "❌ Use: !compare A320 vs B737"
+        )
 
     p1 = get_plane(p1_name)
     p2 = get_plane(p2_name)
 
     if not p1 or not p2:
-        return await ctx.send("❌ Plane not found")
+        return await ctx.send(
+            "❌ Plane not found"
+        )
 
     route = {
         "distance": 5000,
@@ -1279,10 +1455,17 @@ async def compare(ctx, *, planes_input):
     r1 = calc(route, p1, ctx.author.id)
     r2 = calc(route, p2, ctx.author.id)
 
-    view = CompareView(p1, p2, r1, r2)
+    view = CompareView(
+        p1,
+        p2,
+        r1,
+        r2
+    )
 
-    await ctx.send(embed=view.build_embed(), view=view)
-
+    await ctx.send(
+        embed=view.build_embed(),
+        view=view
+        )
 # =========================
 # BEST PLANE
 # =========================
