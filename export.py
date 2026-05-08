@@ -1,5 +1,4 @@
 import csv
-import pandas as pd
 from docx import Document
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
@@ -17,20 +16,6 @@ def export_csv(report_data, filename="report.csv"):
 
         for k, v in report_data.items():
             writer.writerow([k, v])
-
-    return filename
-
-# =========================
-# XLSX EXPORT
-# =========================
-def export_xlsx(report_data, filename="report.xlsx"):
-
-    df = pd.DataFrame(
-        list(report_data.items()),
-        columns=["Field", "Value"]
-    )
-
-    df.to_excel(filename, index=False)
 
     return filename
 
