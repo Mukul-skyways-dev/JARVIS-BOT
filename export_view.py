@@ -2,7 +2,6 @@ import discord
 
 from export import (
     export_csv,
-    export_xlsx,
     export_docx,
     export_pdf
 )
@@ -28,22 +27,6 @@ class ExportView(discord.ui.View):
     async def csv_btn(self, interaction, button):
 
         file = export_csv(self.report_data)
-
-        await interaction.response.send_message(
-            file=discord.File(file),
-            ephemeral=True
-        )
-
-    # =========================
-    # XLSX
-    # =========================
-    @discord.ui.button(
-        label="XLSX",
-        style=discord.ButtonStyle.blurple
-    )
-    async def xlsx_btn(self, interaction, button):
-
-        file = export_xlsx(self.report_data)
 
         await interaction.response.send_message(
             file=discord.File(file),
