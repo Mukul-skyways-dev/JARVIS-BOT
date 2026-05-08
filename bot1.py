@@ -1462,7 +1462,6 @@ async def compare(ctx, *, planes_input):
         r2
     )
 
-
 # =========================
 # EXPORT DATA
 # =========================
@@ -1485,7 +1484,15 @@ report_data = {
 
     "P1 CI": r1["ci"],
     "P2 CI": r2["ci"]
-        }
+}
+
+view = CompareView(
+    p1,
+    p2,
+    r1,
+    r2
+)
+
 export_view = ExportView(report_data)
 
 await ctx.send(
@@ -1497,7 +1504,6 @@ await ctx.send(
     "📁 Download Compare Report",
     view=export_view
 )
-
 # =========================
 # BEST PLANE
 # =========================
