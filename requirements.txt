@@ -6,7 +6,6 @@ numpy
 Pillow
 pytz
 openai
-pandas
 openpyxl
 python-docx
 reportlab
