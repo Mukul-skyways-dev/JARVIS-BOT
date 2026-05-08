@@ -306,7 +306,7 @@ def get_plane(name):
     return None
 
 # =========================
-# CALC ENGINE (UNIFIED FINAL)
+# CALC ENGINE V3 (REALISM + EASY)
 # =========================
 def calc(route, plane, user_id, mods=None):
 
@@ -341,39 +341,61 @@ def calc(route, plane, user_id, mods=None):
     # DIFFICULTY SETTINGS
     # =========================
     if mode == "easy":
+
+        # load factor
         lf = 1.0
 
-        y_mul, j_mul, f_mul = 0.35, 0.9, 1.8
-        fuel_mult, co2_mult = 4, 1.8
+        # NEW REALISTIC TICKET FORMULA
+        y_price = (0.4 * dist) + 170
+        j_price = (0.8 * dist) + 560
+        f_price = (1.2 * dist) + 1200
 
-        acheck, repair = 20000, 15000
+        # costs
+        fuel_mult = 4
+        co2_mult = 1.8
+
+        acheck = 20000
+        repair = 15000
+
         cargo_mul = 0.5
 
-    else:  # REALISM
+    else:  # REALISM MODE
+
+        # realistic load factor
         lf = 0.85
 
-        y_mul, j_mul, f_mul = 0.28, 0.7, 1.4
-        fuel_mult, co2_mult = 5.5, 2.5
+        # NEW REALISM FORMULA
+        y_price = (0.3 * dist) + 150
+        j_price = (0.6 * dist) + 500
+        f_price = (0.9 * dist) + 1000
 
-        acheck, repair = 40000, 25000
+        # realistic costs
+        fuel_mult = 5.5
+        co2_mult = 2.5
+
+        acheck = 40000
+        repair = 25000
+
         cargo_mul = 0.35
 
     # =========================
     # CONFIGURATION
     # =========================
     if total > 0:
-        y_c = int(cap * (y / total) * lf)
-        j_c = int(cap * (j / total) * lf)
-        f_c = cap - y_c - j_c
+
+        y_ratio = y / total
+        j_ratio = j / total
+        f_ratio = f / total
+
+        y_c = int(cap * y_ratio * lf)
+        j_c = int(cap * j_ratio * lf)
+
+        used = y_c + j_c
+
+        f_c = max(0, cap - used)
+
     else:
         y_c = j_c = f_c = 0
-
-    # =========================
-    # TICKET PRICES
-    # =========================
-    y_price = dist * y_mul
-    j_price = dist * j_mul
-    f_price = dist * f_mul
 
     # =========================
     # INCOME
@@ -384,9 +406,13 @@ def calc(route, plane, user_id, mods=None):
         (f_c * f_price)
     )
 
-    # cargo income
+    # =========================
+    # CARGO
+    # =========================
     cargo = float(route.get("cargo", 0))
-    income_trip += cargo * cargo_mul
+    cargo_income = cargo * cargo_mul
+
+    income_trip += cargo_income
 
     # =========================
     # COSTS
@@ -397,6 +423,7 @@ def calc(route, plane, user_id, mods=None):
     if mods:
         if "fuel" in mods:
             fuel *= 0.9
+
         if "co2" in mods:
             co2 *= 0.9
 
@@ -406,16 +433,30 @@ def calc(route, plane, user_id, mods=None):
     # =========================
     # PROFIT
     # =========================
-    profit_trip = income_trip - fuel - co2 - acheck - repair
+    total_cost = fuel + co2 + acheck + repair
+
+    profit_trip = income_trip - total_cost
+
     ci = int((profit_trip / income_trip) * 100) if income_trip else 0
+
+    # =========================
+    # DAILY VALUES
+    # =========================
+    income_day = income_trip * trips
+    fuel_day = fuel * trips
+    co2_day = co2 * trips
+    profit_day = profit_trip * trips
 
     # =========================
     # RETURN DATA
     # =========================
     return {
+
+        # mode
         "mode": mode,
 
         # flight
+        "distance": int(dist),
         "time": round(time, 2),
         "trips": trips,
 
@@ -431,26 +472,29 @@ def calc(route, plane, user_id, mods=None):
 
         # income
         "income_trip": int(income_trip),
+        "cargo_income": int(cargo_income),
 
-        # cost
+        # costs
         "fuel": int(fuel),
         "fuel_lb": int(fuel_lb),
 
         "co2": int(co2),
         "co2_q": int(co2_q),
 
-        "acheck": acheck,
-        "repair": repair,
+        "acheck": int(acheck),
+        "repair": int(repair),
+
+        "total_cost": int(total_cost),
 
         # profit
         "profit_trip": int(profit_trip),
         "ci": ci,
 
-        # per day
-        "income_day": int(income_trip * trips),
-        "fuel_day": int(fuel * trips),
-        "co2_day": int(co2 * trips),
-        "profit_day": int(profit_trip * trips)
+        # daily
+        "income_day": int(income_day),
+        "fuel_day": int(fuel_day),
+        "co2_day": int(co2_day),
+        "profit_day": int(profit_day)
     }
 
 # ========================
