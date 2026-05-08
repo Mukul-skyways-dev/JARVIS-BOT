@@ -774,7 +774,7 @@ def airport_name(iata):
     return iata  # fallback (no blank ever)
 
 # =========================
-# ROUTE COMMAND (FINAL)
+# ROUTE COMMAND V3
 # =========================
 @bot.command()
 async def route(ctx, frm, to, *, plane_name):
@@ -784,6 +784,7 @@ async def route(ctx, frm, to, *, plane_name):
 
     if not route:
         return await ctx.send("❌ Route not found")
+
     if not plane:
         return await ctx.send("❌ Plane not found")
 
@@ -791,13 +792,14 @@ async def route(ctx, frm, to, *, plane_name):
     plane_range = float(plane["range"])
 
     # =========================
-    # STOPOVER (FAST + REAL)
+    # STOPOVER SYSTEM
     # =========================
     stop_airport = None
 
     if distance_total > plane_range:
+
         cursor.execute("""
-        SELECT t_iata 
+        SELECT t_iata
         FROM routes
         WHERE f_iata = ?
         AND CAST(distance AS REAL) < ?
@@ -806,6 +808,7 @@ async def route(ctx, frm, to, *, plane_name):
         """, (frm.upper(), plane_range))
 
         row = cursor.fetchone()
+
         if row:
             stop_airport = row[0]
 
@@ -813,6 +816,7 @@ async def route(ctx, frm, to, *, plane_name):
     # CALC ENGINE
     # =========================
     result = calc(route, plane, ctx.author.id)
+
     mode = result["mode"]
 
     # =========================
@@ -822,96 +826,161 @@ async def route(ctx, frm, to, *, plane_name):
     to_txt = airport_name(to)
 
     if stop_airport:
+
         stop_txt = airport_name(stop_airport)
-        route_display = f"{from_txt}\n→ {stop_txt}\n→ {to_txt}"
+
+        route_display = (
+            f"{from_txt}\n"
+            f"→ {stop_txt}\n"
+            f"→ {to_txt}"
+        )
+
     else:
-        route_display = f"{from_txt}\n→ {to_txt}"
+
+        route_display = (
+            f"{from_txt}\n"
+            f"→ {to_txt}"
+        )
 
     # =========================
     # EMBED
     # =========================
     embed = discord.Embed(
-        title=f"{plane['name']} • Route Analysis V2.0.1",
+        title=f"{plane['name']} • Route Analysis V3.0.1",
         description=f"```{route_display}```",
         color=0x2b2d31
     )
 
+    # =========================
     # FLIGHT INFO
+    # =========================
     embed.add_field(
-        name="Flight Info",
+        name="✈ Flight Info",
         value=(
-            f"Distance: {int(distance_total):,} km\n"
-            f"Trips: {result['trips']}/day\n"
-            f"Mode: {mode.upper()}"
+            f"**Distance:** {int(distance_total):,} km\n"
+            f"**Trips:** {result['trips']}/day\n"
+            f"**Mode:** {mode.upper()}"
         ),
         inline=False
     )
 
+    # =========================
     # DEMAND
+    # =========================
     embed.add_field(
-        name="Demand",
+        name="📊 Demand",
         value=(
-            f"Y {route['y']}\n"
-            f"J {route['j']}\n"
-            f"F {route['f']}"
+            f"**Y:** {route['y']}\n"
+            f"**J:** {route['j']}\n"
+            f"**F:** {route['f']}"
         ),
         inline=True
     )
 
-    # CONFIG
+    # =========================
+    # CONFIGURATION
+    # =========================
     embed.add_field(
-        name="Configuration",
+        name="⚙ Configuration",
         value=(
-            f"Y {result['y']}\n"
-            f"J {result['j']}\n"
-            f"F {result['f']}"
+            f"**Y:** {result['y']}\n"
+            f"**J:** {result['j']}\n"
+            f"**F:** {result['f']}"
         ),
         inline=True
     )
 
-    # TICKET PRICING (FROM CALC)
+    # =========================
+    # TICKET PRICING
+    # =========================
     embed.add_field(
-        name="Ticket Pricing",
+        name="🎟 Ticket Pricing",
         value=(
-            f"Y ${result['y_price']:,}\n"
-            f"J ${result['j_price']:,}\n"
-            f"F ${result['f_price']:,}"
+            f"**Y:** ${result['y_price']:,}\n"
+            f"**J:** ${result['j_price']:,}\n"
+            f"**F:** ${result['f_price']:,}"
         ),
         inline=True
     )
 
+    # =========================
     # PER FLIGHT
+    # =========================
     embed.add_field(
-        name="Per Flight",
+        name="💰 Per Flight",
         value=(
-            f"Income: ${result['income_trip']:,}\n"
-            f"Fuel: ${result['fuel']:,}\n"
-            f"CO2: ${result['co2']:,}\n"
-            f"Maint: ${result['acheck'] + result['repair']:,}\n\n"
-            f"Profit: ${result['profit_trip']:,}\n"
-            f"CI: {result['ci']}%"
+            f"**Income:** ${result['income_trip']:,}\n"
+            f"**Fuel:** ${result['fuel']:,}\n"
+            f"**CO2:** ${result['co2']:,}\n"
+            f"**Maint:** ${result['acheck'] + result['repair']:,}\n\n"
+            f"**Profit:** ${result['profit_trip']:,}\n"
+            f"**CI:** {result['ci']}%"
         ),
         inline=False
     )
 
+    # =========================
     # PER DAY
+    # =========================
     embed.add_field(
-        name="Per Day",
+        name="📅 Per Day",
         value=(
-            f"Income: ${result['income_day']:,}\n"
-            f"Fuel: ${result['fuel_day']:,}\n"
-            f"CO2: ${result['co2_day']:,}\n"
-            f"Maint: ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n"
-            f"Profit: ${result['profit_day']:,}\n"
-            f"Flights: {result['trips']}"
+            f"**Income:** ${result['income_day']:,}\n"
+            f"**Fuel:** ${result['fuel_day']:,}\n"
+            f"**CO2:** ${result['co2_day']:,}\n"
+            f"**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n"
+            f"**Profit:** ${result['profit_day']:,}\n"
+            f"**Flights:** {result['trips']}"
         ),
         inline=False
     )
 
-    embed.set_footer(text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT")
+    embed.set_footer(
+        text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT"
+    )
 
-    await ctx.send(embed=embed)
+    # =========================
+    # EXPORT DATA
+    # =========================
+    report_data = {
 
+        "Route": f"{frm.upper()} -> {to.upper()}",
+        "Aircraft": plane["name"],
+        "Distance": f"{int(distance_total):,} km",
+        "Mode": mode.upper(),
+
+        "Trips/Day": result["trips"],
+
+        "Economy Demand": route["y"],
+        "Business Demand": route["j"],
+        "First Demand": route["f"],
+
+        "Economy Config": result["y"],
+        "Business Config": result["j"],
+        "First Config": result["f"],
+
+        "Economy Ticket": result["y_price"],
+        "Business Ticket": result["j_price"],
+        "First Ticket": result["f_price"],
+
+        "Income/Flight": result["income_trip"],
+        "Fuel/Flight": result["fuel"],
+        "CO2/Flight": result["co2"],
+
+        "Profit/Flight": result["profit_trip"],
+        "Profit/Day": result["profit_day"],
+
+        "CI": f"{result['ci']}%"
+    }
+
+    # =========================
+    # SEND
+    # =========================
+    await ctx.send(
+        embed=embed,
+        view=ExportView(report_data)
+    )
+        
 # =========================
 # IMPORTS (SAFE MERGE)
 # =========================
