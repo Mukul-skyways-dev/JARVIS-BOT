@@ -1462,48 +1462,41 @@ async def compare(ctx, *, planes_input):
         r2
     )
 
-# =========================
-# EXPORT DATA
-# =========================
-report_data = {
+    # =========================
+    # EXPORT DATA
+    # =========================
+    report_data = {
 
-    "Plane 1": p1["name"],
-    "Plane 2": p2["name"],
+        "Plane 1": p1["name"],
+        "Plane 2": p2["name"],
 
-    "P1 Profit/Day": r1["profit_day"],
-    "P2 Profit/Day": r2["profit_day"],
+        "P1 Profit/Day": r1["profit_day"],
+        "P2 Profit/Day": r2["profit_day"],
 
-    "P1 Income/Day": r1["income_day"],
-    "P2 Income/Day": r2["income_day"],
+        "P1 Income/Day": r1["income_day"],
+        "P2 Income/Day": r2["income_day"],
 
-    "P1 Fuel/Day": r1["fuel_day"],
-    "P2 Fuel/Day": r2["fuel_day"],
+        "P1 Fuel/Day": r1["fuel_day"],
+        "P2 Fuel/Day": r2["fuel_day"],
 
-    "P1 Trips": r1["trips"],
-    "P2 Trips": r2["trips"],
+        "P1 Trips": r1["trips"],
+        "P2 Trips": r2["trips"],
 
-    "P1 CI": r1["ci"],
-    "P2 CI": r2["ci"]
-}
+        "P1 CI": r1["ci"],
+        "P2 CI": r2["ci"]
+    }
 
-view = CompareView(
-    p1,
-    p2,
-    r1,
-    r2
-)
+    export_view = ExportView(report_data)
 
-export_view = ExportView(report_data)
+    await ctx.send(
+        embed=view.build_embed(),
+        view=view
+    )
 
-await ctx.send(
-    embed=view.build_embed(),
-    view=view
-)
-
-await ctx.send(
-    "📁 Download Compare Report",
-    view=export_view
-)
+    await ctx.send(
+        "📁 Download Compare Report",
+        view=export_view
+    )
 # =========================
 # BEST PLANE
 # =========================
