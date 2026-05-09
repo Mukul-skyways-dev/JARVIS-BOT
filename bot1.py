@@ -1474,7 +1474,7 @@ async def compare(ctx, *, planes_input):
         "P2 Profit/Day": r2["profit_day"],
 
         "P1 Income/Day": r1["income_day"],
-        "P2 Income/Day": r2["income_day"],
+.        "P2 Income/Day": r2["income_day"],
 
         "P1 Fuel/Day": r1["fuel_day"],
         "P2 Fuel/Day": r2["fuel_day"],
@@ -1515,22 +1515,24 @@ async def best(ctx, frm, to):
     for p in get_all_planes():
 
         try:
+
             if float(route["distance"]) > float(p["range"]):
                 continue
 
             c = calc(route, p, ctx.author.id)
 
             # =========================
-            # SMART SCORE ENGINE
+            # SMART SCORE
             # =========================
             score = (
                 c["profit_day"]
                 + (c["ci"] * 10000)
-                + (p["speed"] * 150)
-                - (p["fuel"] * 500)
+                + (float(p["speed"]) * 150)
+                - (float(p["fuel"]) * 500)
             )
 
             if score > best_score:
+
                 best_score = score
                 best_plane = p
                 best_calc = c
@@ -1539,72 +1541,77 @@ async def best(ctx, frm, to):
             continue
 
     if not best_plane:
-        return await ctx.send("❌ No suitable aircraft found")
+        return await ctx.send(
+            "❌ No suitable aircraft found"
+        )
 
     mode = best_calc["mode"]
 
     # =========================
-    # EMBED
+    # UI
     # =========================
     embed = discord.Embed(
         title="🏆 BEST AIRCRAFT ANALYSIS",
         description=(
-            f"```{airport_name(frm)}"
-            f"\n→ {airport_name(to)}```"
+            f"```"
+            f"{airport_name(frm)}"
+            f"\n→ "
+            f"{airport_name(to)}"
+            f"```"
         ),
         color=0x2b2d31
     )
 
     embed.add_field(
-        name="✦ Aircraft",
+        name="Aircraft",
         value=(
             f"**{best_plane['name']}**\n"
-            f"Mode: **{mode.upper()}**"
+            f"Mode: `{mode.upper()}`"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="✦ Performance",
+        name="Performance",
         value=(
-            f"💰 Profit/Day: "
-            f"`${best_calc['profit_day']:,}`\n"
+            f"`Profit/Day` "
+            f"${best_calc['profit_day']:,}\n"
 
-            f"📈 CI Score: "
-            f"`{best_calc['ci']}%`\n"
+            f"`CI Score` "
+            f"{best_calc['ci']}%\n"
 
-            f"✈ Trips/Day: "
-            f"`{best_calc['trips']}`"
+            f"`Trips/Day` "
+            f"{best_calc['trips']}"
         ),
         inline=True
     )
 
     embed.add_field(
-        name="✦ Aircraft Specs",
+        name="Aircraft Specs",
         value=(
-            f"👥 Capacity: "
-            f"`{best_plane['capacity']}`\n"
+            f"`Capacity` "
+            f"{best_plane['capacity']}\n"
 
-            f"⚡ Speed: "
-            f"`{int(best_plane['speed'])} km/h`\n"
+            f"`Speed` "
+            f"{int(float(best_plane['speed'])):,} km/h\n"
 
-            f"🛫 Range: "
-            f"`{int(best_plane['range']):,} km`"
+            f"`Range` "
+            f"{int(float(best_plane['range'])):,} km"
         ),
         inline=True
     )
 
     embed.add_field(
-        name="✦ Cost Breakdown",
+        name="Cost Breakdown",
         value=(
-            f"⛽ Fuel/Day: "
-            f"`${best_calc['fuel_day']:,}`\n"
+            f"`Fuel/Day` "
+            f"${best_calc['fuel_day']:,}\n"
 
-            f"🌍 CO2/Day: "
-            f"`${best_calc['co2_day']:,}`\n"
+            f"`CO2/Day` "
+            f"${best_calc['co2_day']:,}\n"
 
-            f"🛠 Maintenance: "
-            f"`${(best_calc['acheck'] + best_calc['repair']) * best_calc['trips']:,}`"
+            f"`Maintenance` "
+            f"${(best_calc['acheck'] + best_calc['repair']) * best_calc['trips']:,}"
         ),
         inline=False
     )
@@ -1645,21 +1652,24 @@ async def best(ctx, frm, to):
         view=export_view
     )
 
+
 # =========================
 # BEST ROUTE COMMAND
 # =========================
 @bot.command(name="best_r", aliases=["bestr", "top"])
-async def best(ctx, airport, *, plane_name):
+async def best_r(ctx, airport, *, plane_name):
 
     airport = airport.upper()
 
     plane = get_plane(plane_name)
 
     if not plane:
-        return await ctx.send("❌ Plane not found")
+        return await ctx.send(
+            "❌ Plane not found"
+        )
 
     # =========================
-    # FAST ROUTE FETCH
+    # FAST FETCH
     # =========================
     cursor.execute("""
     SELECT t_iata, distance, dem_y, dem_j, dem_f
@@ -1671,16 +1681,19 @@ async def best(ctx, airport, *, plane_name):
     routes = cursor.fetchall()
 
     if not routes:
-        return await ctx.send("❌ No routes found")
+        return await ctx.send(
+            "❌ No routes found"
+        )
 
     results = []
 
     # =========================
-    # FAST CALC LOOP
+    # ANALYSIS LOOP
     # =========================
     for r in routes:
 
         try:
+
             dest, dist, y, j, f = r
 
             distance = float(dist)
@@ -1703,14 +1716,22 @@ async def best(ctx, airport, *, plane_name):
                 ctx.author.id
             )
 
+            # skip broken ultra-short spam routes
+            if c["trips"] > 18:
+                continue
+
             results.append({
+
                 "dest": dest,
+
                 "distance": int(distance),
 
                 "profit": c["profit_day"],
+
                 "income": c["income_day"],
 
                 "trips": c["trips"],
+
                 "ci": c["ci"],
 
                 "fuel": c["fuel_day"]
@@ -1720,7 +1741,9 @@ async def best(ctx, airport, *, plane_name):
             continue
 
     if not results:
-        return await ctx.send("❌ No profitable routes found")
+        return await ctx.send(
+            "❌ No profitable routes found"
+        )
 
     # =========================
     # SORT
@@ -1732,13 +1755,10 @@ async def best(ctx, airport, *, plane_name):
 
     top = results[:5]
 
-    # =========================
-    # MODE
-    # =========================
     mode = get_user_mode(ctx.author.id)
 
     # =========================
-    # UI
+    # COMPACT UI
     # =========================
     text = ""
 
@@ -1747,34 +1767,29 @@ async def best(ctx, airport, *, plane_name):
         text += (
             f"**{i}. {airport} → {r['dest']}**\n"
 
-            f"💰 Profit: "
-            f"`${r['profit']:,}/day`\n"
+            f"`Profit` ${r['profit']:,}/day\n"
 
-            f"📈 CI: "
-            f"`{r['ci']}%`\n"
+            f"`CI` {r['ci']}% │ "
 
-            f"✈ Trips: "
-            f"`{r['trips']}/day`\n"
+            f"`Trips` {r['trips']}/day │ "
 
-            f"📏 Range: "
-            f"`{r['distance']:,} km`\n"
+            f"`Range` {r['distance']:,} km\n"
 
-            f"⛽ Fuel: "
-            f"`${r['fuel']:,}/day`\n\n"
+            f"`Fuel` ${r['fuel']:,}/day\n\n"
         )
 
     embed = discord.Embed(
-        title=f"🔥 Best Routes • {plane['name']}",
+        title=f"Best Routes • {plane['name']}",
         description=text,
         color=0x2b2d31
     )
 
     embed.add_field(
-        name="✦ Analysis",
+        name="Analysis",
         value=(
-            f"Airport: `{airport}`\n"
-            f"Aircraft: `{plane['name']}`\n"
-            f"Mode: `{mode.upper()}`"
+            f"`Airport:` {airport}\n"
+            f"`Aircraft:` {plane['name']}\n"
+            f"`Mode:` {mode.upper()}"
         ),
         inline=False
     )
@@ -1806,6 +1821,10 @@ async def best(ctx, airport, *, plane_name):
             r["trips"]
         )
 
+        export_text[f"#{i} Range"] = (
+            r["distance"]
+        )
+
     export_view = ExportView(export_text)
 
     await ctx.send(embed=embed)
@@ -1814,6 +1833,7 @@ async def best(ctx, airport, *, plane_name):
         "📁 Download Route Analysis",
         view=export_view
     )
+
 # =========================
 # BEST SHORT ROUTE
 #==========================
