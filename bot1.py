@@ -1497,6 +1497,7 @@ async def compare(ctx, *, planes_input):
         "📁 Download Compare Report",
         view=export_view
     )
+
 # =========================
 # BEST PLANE
 # =========================
@@ -1506,7 +1507,9 @@ async def best(ctx, frm, to):
     route = get_route(frm, to)
 
     if not route:
-        return await ctx.send("❌ Route not found")
+        return await ctx.send(
+            "Route not found"
+        )
 
     best_plane = None
     best_calc = None
@@ -1519,16 +1522,16 @@ async def best(ctx, frm, to):
             if float(route["distance"]) > float(p["range"]):
                 continue
 
-            c = calc(route, p, ctx.author.id)
+            c = calc(
+                route,
+                p,
+                ctx.author.id
+            )
 
-            # =========================
-            # SMART SCORE
-            # =========================
             score = (
                 c["profit_day"]
-                + (c["ci"] * 10000)
-                + (float(p["speed"]) * 150)
-                - (float(p["fuel"]) * 500)
+                + (float(p["speed"]) * 10)
+                - (float(p["fuel"]) * 100)
             )
 
             if score > best_score:
@@ -1542,16 +1545,11 @@ async def best(ctx, frm, to):
 
     if not best_plane:
         return await ctx.send(
-            "❌ No suitable aircraft found"
+            "No suitable aircraft found"
         )
 
-    mode = best_calc["mode"]
-
-    # =========================
-    # UI
-    # =========================
     embed = discord.Embed(
-        title="🏆 BEST AIRCRAFT ANALYSIS",
+        title="Best Aircraft",
         description=(
             f"```"
             f"{airport_name(frm)}"
@@ -1564,60 +1562,30 @@ async def best(ctx, frm, to):
 
     embed.add_field(
         name="Aircraft",
-        value=(
-            f"**{best_plane['name']}**\n"
-            f"Mode: `{mode.upper()}`"
-        ),
+        value=best_plane["name"],
         inline=False
     )
 
     embed.add_field(
-        name="Performance",
-        value=(
-            f"`Profit/Day` "
-            f"${best_calc['profit_day']:,}\n"
-
-            f"`CI Score` "
-            f"{best_calc['ci']}%\n"
-
-            f"`Trips/Day` "
-            f"{best_calc['trips']}"
-        ),
+        name="Profit/Day",
+        value=money(best_calc["profit_day"]),
         inline=True
     )
 
     embed.add_field(
-        name="Aircraft Specs",
-        value=(
-            f"`Capacity` "
-            f"{best_plane['capacity']}\n"
-
-            f"`Speed` "
-            f"{int(float(best_plane['speed'])):,} km/h\n"
-
-            f"`Range` "
-            f"{int(float(best_plane['range'])):,} km"
-        ),
+        name="Trips/Day",
+        value=best_calc["trips"],
         inline=True
     )
 
     embed.add_field(
-        name="Cost Breakdown",
-        value=(
-            f"`Fuel/Day` "
-            f"${best_calc['fuel_day']:,}\n"
-
-            f"`CO2/Day` "
-            f"${best_calc['co2_day']:,}\n"
-
-            f"`Maintenance` "
-            f"${(best_calc['acheck'] + best_calc['repair']) * best_calc['trips']:,}"
-        ),
+        name="Mode",
+        value=best_calc["mode"].upper(),
         inline=False
     )
 
     embed.set_footer(
-        text="JARVIS • A AERO CROWN OFFICIAL BOT"
+        text="JARVIS • Aircraft Optimization"
     )
 
     # =========================
@@ -1625,22 +1593,29 @@ async def best(ctx, frm, to):
     # =========================
     report_data = {
 
-        "Route": f"{frm.upper()} -> {to.upper()}",
-        "Aircraft": best_plane["name"],
-        "Mode": mode,
+        "Route":
+        f"{frm.upper()} -> {to.upper()}",
 
-        "Profit/Day": best_calc["profit_day"],
-        "Income/Day": best_calc["income_day"],
+        "Aircraft":
+        best_plane["name"],
 
-        "Fuel/Day": best_calc["fuel_day"],
-        "CO2/Day": best_calc["co2_day"],
+        "Mode":
+        best_calc["mode"],
 
-        "Trips/Day": best_calc["trips"],
-        "CI": best_calc["ci"],
+        "Profit/Day":
+        best_calc["profit_day"],
 
-        "Capacity": best_plane["capacity"],
-        "Speed": best_plane["speed"],
-        "Range": best_plane["range"]
+        "Trips/Day":
+        best_calc["trips"],
+
+        "Income/Day":
+        best_calc["income_day"],
+
+        "Fuel/Day":
+        best_calc["fuel_day"],
+
+        "CI":
+        best_calc["ci"]
     }
 
     export_view = ExportView(report_data)
@@ -1648,7 +1623,7 @@ async def best(ctx, frm, to):
     await ctx.send(embed=embed)
 
     await ctx.send(
-        "📁 Download Best Aircraft Report",
+        "Download Report",
         view=export_view
     )
 
@@ -1665,11 +1640,16 @@ async def best_r(ctx, airport, *, plane_name):
 
     if not plane:
         return await ctx.send(
-            "❌ Plane not found"
+            "Plane not found"
         )
 
     # =========================
-    # FAST FETCH
+    # USER MODE
+    # =========================
+    mode = get_user_mode(ctx.author.id)
+
+    # =========================
+    # ROUTES
     # =========================
     cursor.execute("""
     SELECT t_iata, distance, dem_y, dem_j, dem_f
@@ -1682,13 +1662,13 @@ async def best_r(ctx, airport, *, plane_name):
 
     if not routes:
         return await ctx.send(
-            "❌ No routes found"
+            "No routes found"
         )
 
     results = []
 
     # =========================
-    # ANALYSIS LOOP
+    # ANALYSIS
     # =========================
     for r in routes:
 
@@ -1698,84 +1678,174 @@ async def best_r(ctx, airport, *, plane_name):
 
             distance = float(dist)
 
-            # RANGE CHECK
             if distance > float(plane["range"]):
                 continue
 
-            fake_route = {
-                "distance": distance,
-                "y": int(y),
-                "j": int(j),
-                "f": int(f),
-                "cargo": 10000
-            }
+            y = int(y)
+            j = int(j)
+            f = int(f)
 
-            c = calc(
-                fake_route,
-                plane,
-                ctx.author.id
-            )
+            total_demand = y + j + f
 
-            # skip broken ultra-short spam routes
-            if c["trips"] > 18:
+            if total_demand == 0:
                 continue
 
-            results.append({
+            cap = int(plane["capacity"])
 
-                "dest": dest,
+            # =========================
+            # MODE SETTINGS
+            # =========================
+            if mode == "easy":
 
-                "distance": int(distance),
+                lf = 1.0
 
-                "profit": c["profit_day"],
+                # NEW EASY PRICING
+                y_price = (0.4 * distance) + 170
+                j_price = (0.8 * distance) + 560
+                f_price = (1.2 * distance) + 1200
 
-                "income": c["income_day"],
+                fuel_mult = 4
+                co2_mult = 1.8
 
-                "trips": c["trips"],
+                acheck = 20000
+                repair = 15000
 
-                "ci": c["ci"],
+            else:
 
-                "fuel": c["fuel_day"]
-            })
+                lf = 0.85
+
+                # NEW REALISM PRICING
+                y_price = (0.3 * distance) + 150
+                j_price = (0.6 * distance) + 500
+                f_price = (0.9 * distance) + 1000
+
+                fuel_mult = 5.5
+                co2_mult = 2.5
+
+                acheck = 40000
+                repair = 25000
+
+            # =========================
+            # CONFIG
+            # =========================
+            y_ratio = y / total_demand
+            j_ratio = j / total_demand
+            f_ratio = f / total_demand
+
+            y_seats = int(cap * y_ratio * lf)
+            j_seats = int(cap * j_ratio * lf)
+
+            f_seats = (
+                cap
+                - y_seats
+                - j_seats
+            )
+
+            # =========================
+            # INCOME
+            # =========================
+            income = (
+                (y_seats * y_price)
+                + (j_seats * j_price)
+                + (f_seats * f_price)
+            )
+
+            # =========================
+            # COST
+            # =========================
+            fuel = (
+                distance
+                * float(plane["fuel"])
+                * fuel_mult
+            )
+
+            co2 = (
+                distance
+                * co2_mult
+            )
+
+            profit = (
+                income
+                - fuel
+                - co2
+                - acheck
+                - repair
+            )
+
+            # =========================
+            # TIME
+            # =========================
+            flight_time = (
+                distance
+                / float(plane["speed"])
+            )
+
+            flights_day = max(
+                1,
+                int(24 / flight_time)
+            )
+
+            # FILTER SHORT ROUTE SPAM
+            if flights_day > 18:
+                continue
+
+            daily_profit = int(
+                profit * flights_day
+            )
+
+            ci = int(
+                (profit / income) * 100
+            ) if income else 0
+
+            results.append((
+                dest,
+                int(distance),
+                daily_profit,
+                flights_day,
+                ci
+            ))
 
         except:
             continue
 
     if not results:
         return await ctx.send(
-            "❌ No profitable routes found"
+            "No profitable routes found"
         )
 
     # =========================
     # SORT
     # =========================
     results.sort(
-        key=lambda x: x["profit"],
+        key=lambda x: x[2],
         reverse=True
     )
 
     top = results[:5]
 
-    mode = get_user_mode(ctx.author.id)
-
     # =========================
-    # COMPACT UI
+    # UI
     # =========================
     text = ""
 
     for i, r in enumerate(top, start=1):
 
+        dest, dist, profit, trips, ci = r
+
         text += (
-            f"**{i}. {airport} → {r['dest']}**\n"
+            f"**{i}. {airport} → {dest}**\n"
 
-            f"`Profit` ${r['profit']:,}/day\n"
+            f"`Profit` "
+            f"${profit:,}/day\n"
 
-            f"`CI` {r['ci']}% │ "
+            f"`Trips` "
+            f"{trips}/day\n"
 
-            f"`Trips` {r['trips']}/day │ "
+            f"`CI` "
+            f"{ci}%\n"
 
-            f"`Range` {r['distance']:,} km\n"
-
-            f"`Fuel` ${r['fuel']:,}/day\n\n"
+            f"`Range` "
+            f"{dist:,} km\n\n"
         )
 
     embed = discord.Embed(
@@ -1795,45 +1865,57 @@ async def best_r(ctx, airport, *, plane_name):
     )
 
     embed.set_footer(
-        text="JARVIS • A AERO CROWN OFFICIAL BOT"
+        text="JARVIS • Smart Route Optimization"
     )
 
     # =========================
     # EXPORT
     # =========================
-    export_text = {}
+    export_data = {
+
+        "Airport":
+        airport,
+
+        "Aircraft":
+        plane["name"],
+
+        "Mode":
+        mode
+    }
 
     for i, r in enumerate(top, start=1):
 
-        export_text[f"#{i} Route"] = (
-            f"{airport}->{r['dest']}"
+        dest, dist, profit, trips, ci = r
+
+        export_data[f"#{i} Route"] = (
+            f"{airport}->{dest}"
         )
 
-        export_text[f"#{i} Profit"] = (
-            r["profit"]
+        export_data[f"#{i} Profit"] = (
+            profit
         )
 
-        export_text[f"#{i} CI"] = (
-            r["ci"]
+        export_data[f"#{i} Trips"] = (
+            trips
         )
 
-        export_text[f"#{i} Trips"] = (
-            r["trips"]
+        export_data[f"#{i} CI"] = (
+            ci
         )
 
-        export_text[f"#{i} Range"] = (
-            r["distance"]
+        export_data[f"#{i} Range"] = (
+            dist
         )
 
-    export_view = ExportView(export_text)
+    export_view = ExportView(export_data)
 
     await ctx.send(embed=embed)
 
     await ctx.send(
-        "📁 Download Route Analysis",
+        "Download Route Report",
         view=export_view
     )
-
+            
 # =========================
 # BEST SHORT ROUTE
 #==========================
