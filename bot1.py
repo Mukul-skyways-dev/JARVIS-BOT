@@ -1474,7 +1474,7 @@ async def compare(ctx, *, planes_input):
         "P2 Profit/Day": r2["profit_day"],
 
         "P1 Income/Day": r1["income_day"],
-.        "P2 Income/Day": r2["income_day"],
+.       "P2 Income/Day": r2["income_day"],
 
         "P1 Fuel/Day": r1["fuel_day"],
         "P2 Fuel/Day": r2["fuel_day"],
@@ -1617,7 +1617,7 @@ async def best(ctx, frm, to):
     )
 
     embed.set_footer(
-        text="JARVIS • Aircraft Optimization Engine"
+        text="JARVIS • A AERO CROWN OFFICIAL BOT"
     )
 
     # =========================
@@ -1795,7 +1795,7 @@ async def best_r(ctx, airport, *, plane_name):
     )
 
     embed.set_footer(
-        text="JARVIS • Smart Route Optimization"
+        text="JARVIS • A AERO CROWN OFFICIAL BOT"
     )
 
     # =========================
