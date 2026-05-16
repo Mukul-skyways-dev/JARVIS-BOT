@@ -1,303 +1,339 @@
+# ============================================================
+#  JARVIS - A AERO CROWN OFFICIAL BOT  |  V3.0.1
+#  Single-file edition — all imports, all features inline
+# ============================================================
+
+# ── Standard Library ─────────────────────────────────────────
+import os
+import io
+import csv
+import time
+import json
+import asyncio
+import random
+import textwrap
+from datetime import datetime, timedelta
+from threading import Thread
+
+# ── Third-party ───────────────────────────────────────────────
 import discord
-import random 
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import Modal, TextInput, View, Button
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-import io
 
 import sqlite3
-import os
 import requests
-from openai import OpenAI
 import pytz
-
-from export_view import ExportView
+from openai import OpenAI
 from flask import Flask
-from threading import Thread
 
-# =========================
-# KEEP ALIVE SERVER
-# =========================
+# ── PDF / DOCX (optional, graceful fallback) ─────────────────
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas as rlcanvas
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    HAS_PDF = True
+except ImportError:
+    HAS_PDF = False
+
+try:
+    from docx import Document as DocxDoc
+    from docx.shared import Pt
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+# ─────────────────────────────────────────────────────────────
+#  KEEP-ALIVE (Flask)
+# ─────────────────────────────────────────────────────────────
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is alive"
+    return "JARVIS is alive ✈"
 
-def run():
+def _run_flask():
     app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    t = Thread(target=run)
+    t = Thread(target=_run_flask, daemon=True)
     t.start()
 
-# =========================
-# BOT CONFIG
-# =========================
-TOKEN = os.getenv("TOKEN")
+# ─────────────────────────────────────────────────────────────
+#  CONFIG
+# ─────────────────────────────────────────────────────────────
+TOKEN          = os.getenv("TOKEN")
+GROQ_KEY       = os.getenv("GROQ_API_KEY")
+CHANNEL_ID     = int(os.getenv("CHANNEL_ID", "0"))
+FUEL_CH_ID     = int(os.getenv("FUEL_CHANNEL_ID", str(CHANNEL_ID)))
+SHARE_CH_ID    = int(os.getenv("SHARE_CHANNEL_ID", str(CHANNEL_ID)))
+ADMIN_ROLE_NAME = "Admin"
+BOT_VERSION    = "V3.0.1 ALPHA"
+FOOTER         = f"JARVIS - A AERO CROWN OFFICIAL BOT • {BOT_VERSION}"
 
-groq = OpenAI(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1"
-)
+IST = pytz.timezone("Asia/Kolkata")
 
-WELCOME_ROLE_NAME = "Member"
+groq = OpenAI(api_key=GROQ_KEY, base_url="https://api.groq.com/openai/v1")
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# =========================
-# DATABASE AUTO DOWNLOAD
-# =========================
-
-DB_URL = "https://github.com/Mukul-skyways-dev/JARVIS-BOT/releases/download/Dv1/am4_data.db.updated"
+# ─────────────────────────────────────────────────────────────
+#  DATABASE — AM4 (read-only analytics)
+# ─────────────────────────────────────────────────────────────
+DB_URL  = "https://github.com/Mukul-skyways-dev/JARVIS-BOT/releases/download/Dv1/am4_data.db.updated"
 DB_FILE = "am4_data.db"
 
 def download_db():
-    print("🔄 Checking database...")
-
-    # always ensure fresh/correct DB (important for Render issues)
-    print("⬇ Downloading database from GitHub Release...")
-
+    print("⬇ Downloading AM4 database …")
     try:
-        response = requests.get(DB_URL, timeout=30)
-        response.raise_for_status()
-
+        r = requests.get(DB_URL, timeout=30)
+        r.raise_for_status()
         with open(DB_FILE, "wb") as f:
-            f.write(response.content)
-
-        print("✅ Database downloaded successfully")
-
+            f.write(r.content)
+        print("✅ Database ready")
     except Exception as e:
         print("❌ DB download failed:", e)
 
-# MUST run BEFORE sqlite connect
 download_db()
 
-# =========================
-# SQLITE CONNECTION
-# =========================
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+conn   = sqlite3.connect(DB_FILE, check_same_thread=False)
 conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
 
-# =========================
-# DYNAMIC DB (NEW FEATURES)
-# =========================
+# ─────────────────────────────────────────────────────────────
+#  DATABASE — Dynamic (all new features)
+# ─────────────────────────────────────────────────────────────
 conn_dyn = sqlite3.connect("new_am4.db", check_same_thread=False)
 conn_dyn.row_factory = sqlite3.Row
-cursor_dyn = conn_dyn.cursor()
+cur = conn_dyn.cursor()   # alias
 
-# =========================
-# DIFFICULTY SYSTEM
-# =========================
-def get_user_mode(user_id):
-    cursor.execute(
-        "SELECT difficulty FROM player_settings WHERE user_id=?",
-        (str(user_id),)
-    )
-    row = cursor.fetchone()
+def _dyn(sql, params=()):
+    cur.execute(sql, params)
+    conn_dyn.commit()
 
-    if row and row[0]:
-        return row[0].lower()
+# ── Schema ────────────────────────────────────────────────────
+cur.executescript("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY, username TEXT
+);
+CREATE TABLE IF NOT EXISTS shares (
+    user_id TEXT, value REAL, date TEXT, window_id TEXT
+);
+CREATE TABLE IF NOT EXISTS activity (
+    user_id TEXT PRIMARY KEY,
+    total INT DEFAULT 0, attended INT DEFAULT 0, missed INT DEFAULT 0,
+    streak INT DEFAULT 0, last_window TEXT, miss_streak INT DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS fuel_data (
+    day TEXT, time TEXT, fuel REAL, co2 REAL
+);
+CREATE TABLE IF NOT EXISTS fuel_schedules (
+    user_id TEXT PRIMARY KEY, threshold REAL
+);
+CREATE TABLE IF NOT EXISTS alliance_members (
+    user_id TEXT PRIMARY KEY, username TEXT, airline TEXT,
+    rank TEXT, pax REAL, revenue REAL, joined TEXT
+);
+CREATE TABLE IF NOT EXISTS votes (
+    poll_id TEXT, user_id TEXT, choice TEXT,
+    PRIMARY KEY (poll_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS polls (
+    poll_id TEXT PRIMARY KEY, question TEXT, options TEXT,
+    created TEXT, ends TEXT, channel_id INTEGER, msg_id INTEGER,
+    image_url TEXT, closed INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS ai_memory (
+    user_id TEXT, role TEXT, content TEXT, ts TEXT
+);
+CREATE TABLE IF NOT EXISTS bot_usage (
+    user_id TEXT PRIMARY KEY, username TEXT,
+    points INTEGER DEFAULT 0, last_used REAL DEFAULT 0
+);
+""")
+conn_dyn.commit()
 
-    return "realism"
-
-
-def set_user_mode(user_id, mode):
-    cursor.execute(
-        "INSERT OR REPLACE INTO player_settings (user_id, difficulty) VALUES (?, ?)",
-        (str(user_id), mode)
-    )
-    conn.commit()
-
-# =========================
-# MENU VIEW
-# =========================
-class EliteMenu(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    # ✈ ROUTE
-    @discord.ui.button(label="✈ Route System", style=discord.ButtonStyle.blurple)
-    async def route_help(self, interaction: discord.Interaction, button: Button):
-        embed = discord.Embed(
-            title="✈ Route Command",
-            description="""
-`!route DEL BOM A320`
-
-📊 Includes:
-• Flight time, distance
-• Demand (Y/J/F)
-• Config & Ticket price
-• A-check, Repair
-• Profit (Trip + Day)
-• Mods & Stopover
-""",
-            color=0x3498db
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # 🔥 BEST
-    @discord.ui.button(label="🔥 Best Routes", style=discord.ButtonStyle.red)
-    async def best_help(self, interaction: discord.Interaction, button: Button):
-        embed = discord.Embed(
-            title="🔥 Best Route Finder",
-            description="""
-`!best_r DEL A320`
-`!best_short DEL A320`
-`!best_long DEL A320`
-
-📈 Finds:
-• Most profitable routes
-• Short / Long optimization
-""",
-            color=0xe74c3c
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ⚖ COMPARE
-    @discord.ui.button(label="⚖ Compare Planes", style=discord.ButtonStyle.gray)
-    async def compare_help(self, interaction: discord.Interaction, button: Button):
-        embed = discord.Embed(
-            title="⚖ Plane Comparison",
-            description="""
-`!compare A320 vs B737`
-
-📊 Shows:
-• Cost, Capacity, Range
-• Speed, Fuel, CO2
-• Income (Flight/Day)
-• Winner Highlight
-""",
-            color=0x95a5a6
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ℹ GENERAL
-    @discord.ui.button(label="ℹ General", style=discord.ButtonStyle.secondary)
-    async def general(self, interaction: discord.Interaction, button: Button):
-        embed = discord.Embed(
-            title="ℹ General Commands",
-            description="""
-`!menu`
-`!ping`
-
-🤖 Chat:
-Hi / Hello / Jarvis
-""",
-            color=0x2ecc71
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-# =========================
-# MENU COMMAND
-# =========================
-@bot.command()
-async def menu(ctx):
-
-    embed = discord.Embed(
-        title="🤖 JARVIS CONTROL PANEL",
-        description="""
-━━━━━━━━━━━━━━━━━━━━━━━
-
-✈ **ROUTE SYSTEM**
-`!route DEL BOM A320`
-
-🔥 **BEST ROUTES**
-`!best_r DEL A320`
-`!best_short DEL A320`
-`!best_long DEL A320`
-
-⚖ **PLANE COMPARISON**
-`!compare A320 vs B737`
-
-━━━━━━━━━━━━━━━━━━━━━━━
-👇 Use buttons below for help
-━━━━━━━━━━━━━━━━━━━━━━━
-""",
-        color=0x00BFFF
-    )
-
-    # server icon (optional)
-    guild = ctx.guild
-
-    if guild is not None and guild.icon is not None:
-        embed.set_thumbnail(url=guild.icon.url)
-
-    embed.set_footer(text="JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
-
-    await ctx.send(embed=embed, view=EliteMenu())
-
-# =========================
-# UTILS
-# =========================
-def clean(x):
-    return str(x).replace(",", "").replace('"', "").replace("'", "").strip()
-
+# ─────────────────────────────────────────────────────────────
+#  UTILS
+# ─────────────────────────────────────────────────────────────
+def clean(x):   return str(x).replace(",","").replace('"',"").replace("'","").strip()
 def to_int(x):
     try: return int(float(clean(x)))
     except: return 0
-
 def to_float(x):
     try: return float(clean(x))
     except: return 0.0
+def norm(x):    return x.upper().replace("-","").replace(" ","")
+def money(x):   return f"${x:,.0f}"
+def now_ist():  return datetime.now(IST)
+def ts():       return now_ist().strftime("%d %b %Y • %I:%M %p IST")
+def window_id():return now_ist().date().isoformat()
 
-def norm(x):
-    return x.upper().replace("-", "").replace(" ", "")
-
-def money(x):
-    return f"${x:,.0f}"
+def parse_money(v):
+    try:
+        v = v.lower().replace(",","").strip()
+        if "b" in v: return float(v.replace("b",""))*1e9
+        if "m" in v: return float(v.replace("m",""))*1e6
+        return float(v)
+    except: return None
 
 def format_time(hours):
-    h = int(hours)
-    m = int((hours - h) * 60)
-    s = int((((hours - h) * 60) - m) * 60)
+    h = int(hours); m = int((hours-h)*60)
+    s = int((((hours-h)*60)-m)*60)
     return f"{h:02}:{m:02}:{s:02} ({round(hours,3)} hr)"
 
-# =========================
-# FETCH DATA
-# =========================
+def is_admin(member):
+    if not member: return False
+    return member.guild_permissions.manage_guild
+
+# ─────────────────────────────────────────────────────────────
+#  GRAY GRAPH HELPER  (all graphs: gray bg)
+# ─────────────────────────────────────────────────────────────
+GRAPH_BG  = "#2f2f2f"
+GRAPH_FIG = "#1e1e1e"
+GRAPH_GRID= "#444444"
+GRAPH_TEXT= "#e0e0e0"
+
+def gray_fig(w=9, h=5):
+    fig, ax = plt.subplots(figsize=(w, h))
+    fig.patch.set_facecolor(GRAPH_FIG)
+    ax.set_facecolor(GRAPH_BG)
+    ax.tick_params(colors=GRAPH_TEXT)
+    ax.xaxis.label.set_color(GRAPH_TEXT)
+    ax.yaxis.label.set_color(GRAPH_TEXT)
+    ax.title.set_color(GRAPH_TEXT)
+    for sp in ax.spines.values():
+        sp.set_color(GRAPH_GRID)
+    ax.grid(alpha=0.2, linestyle=':', color=GRAPH_GRID)
+    return fig, ax
+
+def save_buf(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', dpi=150,
+                facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+# ─────────────────────────────────────────────────────────────
+#  EXPORT VIEW  (inline — CSV + DOCX + PDF)
+# ─────────────────────────────────────────────────────────────
+class ExportView(View):
+    def __init__(self, data: dict, title: str = "JARVIS Report"):
+        super().__init__(timeout=300)
+        self.data  = data
+        self.title = title
+
+    # ── CSV ───────────────────────────────────────────────────
+    @discord.ui.button(label="📄 CSV", style=discord.ButtonStyle.secondary)
+    async def export_csv(self, interaction: discord.Interaction, button: Button):
+        buf = io.StringIO()
+        w   = csv.writer(buf)
+        w.writerow(["Field", "Value"])
+        for k, v in self.data.items():
+            w.writerow([k, v])
+        buf.seek(0)
+        await interaction.response.send_message(
+            f"📄 **{self.title}** — CSV Export\n`{ts()}`",
+            file=discord.File(io.BytesIO(buf.getvalue().encode()), "report.csv"),
+            ephemeral=True
+        )
+
+    # ── DOCX ──────────────────────────────────────────────────
+    @discord.ui.button(label="📝 DOCX", style=discord.ButtonStyle.blurple)
+    async def export_docx(self, interaction: discord.Interaction, button: Button):
+        if not HAS_DOCX:
+            return await interaction.response.send_message(
+                "❌ python-docx not installed", ephemeral=True)
+        doc = DocxDoc()
+        doc.add_heading(self.title, 0)
+        doc.add_paragraph(f"Generated: {ts()}")
+        doc.add_paragraph("")
+        tbl = doc.add_table(rows=1, cols=2)
+        tbl.style = 'Table Grid'
+        hdr = tbl.rows[0].cells
+        hdr[0].text = "Field"; hdr[1].text = "Value"
+        for k, v in self.data.items():
+            row = tbl.add_row().cells
+            row[0].text = str(k); row[1].text = str(v)
+        buf = io.BytesIO()
+        doc.save(buf); buf.seek(0)
+        await interaction.response.send_message(
+            f"📝 **{self.title}** — DOCX Export\n`{ts()}`",
+            file=discord.File(buf, "report.docx"), ephemeral=True)
+
+    # ── PDF ───────────────────────────────────────────────────
+    @discord.ui.button(label="📕 PDF", style=discord.ButtonStyle.red)
+    async def export_pdf(self, interaction: discord.Interaction, button: Button):
+        if not HAS_PDF:
+            return await interaction.response.send_message(
+                "❌ reportlab not installed", ephemeral=True)
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=letter)
+        styles = getSampleStyleSheet()
+        elems  = [Paragraph(self.title, styles['Title']),
+                  Paragraph(f"Generated: {ts()}", styles['Normal']),
+                  Spacer(1, 12)]
+        rows = [["Field", "Value"]] + [[str(k), str(v)] for k,v in self.data.items()]
+        t = Table(rows, colWidths=[200, 300])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0),(-1,0), rl_colors.grey),
+            ('TEXTCOLOR',  (0,0),(-1,0), rl_colors.whitesmoke),
+            ('GRID',       (0,0),(-1,-1), 0.5, rl_colors.black),
+            ('FONTSIZE',   (0,0),(-1,-1), 9),
+        ]))
+        elems.append(t)
+        doc.build(elems)
+        buf.seek(0)
+        await interaction.response.send_message(
+            f"📕 **{self.title}** — PDF Export\n`{ts()}`",
+            file=discord.File(buf, "report.pdf"), ephemeral=True)
+
+# ─────────────────────────────────────────────────────────────
+#  DIFFICULTY SYSTEM
+# ─────────────────────────────────────────────────────────────
+def get_user_mode(user_id):
+    cursor.execute(
+        "SELECT difficulty FROM player_settings WHERE user_id=?", (str(user_id),))
+    row = cursor.fetchone()
+    return row[0].lower() if row and row[0] else "realism"
+
+def set_user_mode(user_id, mode):
+    cursor.execute(
+        "INSERT OR REPLACE INTO player_settings (user_id, difficulty) VALUES (?,?)",
+        (str(user_id), mode))
+    conn.commit()
+
+# ─────────────────────────────────────────────────────────────
+#  FETCH ROUTE / PLANE
+# ─────────────────────────────────────────────────────────────
 def get_route(frm, to):
     cursor.execute("""
-    SELECT * FROM routes
-    WHERE (f_iata=? AND t_iata=?)
-       OR (f_iata=? AND t_iata=?)
-    LIMIT 1
+        SELECT * FROM routes
+        WHERE (f_iata=? AND t_iata=?) OR (f_iata=? AND t_iata=?)
+        LIMIT 1
     """, (frm.upper(), to.upper(), to.upper(), frm.upper()))
-
     row = cursor.fetchone()
     if not row: return None
-
-    return {
-        "distance": to_float(row[5]),
-        "y": to_int(row[9]),
-        "j": to_int(row[10]),
-        "f": to_int(row[11]),
-        "cargo": to_int(row[8])
-    }
+    return {"distance": to_float(row[5]), "y": to_int(row[9]),
+            "j": to_int(row[10]), "f": to_int(row[11]), "cargo": to_int(row[8])}
 
 def get_all_planes():
-    cursor.execute("SELECT model, variant, capacity, range, speed, fuel_efficiency, cost FROM aircraft")
-    planes = []
-    for r in cursor.fetchall():
-        planes.append({
-            "name": f"{r[0]} {r[1]}",
-            "capacity": to_int(r[2]),
-            "range": to_float(r[3]),
-            "speed": to_float(r[4]),
-            "fuel": to_float(r[5]),
-            "cost": to_int(r[6])
-        })
-    return planes
+    cursor.execute(
+        "SELECT model, variant, capacity, range, speed, fuel_efficiency, cost FROM aircraft")
+    return [{"name": f"{r[0]} {r[1]}", "capacity": to_int(r[2]),
+             "range": to_float(r[3]), "speed": to_float(r[4]),
+             "fuel": to_float(r[5]), "cost": to_int(r[6])}
+            for r in cursor.fetchall()]
 
 def get_plane(name):
     key = norm(name)
@@ -306,2384 +342,182 @@ def get_plane(name):
             return p
     return None
 
-# =========================
-# CALC ENGINE V3 (REALISM + EASY)
-# =========================
+def airport_name(iata):
+    iata = iata.upper()
+    for q in [
+        "SELECT city, country FROM routes WHERE iata=? LIMIT 1",
+        "SELECT city, country FROM routes WHERE f_iata=? OR t_iata=? LIMIT 1"
+    ]:
+        try:
+            args = (iata,) if q.count("?") == 1 else (iata, iata)
+            cursor.execute(q, args)
+            row = cursor.fetchone()
+            if row and row[0] and row[1]:
+                return f"{iata} — {row[0]}, {row[1]}"
+        except: pass
+    return iata
+
+# ─────────────────────────────────────────────────────────────
+#  CALC ENGINE V3
+# ─────────────────────────────────────────────────────────────
 def calc(route, plane, user_id, mods=None):
-
-    # =========================
-    # USER MODE
-    # =========================
-    mode = get_user_mode(user_id)
-
-    # =========================
-    # BASE VALUES
-    # =========================
-    dist = float(route["distance"])
+    mode  = get_user_mode(user_id)
+    dist  = float(route["distance"])
     speed = float(plane["speed"])
+    if mods and "speed" in mods: speed *= 1.1
+    time_h = dist / speed if speed else 1
+    trips  = max(1, int(24 / time_h))
 
-    if mods and "speed" in mods:
-        speed *= 1.1
+    y, j, f = int(route["y"]), int(route["j"]), int(route["f"])
+    total   = y + j + f
+    cap     = int(plane["capacity"])
 
-    time = dist / speed if speed else 1
-    trips = max(1, int(24 / time))
-
-    # =========================
-    # DEMAND
-    # =========================
-    y = int(route["y"])
-    j = int(route["j"])
-    f = int(route["f"])
-
-    total = y + j + f
-    cap = int(plane["capacity"])
-
-    # =========================
-    # DIFFICULTY SETTINGS
-    # =========================
     if mode == "easy":
-
-        # load factor
         lf = 1.0
-
-        # NEW REALISTIC TICKET FORMULA
-        y_price = (0.4 * dist) + 170
-        j_price = (0.8 * dist) + 560
-        f_price = (1.2 * dist) + 1200
-
-        # costs
-        fuel_mult = 4
-        co2_mult = 1.8
-
-        acheck = 20000
-        repair = 15000
-
-        cargo_mul = 0.5
-
-    else:  # REALISM MODE
-
-        # realistic load factor
+        y_price = 0.4*dist + 170; j_price = 0.8*dist + 560; f_price = 1.2*dist + 1200
+        fuel_mult=4; co2_mult=1.8; acheck=20000; repair=15000; cargo_mul=0.5
+    else:
         lf = 0.85
+        y_price = 0.3*dist + 150; j_price = 0.6*dist + 500; f_price = 0.9*dist + 1000
+        fuel_mult=5.5; co2_mult=2.5; acheck=40000; repair=25000; cargo_mul=0.35
 
-        # NEW REALISM FORMULA
-        y_price = (0.3 * dist) + 150
-        j_price = (0.6 * dist) + 500
-        f_price = (0.9 * dist) + 1000
-
-        # realistic costs
-        fuel_mult = 5.5
-        co2_mult = 2.5
-
-        acheck = 40000
-        repair = 25000
-
-        cargo_mul = 0.35
-
-    # =========================
-    # CONFIGURATION
-    # =========================
     if total > 0:
-
-        y_ratio = y / total
-        j_ratio = j / total
-        f_ratio = f / total
-
-        y_c = int(cap * y_ratio * lf)
-        j_c = int(cap * j_ratio * lf)
-
-        used = y_c + j_c
-
-        f_c = max(0, cap - used)
-
+        y_c = int(cap*(y/total)*lf); j_c = int(cap*(j/total)*lf)
+        f_c = max(0, cap - y_c - j_c)
     else:
         y_c = j_c = f_c = 0
 
-    # =========================
-    # INCOME
-    # =========================
-    income_trip = (
-        (y_c * y_price) +
-        (j_c * j_price) +
-        (f_c * f_price)
-    )
-
-    # =========================
-    # CARGO
-    # =========================
-    cargo = float(route.get("cargo", 0))
-    cargo_income = cargo * cargo_mul
-
+    income_trip  = y_c*y_price + j_c*j_price + f_c*f_price
+    cargo_income = float(route.get("cargo",0)) * cargo_mul
     income_trip += cargo_income
 
-    # =========================
-    # COSTS
-    # =========================
     fuel = dist * float(plane["fuel"]) * fuel_mult
-    co2 = dist * co2_mult
-
+    co2  = dist * co2_mult
     if mods:
-        if "fuel" in mods:
-            fuel *= 0.9
+        if "fuel" in mods: fuel *= 0.9
+        if "co2"  in mods: co2  *= 0.9
 
-        if "co2" in mods:
-            co2 *= 0.9
-
-    fuel_lb = fuel * 2.2
-    co2_q = co2 * 1.1
-
-    # =========================
-    # PROFIT
-    # =========================
-    total_cost = fuel + co2 + acheck + repair
-
+    total_cost  = fuel + co2 + acheck + repair
     profit_trip = income_trip - total_cost
+    ci          = int((profit_trip/income_trip)*100) if income_trip else 0
 
-    ci = int((profit_trip / income_trip) * 100) if income_trip else 0
-
-    # =========================
-    # DAILY VALUES
-    # =========================
-    income_day = income_trip * trips
-    fuel_day = fuel * trips
-    co2_day = co2 * trips
-    profit_day = profit_trip * trips
-
-    # =========================
-    # RETURN DATA
-    # =========================
     return {
-
-        # mode
-        "mode": mode,
-
-        # flight
-        "distance": int(dist),
-        "time": round(time, 2),
-        "trips": trips,
-
-        # config
-        "y": y_c,
-        "j": j_c,
-        "f": f_c,
-
-        # ticket prices
-        "y_price": int(y_price),
-        "j_price": int(j_price),
-        "f_price": int(f_price),
-
-        # income
-        "income_trip": int(income_trip),
-        "cargo_income": int(cargo_income),
-
-        # costs
-        "fuel": int(fuel),
-        "fuel_lb": int(fuel_lb),
-
-        "co2": int(co2),
-        "co2_q": int(co2_q),
-
-        "acheck": int(acheck),
-        "repair": int(repair),
-
-        "total_cost": int(total_cost),
-
-        # profit
-        "profit_trip": int(profit_trip),
-        "ci": ci,
-
-        # daily
-        "income_day": int(income_day),
-        "fuel_day": int(fuel_day),
-        "co2_day": int(co2_day),
-        "profit_day": int(profit_day)
+        "mode": mode, "distance": int(dist), "time": round(time_h,2), "trips": trips,
+        "y": y_c, "j": j_c, "f": f_c,
+        "y_price": int(y_price), "j_price": int(j_price), "f_price": int(f_price),
+        "income_trip": int(income_trip), "cargo_income": int(cargo_income),
+        "fuel": int(fuel), "fuel_lb": int(fuel*2.2),
+        "co2":  int(co2),  "co2_q":   int(co2*1.1),
+        "acheck": int(acheck), "repair": int(repair), "total_cost": int(total_cost),
+        "profit_trip": int(profit_trip), "ci": ci,
+        "income_day":  int(income_trip*trips), "fuel_day":   int(fuel*trips),
+        "co2_day":     int(co2*trips),          "profit_day": int(profit_trip*trips)
     }
 
-# ========================
-# Leaderboard 
-# ========================
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id TEXT PRIMARY KEY,
-    username TEXT,
-    points INTEGER DEFAULT 0,
-    last_used REAL DEFAULT 0
-)
-""")
-conn.commit()
-
-
-# =========================
-# LIVE USAGE TRACKER (ANTI-SPAM + LIVE POINTS)
-# =========================
-COOLDOWN = 3  # seconds
-
+# ─────────────────────────────────────────────────────────────
+#  USAGE TRACKER
+# ─────────────────────────────────────────────────────────────
+COOLDOWN = 3
 def add_usage(user):
     now = time.time()
-
-    cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
-    row = cursor.fetchone()
-
-    # anti spam protection
-    if row and now - row[0] < COOLDOWN:
-        return
-
-    cursor.execute("""
-    INSERT INTO users (user_id, username, points, last_used)
-    VALUES (?, ?, 1, ?)
-    ON CONFLICT(user_id)
-    DO UPDATE SET
-        points = points + 1,
-        username = excluded.username,
-        last_used = excluded.last_used
+    cur.execute("SELECT last_used FROM bot_usage WHERE user_id=?", (str(user.id),))
+    row = cur.fetchone()
+    if row and now - row[0] < COOLDOWN: return
+    cur.execute("""
+        INSERT INTO bot_usage (user_id,username,points,last_used) VALUES (?,?,1,?)
+        ON CONFLICT(user_id) DO UPDATE SET
+        points=points+1, username=excluded.username, last_used=excluded.last_used
     """, (str(user.id), user.name, now))
+    conn_dyn.commit()
 
-    conn.commit()
-
-
-# =========================
-# LEADERBOARD VIEW (LIVE DASHBOARD)
-# =========================
-class LeaderboardView(View):
-
-    def __init__(self):
-        super().__init__(timeout=180)
-        self.page = 0
-        self.data = self.fetch()
-
-    # =========================
-    # FETCH DATA
-    # =========================
-    def fetch(self):
-        cursor.execute("""
-        SELECT username, points
-        FROM users
-        ORDER BY points DESC
-        """)
-        return cursor.fetchall()
-
-    # =========================
-    # PAGINATION
-    # =========================
-    def page_data(self):
-        start = self.page * 10
-        return self.data[start:start + 10]
-
-    # =========================
-    # EMBED UI
-    # =========================
-    def build_embed(self):
-
-        medals = ["🥇", "🥈", "🥉"]
-
-        text = ""
-
-        for i, (name, pts) in enumerate(self.page_data(), start=1):
-            rank = self.page * 10 + i
-            medal = medals[rank - 1] if rank <= 3 else "🔹"
-
-            text += f"{medal} **#{rank} {name}** — `{pts:,}` uses\n"
-
-        embed = discord.Embed(
-            title="📊 LIVE JARVIS USAGE LEADERBOARD",
-            description=text or "No data yet",
-            color=0x1e2b4a
-        )
-
-        embed.set_footer(
-            text=f"Page {self.page + 1} • Live Tracking • AERO CROWN DYNASTY"
-        )
-
-        return embed
-
-    # =========================
-    # GRAPH (ANIMATED STYLE BAR)
-    # =========================
-    def build_graph(self):
-
-        top = self.data[:10]
-
-        names = [x[0][:8] for x in top]
-        values = [x[1] for x in top]
-
-        plt.figure(figsize=(8, 4))
-        plt.style.use("dark_background")
-
-        plt.gca().set_facecolor("#0b1a40")
-        plt.gcf().patch.set_facecolor("#0b1a40")
-
-        bars = plt.bar(names, values, color="#00e5ff")
-
-        # glow effect illusion
-        for bar in bars:
-            bar.set_alpha(0.9)
-
-        plt.xticks(rotation=40)
-        plt.title("LIVE BOT USAGE RANKING", color="white")
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight", dpi=300)
-        buf.seek(0)
-        plt.close()
-
-        return buf
-
-    # =========================
-    # BUTTONS
-    # =========================
-
-    @discord.ui.button(label="⬅ Prev", style=discord.ButtonStyle.secondary)
-    async def prev(self, interaction, button):
-
-        if self.page > 0:
-            self.page -= 1
-
-        await self.update(interaction)
-
-    @discord.ui.button(label="Next ➡", style=discord.ButtonStyle.primary)
-    async def next(self, interaction, button):
-
-        if (self.page + 1) * 10 < len(self.data):
-            self.page += 1
-
-        await self.update(interaction)
-
-    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.success)
-    async def refresh(self, interaction, button):
-
-        self.data = self.fetch()
-        self.page = 0
-
-        await self.update(interaction)
-
-    @discord.ui.button(label="📊 Graph", style=discord.ButtonStyle.grey)
-    async def graph(self, interaction, button):
-
-        buf = self.build_graph()
-        file = discord.File(buf, "leaderboard.png")
-
-        embed = discord.Embed(
-            title="📊 Live Usage Graph",
-            color=0x1e2b4a
-        )
-
-        embed.set_image(url="attachment://leaderboard.png")
-
-        await interaction.response.edit_message(
-            embed=embed,
-            attachments=[file],
-            view=self
-        )
-
-    # =========================
-    # UPDATE ENGINE
-    # =========================
-    async def update(self, interaction):
-
-        self.data = self.fetch()
-
-        await interaction.response.edit_message(
-            embed=self.build_embed(),
-            attachments=[],
-            view=self
-        )
-
-
-# =========================
-# AUTO TRACK EVERY COMMAND USE (GLOBAL HOOK)
-# =========================
 @bot.event
 async def on_command(ctx):
     add_usage(ctx.author)
 
-
-# =========================
-# LEADERBOARD COMMAND
-# =========================
-@bot.command()
-async def leaderboard(ctx):
-
-    view = LeaderboardView()
-
-    if not view.data:
-        return await ctx.send("❌ No usage data yet")
-
-    await ctx.send(
-        embed=view.build_embed(),
-        view=view
-    )
-
-# =========================
-# DIFFICULTY COMMAND
-# =========================
-@bot.command()
-async def difficulty(ctx, mode=None):
-
-    if not mode:
-        current = get_user_mode(ctx.author.id)
-        return await ctx.send(f"⚙ Your difficulty: **{current.upper()}**")
-
-    mode = mode.lower()
-
-    if mode not in ["easy", "realism"]:
-        return await ctx.send("❌ Use: easy / realism")
-
-    set_user_mode(ctx.author.id, mode)
-
-    await ctx.send(f"✅ Difficulty set to **{mode.upper()}**")
-
-# =========================
-# AIRPORT HELPER (FINAL STABLE)
-# =========================
-def airport_name(iata):
-    try:
-        iata = iata.upper()
-
-        # BEST METHOD → directly airport table style lookup
-        cursor.execute("""
-        SELECT city, country 
-        FROM routes
-        WHERE iata = ?
-        LIMIT 1
-        """, (iata,))
-
-        row = cursor.fetchone()
-
-        # fallback (very important)
-        if not row:
-            cursor.execute("""
-            SELECT city, country 
-            FROM routes
-            WHERE f_iata = ? OR t_iata = ?
-            LIMIT 1
-            """, (iata, iata))
-
-            row = cursor.fetchone()
-
-        if row:
-            city = row[0]
-            country = row[1]
-
-            # safe return
-            if city and country:
-                return f"{iata} — {city}, {country}"
-
-    except:
-        pass
-
-    return iata  # fallback (no blank ever)
-
-# =========================
-# ROUTE COMMAND V3
-# =========================
-@bot.command()
-async def route(ctx, frm, to, *, plane_name):
-
-    route = get_route(frm, to)
-    plane = get_plane(plane_name)
-
-    if not route:
-        return await ctx.send("❌ Route not found")
-
-    if not plane:
-        return await ctx.send("❌ Plane not found")
-
-    distance_total = float(route["distance"])
-    plane_range = float(plane["range"])
-
-    # =========================
-    # STOPOVER SYSTEM
-    # =========================
-    stop_airport = None
-
-    if distance_total > plane_range:
-
-        cursor.execute("""
-        SELECT t_iata
-        FROM routes
-        WHERE f_iata = ?
-        AND CAST(distance AS REAL) < ?
-        ORDER BY CAST(distance AS REAL) DESC
-        LIMIT 1
-        """, (frm.upper(), plane_range))
-
-        row = cursor.fetchone()
-
-        if row:
-            stop_airport = row[0]
-
-    # =========================
-    # CALC ENGINE
-    # =========================
-    result = calc(route, plane, ctx.author.id)
-
-    mode = result["mode"]
-
-    # =========================
-    # ROUTE DISPLAY
-    # =========================
-    from_txt = airport_name(frm)
-    to_txt = airport_name(to)
-
-    if stop_airport:
-
-        stop_txt = airport_name(stop_airport)
-
-        route_display = (
-            f"{from_txt}\n"
-            f"→ {stop_txt}\n"
-            f"→ {to_txt}"
-        )
-
-    else:
-
-        route_display = (
-            f"{from_txt}\n"
-            f"→ {to_txt}"
-        )
-
-    # =========================
-    # EMBED
-    # =========================
-    embed = discord.Embed(
-        title=f"{plane['name']} • Route Analysis V3.0.1",
-        description=f"```{route_display}```",
-        color=0x2b2d31
-    )
-
-    # =========================
-    # FLIGHT INFO
-    # =========================
-    embed.add_field(
-        name="✈ Flight Info",
-        value=(
-            f"**Distance:** {int(distance_total):,} km\n"
-            f"**Trips:** {result['trips']}/day\n"
-            f"**Mode:** {mode.upper()}"
-        ),
-        inline=False
-    )
-
-    # =========================
-    # DEMAND
-    # =========================
-    embed.add_field(
-        name="📊 Demand",
-        value=(
-            f"**Y:** {route['y']}\n"
-            f"**J:** {route['j']}\n"
-            f"**F:** {route['f']}"
-        ),
-        inline=True
-    )
-
-    # =========================
-    # CONFIGURATION
-    # =========================
-    embed.add_field(
-        name="⚙ Configuration",
-        value=(
-            f"**Y:** {result['y']}\n"
-            f"**J:** {result['j']}\n"
-            f"**F:** {result['f']}"
-        ),
-        inline=True
-    )
-
-    # =========================
-    # TICKET PRICING
-    # =========================
-    embed.add_field(
-        name="🎟 Ticket Pricing",
-        value=(
-            f"**Y:** ${result['y_price']:,}\n"
-            f"**J:** ${result['j_price']:,}\n"
-            f"**F:** ${result['f_price']:,}"
-        ),
-        inline=True
-    )
-
-    # =========================
-    # PER FLIGHT
-    # =========================
-    embed.add_field(
-        name="💰 Per Flight",
-        value=(
-            f"**Income:** ${result['income_trip']:,}\n"
-            f"**Fuel:** ${result['fuel']:,}\n"
-            f"**CO2:** ${result['co2']:,}\n"
-            f"**Maint:** ${result['acheck'] + result['repair']:,}\n\n"
-            f"**Profit:** ${result['profit_trip']:,}\n"
-            f"**CI:** {result['ci']}%"
-        ),
-        inline=False
-    )
-
-    # =========================
-    # PER DAY
-    # =========================
-    embed.add_field(
-        name="📅 Per Day",
-        value=(
-            f"**Income:** ${result['income_day']:,}\n"
-            f"**Fuel:** ${result['fuel_day']:,}\n"
-            f"**CO2:** ${result['co2_day']:,}\n"
-            f"**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n"
-            f"**Profit:** ${result['profit_day']:,}\n"
-            f"**Flights:** {result['trips']}"
-        ),
-        inline=False
-    )
-
-    embed.set_footer(
-        text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT"
-    )
-
-    # =========================
-    # EXPORT DATA
-    # =========================
-    report_data = {
-
-        "Route": f"{frm.upper()} -> {to.upper()}",
-        "Aircraft": plane["name"],
-        "Distance": f"{int(distance_total):,} km",
-        "Mode": mode.upper(),
-
-        "Trips/Day": result["trips"],
-
-        "Economy Demand": route["y"],
-        "Business Demand": route["j"],
-        "First Demand": route["f"],
-
-        "Economy Config": result["y"],
-        "Business Config": result["j"],
-        "First Config": result["f"],
-
-        "Economy Ticket": result["y_price"],
-        "Business Ticket": result["j_price"],
-        "First Ticket": result["f_price"],
-
-        "Income/Flight": result["income_trip"],
-        "Fuel/Flight": result["fuel"],
-        "CO2/Flight": result["co2"],
-
-        "Profit/Flight": result["profit_trip"],
-        "Profit/Day": result["profit_day"],
-
-        "CI": f"{result['ci']}%"
-    }
-
-    # =========================
-    # SEND
-    # =========================
-    await ctx.send(
-        embed=embed,
-        view=ExportView(report_data)
-    )
-        
-# =========================
-# IMPORTS (SAFE MERGE)
-# =========================
-import discord
-from discord.ui import View
-import matplotlib.pyplot as plt
-import numpy as np
-import io
-
-# =========================
-# COMPARE VIEW V3
-# =========================
-class CompareView(View):
-
-    def __init__(self, p1, p2, r1, r2):
-        super().__init__(timeout=120)
-
-        self.p1 = p1
-        self.p2 = p2
-
-        self.r1 = r1
-        self.r2 = r2
-
-        self.page = 0
-
-    # =========================
-    # SAFE FORMATTER
-    # =========================
-    def fmt(self, a, b, reverse=False):
-
-        try:
-            a = float(a)
-            b = float(b)
-
-        except:
-            return f"{a}"
-
-        if reverse:
-            return f"**{a:,.0f}**" if a < b else f"{a:,.0f}"
-
-        return f"**{a:,.0f}**" if a > b else f"{a:,.0f}"
-
-    # =========================
-    # PAGE 1
-    # =========================
-    def build_embed(self):
-
-        embed = discord.Embed(
-            title=f"{self.p1['name']}  VS  {self.p2['name']}",
-            description="```Advanced Aircraft Analytics Engine```",
-            color=0x2b2d31
-        )
-
-        # ================= SPEC =================
-        embed.add_field(
-            name="✦ Specifications",
-            value=(
-                f"**Capacity** → {self.fmt(self.p1['capacity'], self.p2['capacity'])} │ {self.fmt(self.p2['capacity'], self.p1['capacity'])}\n"
-                f"**Range** → {self.fmt(self.p1['range'], self.p2['range'])} │ {self.fmt(self.p2['range'], self.p1['range'])}\n"
-                f"**Speed** → {self.fmt(self.p1['speed'], self.p2['speed'])} │ {self.fmt(self.p2['speed'], self.p1['speed'])}\n"
-                f"**Fuel** → {self.fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {self.fmt(self.p2['fuel'], self.p1['fuel'], True)}"
-            ),
-            inline=False
-        )
-
-        # ================= OPS =================
-        embed.add_field(
-            name="✦ Operations",
-            value=(
-                f"**Trips/Day** → {self.fmt(self.r1['trips'], self.r2['trips'])} │ {self.fmt(self.r2['trips'], self.r1['trips'])}\n"
-                f"**Flight Time** → {self.fmt(self.r1['time'], self.r2['time'], True)} │ {self.fmt(self.r2['time'], self.r1['time'], True)}\n"
-                f"**CI Score** → {self.fmt(self.r1['ci'], self.r2['ci'])}% │ {self.fmt(self.r2['ci'], self.r1['ci'])}%"
-            ),
-            inline=False
-        )
-
-        # ================= REVENUE =================
-        embed.add_field(
-            name="✦ Revenue",
-            value=(
-                f"**Income/Flight** → {self.fmt(self.r1['income_trip'], self.r2['income_trip'])} │ {self.fmt(self.r2['income_trip'], self.r1['income_trip'])}\n"
-                f"**Profit/Flight** → {self.fmt(self.r1['profit_trip'], self.r2['profit_trip'])} │ {self.fmt(self.r2['profit_trip'], self.r1['profit_trip'])}\n"
-                f"**Income/Day** → {self.fmt(self.r1['income_day'], self.r2['income_day'])} │ {self.fmt(self.r2['income_day'], self.r1['income_day'])}\n"
-                f"**Profit/Day** → {self.fmt(self.r1['profit_day'], self.r2['profit_day'])} │ {self.fmt(self.r2['profit_day'], self.r1['profit_day'])}"
-            ),
-            inline=False
-        )
-
-        # ================= COST =================
-        embed.add_field(
-            name="✦ Cost Analysis",
-            value=(
-                f"**Fuel/Flight** → {self.fmt(self.r1['fuel'], self.r2['fuel'], True)} │ {self.fmt(self.r2['fuel'], self.r1['fuel'], True)}\n"
-                f"**CO2/Flight** → {self.fmt(self.r1['co2'], self.r2['co2'], True)} │ {self.fmt(self.r2['co2'], self.r1['co2'], True)}\n"
-                f"**Maint** → {self.fmt(self.r1['acheck'] + self.r1['repair'], self.r2['acheck'] + self.r2['repair'], True)} │ {self.fmt(self.r2['acheck'] + self.r2['repair'], self.r1['acheck'] + self.r1['repair'], True)}"
-            ),
-            inline=False
-        )
-
-        # ================= EFF =================
-        embed.add_field(
-            name="✦ Efficiency",
-            value=(
-                f"**Fuel(lb)** → {self.fmt(self.r1['fuel_lb'], self.r2['fuel_lb'], True)} │ {self.fmt(self.r2['fuel_lb'], self.r1['fuel_lb'], True)}\n"
-                f"**CO2(q)** → {self.fmt(self.r1['co2_q'], self.r2['co2_q'], True)} │ {self.fmt(self.r2['co2_q'], self.r1['co2_q'], True)}"
-            ),
-            inline=False
-        )
-
-        winner = (
-            self.p1["name"]
-            if self.r1["profit_day"] > self.r2["profit_day"]
-            else self.p2["name"]
-        )
-
-        embed.set_footer(
-            text=f"Page 1/3 • Winner: {winner}"
-        )
-
-        return embed
-
-    # =========================
-    # PERFORMANCE GRAPH
-    # =========================
-    def make_graph(self):
-
-        labels = [
-            "Income",
-            "Profit",
-            "Fuel",
-            "CO2",
-            "Trips"
-        ]
-
-        p1_vals = [
-            self.r1["income_day"],
-            self.r1["profit_day"],
-            self.r1["fuel_day"],
-            self.r1["co2_day"],
-            self.r1["trips"] * 100000
-        ]
-
-        p2_vals = [
-            self.r2["income_day"],
-            self.r2["profit_day"],
-            self.r2["fuel_day"],
-            self.r2["co2_day"],
-            self.r2["trips"] * 100000
-        ]
-
-        # BETTER NORMALIZATION
-        max_val = max(
-            max(p1_vals),
-            max(p2_vals)
-        )
-
-        if max_val == 0:
-            max_val = 1
-
-        p1n = [v / max_val for v in p1_vals]
-        p2n = [v / max_val for v in p2_vals]
-
-        x = np.arange(len(labels))
-
-        # ================= FIGURE =================
-        fig, ax = plt.subplots(figsize=(9, 5))
-
-        # LIGHT PROFESSIONAL DARK GRAY
-        fig.patch.set_facecolor("#1f1f1f")
-        ax.set_facecolor("#2b2d31")
-
-        # ================= GLOW EFFECT =================
-        for lw, alpha in [(10, 0.05), (7, 0.08), (5, 0.12)]:
-            ax.plot(
-                x,
-                p1n,
-                linewidth=lw,
-                alpha=alpha
-            )
-
-        ax.plot(
-            x,
-            p1n,
-            marker='o',
-            linewidth=2.8,
-            label=self.p1["name"]
-        )
-
-        for lw, alpha in [(10, 0.05), (7, 0.08), (5, 0.12)]:
-            ax.plot(
-                x,
-                p2n,
-                linewidth=lw,
-                linestyle='--',
-                alpha=alpha
-            )
-
-        ax.plot(
-            x,
-            p2n,
-            marker='s',
-            linewidth=2.8,
-            linestyle='--',
-            label=self.p2["name"]
-        )
-
-        # ================= STYLE =================
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels)
-
-        ax.grid(
-            alpha=0.18,
-            linestyle=':'
-        )
-
-        ax.legend()
-
-        for spine in ax.spines.values():
-            spine.set_color("#555555")
-
-        ax.tick_params(colors="white")
-
-        # ================= SAVE =================
-        buf = io.BytesIO()
-
-        plt.savefig(
-            buf,
-            format='png',
-            bbox_inches='tight',
-            dpi=300
-        )
-
-        buf.seek(0)
-
-        plt.close()
-
-        return buf
-
-    # =========================
-    # RADAR
-    # =========================
-    def make_radar(self):
-
-        labels = [
-            "Income",
-            "Profit",
-            "Efficiency",
-            "Speed",
-            "Trips"
-        ]
-
-        def safe(a, b):
-
-            m = max(a, b)
-
-            return (
-                (a / m if m else 0),
-                (b / m if m else 0)
-            )
-
-        i1, i2 = safe(
-            self.r1["income_day"],
-            self.r2["income_day"]
-        )
-
-        p1v, p2v = safe(
-            self.r1["profit_day"],
-            self.r2["profit_day"]
-        )
-
-        s1, s2 = safe(
-            self.p1["speed"],
-            self.p2["speed"]
-        )
-
-        t1, t2 = safe(
-            self.r1["trips"],
-            self.r2["trips"]
-        )
-
-        e1 = (i1 + p1v) / 2
-        e2 = (i2 + p2v) / 2
-
-        v1 = [i1, p1v, e1, s1, t1]
-        v2 = [i2, p2v, e2, s2, t2]
-
-        angles = np.linspace(
-            0,
-            2 * np.pi,
-            len(labels),
-            endpoint=False
-        ).tolist()
-
-        v1 += v1[:1]
-        v2 += v2[:1]
-
-        angles += angles[:1]
-
-        # ================= FIGURE =================
-        fig = plt.figure(figsize=(6, 6))
-
-        ax = plt.subplot(111, polar=True)
-
-        fig.patch.set_facecolor("#1f1f1f")
-        ax.set_facecolor("#2b2d31")
-
-        # ================= PLOTS =================
-        ax.plot(
-            angles,
-            v1,
-            linewidth=2.5,
-            label=self.p1["name"]
-        )
-
-        ax.plot(
-            angles,
-            v2,
-            linewidth=2.5,
-            linestyle='--',
-            label=self.p2["name"]
-        )
-
-        ax.fill(
-            angles,
-            v1,
-            alpha=0.12
-        )
-
-        ax.fill(
-            angles,
-            v2,
-            alpha=0.12
-        )
-
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(labels, color="white")
-
-        ax.grid(alpha=0.2)
-
-        plt.legend()
-
-        # ================= SAVE =================
-        buf = io.BytesIO()
-
-        plt.savefig(
-            buf,
-            format='png',
-            bbox_inches='tight',
-            dpi=300
-        )
-
-        buf.seek(0)
-
-        plt.close()
-
-        return buf
-
-    # =========================
-    # BUTTONS
-    # =========================
-    @discord.ui.button(
-        label="◀",
-        style=discord.ButtonStyle.secondary
-    )
-    async def prev_btn(self, interaction, button):
-
-        self.page = (self.page - 1) % 3
-
-        await self.update(interaction)
-
-    @discord.ui.button(
-        label="▶",
-        style=discord.ButtonStyle.primary
-    )
-    async def next_btn(self, interaction, button):
-
-        self.page = (self.page + 1) % 3
-
-        await self.update(interaction)
-
-    # =========================
-    # UPDATE ENGINE
-    # =========================
-    async def update(self, interaction):
-
-        if self.page == 0:
-
-            await interaction.response.edit_message(
-                embed=self.build_embed(),
-                attachments=[],
-                view=self
-            )
-
-        elif self.page == 1:
-
-            buf = self.make_graph()
-
-            file = discord.File(
-                buf,
-                "graph.png"
-            )
-
-            embed = discord.Embed(
-                title="📊 Performance Graph",
-                color=0x2b2d31
-            )
-
-            embed.set_image(
-                url="attachment://graph.png"
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                attachments=[file],
-                view=self
-            )
-
-        elif self.page == 2:
-
-            buf = self.make_radar()
-
-            file = discord.File(
-                buf,
-                "radar.png"
-            )
-
-            embed = discord.Embed(
-                title="🧭 Radar Analysis",
-                color=0x2b2d31
-            )
-
-            embed.set_image(
-                url="attachment://radar.png"
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                attachments=[file],
-                view=self
-            )
-
-# =========================
-# COMMAND
-# =========================
-@bot.command()
-async def compare(ctx, *, planes_input):
-
-    try:
-        p1_name, p2_name = planes_input.lower().split(" vs ")
-
-    except:
-        return await ctx.send(
-            "❌ Use: !compare A320 vs B737"
-        )
-
-    p1 = get_plane(p1_name)
-    p2 = get_plane(p2_name)
-
-    if not p1 or not p2:
-        return await ctx.send(
-            "❌ Plane not found"
-        )
-
-    route = {
-        "distance": 5000,
-        "y": 300,
-        "j": 50,
-        "f": 10,
-        "cargo": 10000
-    }
-
-    r1 = calc(route, p1, ctx.author.id)
-    r2 = calc(route, p2, ctx.author.id)
-
-    view = CompareView(
-        p1,
-        p2,
-        r1,
-        r2
-    )
-
-    # =========================
-    # EXPORT DATA
-    # =========================
-    report_data = {
-
-        "Plane 1": p1["name"],
-        "Plane 2": p2["name"],
-
-        "P1 Profit/Day": r1["profit_day"],
-        "P2 Profit/Day": r2["profit_day"],
-
-        "P1 Income/Day": r1["income_day"],
-        "P2 Income/Day": r2["income_day"],
-
-        "P1 Fuel/Day": r1["fuel_day"],
-        "P2 Fuel/Day": r2["fuel_day"],
-
-        "P1 Trips": r1["trips"],
-        "P2 Trips": r2["trips"],
-
-        "P1 CI": r1["ci"],
-        "P2 CI": r2["ci"]
-    }
-
-    export_view = ExportView(report_data)
-
-    await ctx.send(
-        embed=view.build_embed(),
-        view=view
-    )
-
-    await ctx.send(
-        "📁 Download Compare Report",
-        view=export_view
-    )
-
-# =========================
-# BEST PLANE
-# =========================
-@bot.command()
-async def best(ctx, frm, to):
-
-    route = get_route(frm, to)
-
-    if not route:
-        return await ctx.send(
-            "Route not found"
-        )
-
-    best_plane = None
-    best_calc = None
-    best_score = -999999999
-
-    for p in get_all_planes():
-
-        try:
-
-            if float(route["distance"]) > float(p["range"]):
-                continue
-
-            c = calc(
-                route,
-                p,
-                ctx.author.id
-            )
-
-            score = (
-                c["profit_day"]
-                + (float(p["speed"]) * 10)
-                - (float(p["fuel"]) * 100)
-            )
-
-            if score > best_score:
-
-                best_score = score
-                best_plane = p
-                best_calc = c
-
-        except:
-            continue
-
-    if not best_plane:
-        return await ctx.send(
-            "No suitable aircraft found"
-        )
-
-    embed = discord.Embed(
-        title="Best Aircraft",
-        description=(
-            f"```"
-            f"{airport_name(frm)}"
-            f"\n→ "
-            f"{airport_name(to)}"
-            f"```"
-        ),
-        color=0x2b2d31
-    )
-
-    embed.add_field(
-        name="Aircraft",
-        value=best_plane["name"],
-        inline=False
-    )
-
-    embed.add_field(
-        name="Profit/Day",
-        value=money(best_calc["profit_day"]),
-        inline=True
-    )
-
-    embed.add_field(
-        name="Trips/Day",
-        value=best_calc["trips"],
-        inline=True
-    )
-
-    embed.add_field(
-        name="Mode",
-        value=best_calc["mode"].upper(),
-        inline=False
-    )
-
-    embed.set_footer(
-        text="JARVIS • Aircraft Optimization"
-    )
-
-    # =========================
-    # EXPORT
-    # =========================
-    report_data = {
-
-        "Route":
-        f"{frm.upper()} -> {to.upper()}",
-
-        "Aircraft":
-        best_plane["name"],
-
-        "Mode":
-        best_calc["mode"],
-
-        "Profit/Day":
-        best_calc["profit_day"],
-
-        "Trips/Day":
-        best_calc["trips"],
-
-        "Income/Day":
-        best_calc["income_day"],
-
-        "Fuel/Day":
-        best_calc["fuel_day"],
-
-        "CI":
-        best_calc["ci"]
-    }
-
-    export_view = ExportView(report_data)
-
-    await ctx.send(embed=embed)
-
-    await ctx.send(
-        "Download Report",
-        view=export_view
-    )
-
-
-# =========================
-# BEST ROUTE COMMAND
-# =========================
-@bot.command(name="best_r", aliases=["bestr", "top"])
-async def best_r(ctx, airport, *, plane_name):
-
-    airport = airport.upper()
-
-    plane = get_plane(plane_name)
-
-    if not plane:
-        return await ctx.send(
-            "Plane not found"
-        )
-
-    # =========================
-    # USER MODE
-    # =========================
-    mode = get_user_mode(ctx.author.id)
-
-    # =========================
-    # ROUTES
-    # =========================
-    cursor.execute("""
-    SELECT t_iata, distance, dem_y, dem_j, dem_f
-    FROM routes
-    WHERE f_iata = ?
-    LIMIT 300
-    """, (airport,))
-
-    routes = cursor.fetchall()
-
-    if not routes:
-        return await ctx.send(
-            "No routes found"
-        )
-
-    results = []
-
-    # =========================
-    # ANALYSIS
-    # =========================
-    for r in routes:
-
-        try:
-
-            dest, dist, y, j, f = r
-
-            distance = float(dist)
-
-            if distance > float(plane["range"]):
-                continue
-
-            y = int(y)
-            j = int(j)
-            f = int(f)
-
-            total_demand = y + j + f
-
-            if total_demand == 0:
-                continue
-
-            cap = int(plane["capacity"])
-
-            # =========================
-            # MODE SETTINGS
-            # =========================
-            if mode == "easy":
-
-                lf = 1.0
-
-                # NEW EASY PRICING
-                y_price = (0.4 * distance) + 170
-                j_price = (0.8 * distance) + 560
-                f_price = (1.2 * distance) + 1200
-
-                fuel_mult = 4
-                co2_mult = 1.8
-
-                acheck = 20000
-                repair = 15000
-
-            else:
-
-                lf = 0.85
-
-                # NEW REALISM PRICING
-                y_price = (0.3 * distance) + 150
-                j_price = (0.6 * distance) + 500
-                f_price = (0.9 * distance) + 1000
-
-                fuel_mult = 5.5
-                co2_mult = 2.5
-
-                acheck = 40000
-                repair = 25000
-
-            # =========================
-            # CONFIG
-            # =========================
-            y_ratio = y / total_demand
-            j_ratio = j / total_demand
-            f_ratio = f / total_demand
-
-            y_seats = int(cap * y_ratio * lf)
-            j_seats = int(cap * j_ratio * lf)
-
-            f_seats = (
-                cap
-                - y_seats
-                - j_seats
-            )
-
-            # =========================
-            # INCOME
-            # =========================
-            income = (
-                (y_seats * y_price)
-                + (j_seats * j_price)
-                + (f_seats * f_price)
-            )
-
-            # =========================
-            # COST
-            # =========================
-            fuel = (
-                distance
-                * float(plane["fuel"])
-                * fuel_mult
-            )
-
-            co2 = (
-                distance
-                * co2_mult
-            )
-
-            profit = (
-                income
-                - fuel
-                - co2
-                - acheck
-                - repair
-            )
-
-            # =========================
-            # TIME
-            # =========================
-            flight_time = (
-                distance
-                / float(plane["speed"])
-            )
-
-            flights_day = max(
-                1,
-                int(24 / flight_time)
-            )
-
-            # FILTER SHORT ROUTE SPAM
-            if flights_day > 18:
-                continue
-
-            daily_profit = int(
-                profit * flights_day
-            )
-
-            ci = int(
-                (profit / income) * 100
-            ) if income else 0
-
-            results.append((
-                dest,
-                int(distance),
-                daily_profit,
-                flights_day,
-                ci
-            ))
-
-        except:
-            continue
-
-    if not results:
-        return await ctx.send(
-            "No profitable routes found"
-        )
-
-    # =========================
-    # SORT
-    # =========================
-    results.sort(
-        key=lambda x: x[2],
-        reverse=True
-    )
-
-    top = results[:5]
-
-    # =========================
-    # UI
-    # =========================
-    text = ""
-
-    for i, r in enumerate(top, start=1):
-
-        dest, dist, profit, trips, ci = r
-
-        text += (
-            f"**{i}. {airport} → {dest}**\n"
-
-            f"`Profit` "
-            f"${profit:,}/day\n"
-
-            f"`Trips` "
-            f"{trips}/day\n"
-
-            f"`CI` "
-            f"{ci}%\n"
-
-            f"`Range` "
-            f"{dist:,} km\n\n"
-        )
-
-    embed = discord.Embed(
-        title=f"Best Routes • {plane['name']}",
-        description=text,
-        color=0x2b2d31
-    )
-
-    embed.add_field(
-        name="Analysis",
-        value=(
-            f"`Airport:` {airport}\n"
-            f"`Aircraft:` {plane['name']}\n"
-            f"`Mode:` {mode.upper()}"
-        ),
-        inline=False
-    )
-
-    embed.set_footer(
-        text="JARVIS • Smart Route Optimization"
-    )
-
-    # =========================
-    # EXPORT
-    # =========================
-    export_data = {
-
-        "Airport":
-        airport,
-
-        "Aircraft":
-        plane["name"],
-
-        "Mode":
-        mode
-    }
-
-    for i, r in enumerate(top, start=1):
-
-        dest, dist, profit, trips, ci = r
-
-        export_data[f"#{i} Route"] = (
-            f"{airport}->{dest}"
-        )
-
-        export_data[f"#{i} Profit"] = (
-            profit
-        )
-
-        export_data[f"#{i} Trips"] = (
-            trips
-        )
-
-        export_data[f"#{i} CI"] = (
-            ci
-        )
-
-        export_data[f"#{i} Range"] = (
-            dist
-        )
-
-    export_view = ExportView(export_data)
-
-    await ctx.send(embed=embed)
-
-    await ctx.send(
-        "Download Route Report",
-        view=export_view
-    )
-            
-# =========================
-# BEST SHORT ROUTE
-#==========================
-@bot.command(name="best_short")
-async def best_short(ctx, airport, *, plane_name):
-
-    airport = airport.upper()
-    plane = get_plane(plane_name)
-
-    if not plane:
-        await ctx.send("❌ Plane not found")
-        return
-
-    cursor.execute("""
-    SELECT t_iata, distance, dem_y, dem_j, dem_f
-    FROM routes
-    WHERE f_iata = ?
-    LIMIT 300
-    """, (airport,))
-
-    routes = cursor.fetchall()
-    results = []
-
-    for r in routes:
-        try:
-            dest, dist, y, j, f = r
-            distance = to_float(dist)
-
-            # SHORT FILTER
-            if distance > 3000:
-                continue
-
-            if distance > plane["range"]:
-                continue
-
-            y, j, f = int(y), int(j), int(f)
-            total = y + j + f
-            if total == 0:
-                continue
-
-            cap = plane["capacity"]
-
-            y_seats = int(cap * (y / total) * 0.85)
-            j_seats = int(cap * (j / total) * 0.85)
-            f_seats = cap - y_seats - j_seats
-
-            y_price = distance * 0.35
-            j_price = distance * 0.9
-            f_price = distance * 1.8
-
-            income = (y_seats*y_price)+(j_seats*j_price)+(f_seats*f_price)
-
-            fuel = distance * plane["fuel"] * 6.5
-            co2 = distance * 3.2
-
-            profit = income - fuel - co2 - 40000 - 25000
-
-            flights = max(1, int(24 / (distance / plane["speed"])))
-            daily_profit = int(profit * flights)
-
-            results.append((dest, distance, daily_profit))
-
-        except:
-            continue
-
-    if not results:
-        await ctx.send("❌ No short routes found")
-        return
-
-    results.sort(key=lambda x: x[2], reverse=True)
-    top = results[:5]
-
-    text = ""
-    for i, r in enumerate(top, 1):
-        text += f"**{i}. {airport} → {r[0]}**\n📏 {int(r[1]):,} km\n💰 ${r[2]:,}/day\n\n"
-
-    embed = discord.Embed(
-        title=f"⚡ Best SHORT Routes ({plane['name']})",
-        description=text,
-        color=0x00ffcc
-    )
-
-    embed.set_footer(text="JARVIS - AERO CROWN DYNASTY ™")
-    await ctx.send(embed=embed)
-#==========================
-# BEST LONG ROUTE 
-#==========================
-@bot.command(name="best_long")
-async def best_long(ctx, airport, *, plane_name):
-
-    airport = airport.upper()
-    plane = get_plane(plane_name)
-
-    if not plane:
-        await ctx.send("❌ Plane not found")
-        return
-
-    cursor.execute("""
-    SELECT t_iata, distance, dem_y, dem_j, dem_f
-    FROM routes
-    WHERE f_iata = ?
-    LIMIT 300
-    """, (airport,))
-
-    routes = cursor.fetchall()
-    results = []
-
-    for r in routes:
-        try:
-            dest, dist, y, j, f = r
-            distance = to_float(dist)
-
-            # LONG FILTER
-            if distance <= 3000:
-                continue
-
-            if distance > plane["range"]:
-                continue
-
-            y, j, f = int(y), int(j), int(f)
-            total = y + j + f
-            if total == 0:
-                continue
-
-            cap = plane["capacity"]
-
-            y_seats = int(cap * (y / total) * 0.85)
-            j_seats = int(cap * (j / total) * 0.85)
-            f_seats = cap - y_seats - j_seats
-
-            y_price = distance * 0.35
-            j_price = distance * 0.9
-            f_price = distance * 1.8
-
-            income = (y_seats*y_price)+(j_seats*j_price)+(f_seats*f_price)
-
-            fuel = distance * plane["fuel"] * 6.5
-            co2 = distance * 3.2
-
-            profit = income - fuel - co2 - 40000 - 25000
-
-            flights = max(1, int(24 / (distance / plane["speed"])))
-            daily_profit = int(profit * flights)
-
-            results.append((dest, distance, daily_profit))
-
-        except:
-            continue
-
-    if not results:
-        await ctx.send("❌ No long routes found")
-        return
-
-    results.sort(key=lambda x: x[2], reverse=True)
-    top = results[:5]
-
-    text = ""
-    for i, r in enumerate(top, 1):
-        text += f"**{i}. {airport} → {r[0]}**\n📏 {int(r[1]):,} km\n💰 ${r[2]:,}/day\n\n"
-
-    embed = discord.Embed(
-        title=f"🌍 Best LONG Routes ({plane['name']})",
-        description=text,
-        color=0xff9900
-    )
-
-    embed.set_footer(text="JARVIS - AERO CROWN DYNASTY ™")
-    await ctx.send(embed=embed)
-# =========================
-# WELCOME + CHAT
-# =========================
-@bot.event
-async def on_member_join(member):
-
-    channel = member.guild.system_channel
-
-    if channel:
-        embed = discord.Embed(
-            title="👋 Welcome to Aero Crown Dynasty",
-            description=f"{member.mention} welcome onboard!\n\nUse `!menu` to explore JARVIS.",
-            color=0x00ffcc
-        )
-
-        embed.set_thumbnail(url=member.guild.icon.url if member.guild.icon else None)
-
-        embed.set_footer(text="JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
-
-        await channel.send(embed=embed)
-
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-
-    msg = message.content.lower().strip()
-
-    # -------- CHECK IF BOT IS MENTIONED --------
-    is_mentioned = bot.user in message.mentions
-
-    # -------- CHECK IF DM --------
-    is_dm = isinstance(message.channel, discord.DMChannel)
-
-    # -------- ALLOW SMART REPLY ONLY IN THESE CASES --------
-    if not (is_mentioned or is_dm):
-        await bot.process_commands(message)
-        return
-
-    # Remove mention text from message for clean processing
-    msg = msg.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
-
-    # -------- INTENTS --------
-    greetings = ["hi", "hello", "hey", "jarvis", "yo"]
-    thanks = ["thanks", "thank you", "thx"]
-    help_words = ["help", "support", "what can you do"]
-
-    # -------- GREETING --------
-    if any(word == msg for word in greetings):
-        replies = [
-            f"Hey {message.author.mention} 👋 I'm online and ready.",
-            f"Hello {message.author.mention} ⚡ What do you need?",
-            f"Hi {message.author.mention} 👋 Jarvis is active."
-        ]
-        await message.channel.send(random.choice(replies))
-
-    # -------- THANK YOU --------
-    elif any(word in msg for word in thanks):
-        replies = [
-            f"You're welcome {message.author.mention} 👍",
-            f"Anytime {message.author.mention} ⚡",
-            f"Glad to help {message.author.mention} 😊"
-        ]
-        await message.channel.send(random.choice(replies))
-
-    # -------- HELP --------
-    elif any(word in msg for word in help_words):
-        await message.channel.send(
-            f"🧠 {message.author.mention} I can help with AM4 routes, aircraft data, comparisons, leaderboard, and system commands."
-        )
-
-    # -------- SMART FALLBACK --------
-    else:
-        replies = [
-            f"{message.author.mention} I’m not fully sure, but I can try helping. Can you rephrase?",
-            f"{message.author.mention} 🤔 I need a bit more context.",
-            f"{message.author.mention} I don’t have a direct match for that, but I’m listening."
-        ]
-        await message.channel.send(random.choice(replies))
-
-    await bot.process_commands(message)
-
-# =========================
-# TESTING FUEL DB
-# =========================
-@bot.command()
-async def testfuel(ctx):
-    cursor_dyn.execute("SELECT * FROM fuel_data LIMIT 5")
-    rows = cursor_dyn.fetchall()
-
-    if not rows:
-        await ctx.send("No data found")
-        return
-
-    msg = ""
-    for r in rows:
-        msg += f"{r['day']} | {r['time']} | {r['fuel']} | {r['co2']}\n"
-
-    await ctx.send(f"```{msg}```")
-
-# =========================
-# CHANNEL ID 
-# =========================
-CHANNEL_ID = os.getenv("CHANNEL_ID")
-# =========================
-# FUEL COMMAND
-# =========================
-@bot.command()
-async def fuel(ctx):
-    cursor_dyn.execute("""
-        SELECT fuel, co2 
-        FROM fuel_data 
-        ORDER BY day DESC, time DESC 
-        LIMIT 6
-    """)
-    rows = cursor_dyn.fetchall()
-
-    if len(rows) < 2:
-        await ctx.send("Not enough data")
-        return
-
-    fuels = [r["fuel"] for r in rows]
-    co2s = [r["co2"] for r in rows]
-
-    avg_fuel = sum(fuels) / len(fuels)
-    avg_co2 = sum(co2s) / len(co2s)
-
-    last_fuel = fuels[0]
-    last_co2 = co2s[0]
-
-    trend = "🔺 Rising" if last_fuel > fuels[1] else "🔻 Falling"
-
-    embed = discord.Embed(title="⛽ Fuel Prediction", color=0x0A1AFF)
-    embed.add_field(name="Current Fuel", value=f"{last_fuel}", inline=True)
-    embed.add_field(name="Predicted", value=f"{int(avg_fuel)}", inline=True)
-    embed.add_field(name="Trend", value=trend, inline=True)
-    embed.add_field(name="CO2", value=f"{last_co2}", inline=True)
-    embed.add_field(name="CO2 Avg", value=f"{int(avg_co2)}", inline=True)
-
-    await ctx.send(embed=embed)
-
-
-# =========================
-# AUTO ALERT LOOP
-# =========================
-async def fuel_alert_loop():
-    await bot.wait_until_ready()
-    channel = bot.get_channel(CHANNEL_ID)
-
-    last_sent = None
-
-    while not bot.is_closed():
-        cursor_dyn.execute("""
-            SELECT fuel FROM fuel_data 
-            ORDER BY day DESC, time DESC 
-            LIMIT 5
-        """)
-        rows = cursor_dyn.fetchall()
-
-        fuels = [r["fuel"] for r in rows]
-        avg = sum(fuels) / len(fuels)
-        current = fuels[0]
-
-        msg = None
-        if current < avg - 100:
-            msg = f"🟢 Fuel Low Alert: {current}"
-        elif current > avg + 100:
-            msg = f"🔴 Fuel High Alert: {current}"
-
-        if msg and msg != last_sent and channel:
-            await channel.send(msg)
-            last_sent = msg
-
-        await asyncio.sleep(1800)  # 30 min
-
-
-# =========================
-# DAILY FORECAST
-# =========================
-async def daily_forecast():
-    await bot.wait_until_ready()
-    channel = bot.get_channel(CHANNEL_ID)
-
-    IST = pytz.timezone("Asia/Kolkata")
-
-    while not bot.is_closed():
-        now = datetime.now(IST)
-
-        if now.hour == 0 and now.minute == 0:
-            cursor_dyn.execute("""
-                SELECT fuel FROM fuel_data 
-                ORDER BY day DESC, time DESC 
-                LIMIT 24
-            """)
-            rows = cursor_dyn.fetchall()
-
-            fuels = [r["fuel"] for r in rows]
-            avg = sum(fuels) / len(fuels)
-
-            embed = discord.Embed(
-                title="🌙 24h Fuel Forecast",
-                description=f"Expected Avg Fuel: {int(avg)}",
-                color=0x0A1AFF
-            )
-
-            if channel:
-                await channel.send(embed=embed)
-
-            await asyncio.sleep(60)
-
-        await asyncio.sleep(30)
-
-
-# =========================
-# GRAPH COMMAND
-# =========================
-@bot.command()
-async def fuelgraph(ctx):
-    cursor_dyn.execute("""
-        SELECT fuel FROM fuel_data 
-        ORDER BY day DESC, time DESC 
-        LIMIT 10
-    """)
-    rows = cursor_dyn.fetchall()
-
-    fuels = [r["fuel"] for r in rows][::-1]
-
-    plt.figure()
-    plt.plot(fuels)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-
-    await ctx.send(file=discord.File(buf, "fuel.png"))
-
-# ================= STS - DB (USE EXISTING conn_dyn) =================
-cursor_dyn.execute("CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, username TEXT)")
-cursor_dyn.execute("CREATE TABLE IF NOT EXISTS shares (user_id TEXT, value REAL, date TEXT, window_id TEXT)")
-cursor_dyn.execute("""CREATE TABLE IF NOT EXISTS activity (
-user_id TEXT PRIMARY KEY,
-total INT DEFAULT 0, attended INT DEFAULT 0, missed INT DEFAULT 0,
-streak INT DEFAULT 0, last_window TEXT, miss_streak INT DEFAULT 0)""")
-conn_dyn.commit()
-
-
-# ================= GLOBAL =================
+# ─────────────────────────────────────────────────────────────
+#  SHARE TRACKING HELPERS
+# ─────────────────────────────────────────────────────────────
+async def register_user(user):
+    uid = str(user.id)
+    cur.execute("SELECT * FROM users WHERE user_id=?", (uid,))
+    if not cur.fetchone():
+        cur.execute("INSERT INTO users VALUES (?,?)", (uid, str(user)))
+        cur.execute("INSERT INTO activity VALUES (?,0,0,0,0,NULL,0)", (uid,))
+        conn_dyn.commit()
+
+def rank_label(cons):
+    if cons >= 90: return "🏆 Legend"
+    if cons >= 75: return "💎 Diamond"
+    if cons >= 60: return "🥇 Gold"
+    if cons >= 40: return "🥈 Silver"
+    return "🥉 Bronze"
+
+# ─────────────────────────────────────────────────────────────
+#  SHARE TRACKING STATE
+# ─────────────────────────────────────────────────────────────
 current_window = {"id": None, "open_time": None}
 
+# ─────────────────────────────────────────────────────────────
+#  MENU
+# ─────────────────────────────────────────────────────────────
+class EliteMenu(View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-# ================= UI SYSTEM =================
-class UI:
-
-    @staticmethod
-    def embed(title, desc="", color=0x0A1AFF):
+    def _emb(self, title, desc, color):
         e = discord.Embed(title=title, description=desc, color=color)
-        e.set_footer(text="JARVIS • AM4 System")
+        e.set_footer(text=f"{FOOTER} • {ts()}")
         return e
 
-    # 🔥 matplotlib graph (UPGRADE)
-    @staticmethod
-    def graph_image(data):
-        if not data:
-            return None
-
-        plt.figure()
-        plt.plot(data)
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close()
-        return buf
-
-    # keep same logic but cleaner UI
-    @staticmethod
-    def vertical_compare(v1, v2, name1, name2):
-        maxv = max(v1, v2) or 1
-        h1 = int((v1/maxv)*10)
-        h2 = int((v2/maxv)*10)
-
-        lines = ""
-        for lvl in range(10,0,-1):
-            col1 = "🟩" if h1>=lvl else "⬛"
-            col2 = "🟦" if h2>=lvl else "⬛"
-            lines += f"{col1}   {col2}\n"
-
-        lines += "—"*10 + "\n"
-        lines += f"{name1[:3]}   {name2[:3]}"
-
-        return f"```{lines}```"
-
-
-# ================= HELPERS =================
-def now(): return datetime.now()
-def window_id(): return now().date().isoformat()
-def money(x): return f"${x:,.2f}"
-
-def parse(v):
-    try:
-        v=v.lower().replace(",","").strip()
-        if "b" in v: return float(v.replace("b",""))*1e9
-        if "m" in v: return float(v.replace("m",""))*1e6
-        return float(v)
-    except:
-        return None
-
-
-# ================= REGISTER =================
-async def register(user):
-    uid=str(user.id)
-    cursor_dyn.execute("SELECT * FROM users WHERE user_id=?", (uid,))
-    if not cursor_dyn.fetchone():
-        cursor_dyn.execute("INSERT INTO users VALUES (?,?)",(uid,str(user)))
-        cursor_dyn.execute("INSERT INTO activity VALUES (?,0,0,0,0,NULL,0)",(uid,))
-        conn_dyn.commit()
-
-
-# ================= MODAL =================
-class ShareModal(Modal, title="Submit Value 🚀"):
-    value = TextInput(label="Enter Value")
-
-    async def on_submit(self, interaction):
-        val = parse(self.value.value)
-        if val is None or val<=0:
-            return await interaction.response.send_message("Invalid value",ephemeral=True)
-
-        uid=str(interaction.user.id)
-        await register(interaction.user)
-
-        cursor_dyn.execute("SELECT * FROM shares WHERE user_id=? AND window_id=?", (uid,current_window["id"]))
-        if cursor_dyn.fetchone():
-            return await interaction.response.send_message("Already submitted",ephemeral=True)
-
-        cursor_dyn.execute("INSERT INTO shares VALUES (?,?,?,?)",(uid,val,now().isoformat(),current_window["id"]))
-        cursor_dyn.execute("""UPDATE activity SET attended=attended+1,total=total+1,
-        streak=streak+1,miss_streak=0,last_window=? WHERE user_id=?""",(current_window["id"],uid))
-        conn_dyn.commit()
-
-        await interaction.response.send_message(f"✅ Submitted {money(val)}",ephemeral=True)
-
-
-# ================= VIEW =================
-class ShareView(View):
-    @discord.ui.button(label="Submit Value",style=discord.ButtonStyle.green)
-    async def submit(self,interaction,button):
-        if not current_window["id"]:
-            return await interaction.response.send_message("Window closed",ephemeral=True)
-        await interaction.response.send_modal(ShareModal())
-
-
-# ================= ADMIN =================
-class AdminPanel(View):
-
-    async def interaction_check(self, interaction):
-        return interaction.guild and interaction.user.guild_permissions.manage_guild
-
-    @discord.ui.button(label="Open Window",style=discord.ButtonStyle.green)
-    async def open_w(self,interaction,button):
-        current_window["id"]=window_id()
-        current_window["open_time"]=now()
-
-        ch=bot.get_channel(CHANNEL_ID)
-        if ch:
-            await ch.send(embed=UI.embed("📢 Window Open"),view=ShareView())
-
-        await interaction.response.send_message("Opened")
-
-    @discord.ui.button(label="Close Window",style=discord.ButtonStyle.red)
-    async def close_w(self,interaction,button):
-        current_window["id"]=None
-        current_window["open_time"]=None
-        await interaction.response.send_message("Closed")
-
-    @discord.ui.button(label="Today Data",style=discord.ButtonStyle.blurple)
-    async def today(self,interaction,button):
-        data=cursor_dyn.execute("SELECT user_id,value FROM shares WHERE window_id=?", (window_id(),)).fetchall()
-        txt="\n".join([f"<@{u}> → {money(v)}" for u,v in data]) or "No data"
-        await interaction.response.send_message(embed=UI.embed("📊 Today Data",txt))
-
-    @discord.ui.button(label="Reset Today",style=discord.ButtonStyle.gray)
-    async def reset(self,interaction,button):
-        cursor_dyn.execute("DELETE FROM shares WHERE window_id=?", (window_id(),))
-        conn_dyn.commit()
-        await interaction.response.send_message("Reset done")
-
-
-# ================= COMMAND =================
-@bot.command(aliases=["admin"])
-async def panel(ctx):
-    if not ctx.guild:
-        return await ctx.send("Server only")
-    if not ctx.author.guild_permissions.manage_guild:
-        return await ctx.send("Admin only")
-
-    await ctx.send(embed=UI.embed("⚙ Control Panel"),view=AdminPanel())
-
-# ================= GRAPH =================
-@bot.command()
-async def graph(ctx, member: discord.User=None):
-    member = member or ctx.author
-    await register(member)
-
-    uid = str(member.id)
-
-    data = [x["value"] for x in cursor_dyn.execute(
-        "SELECT value FROM shares WHERE user_id=? ORDER BY date", (uid,)
-    ).fetchall()]
-
-    if not data:
-        return await ctx.send("No data")
-
-    avg = sum(data)/len(data)
-    mx = max(data)
-    mn = min(data)
-
-    # 🔥 matplotlib dark blue graph
-    plt.figure()
-    plt.plot(data)
-    plt.gca().set_facecolor("#0A1AFF")
-    plt.gcf().patch.set_facecolor("#0A1AFF")
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-
-    embed = UI.embed(f"📊 Full Growth - {member}")
-    embed.add_field(name="Average", value=money(avg))
-    embed.add_field(name="High", value=money(mx))
-    embed.add_field(name="Low", value=money(mn))
-    embed.add_field(name="Total Entries", value=str(len(data)))
-
-    await ctx.send(embed=embed, file=discord.File(buf, "graph.png"))
-
-
-# ================= COMPARE =================
-@bot.command()
-async def compareplayer(ctx, a: discord.User, b: discord.User):
-
-    d1 = [x["value"] for x in cursor_dyn.execute(
-        "SELECT value FROM shares WHERE user_id=?", (str(a.id),)
-    ).fetchall()]
-
-    d2 = [x["value"] for x in cursor_dyn.execute(
-        "SELECT value FROM shares WHERE user_id=?", (str(b.id),)
-    ).fetchall()]
-
-    if not d1 or not d2:
-        return await ctx.send("Not enough data")
-
-    avg1 = sum(d1)/len(d1)
-    avg2 = sum(d2)/len(d2)
-
-    # 🔥 matplotlib vertical bar (dark blue)
-    labels = [a.name, b.name]
-    values = [avg1, avg2]
-
-    plt.figure()
-    bars = plt.bar(labels, values)
-
-    plt.gca().set_facecolor("#0A1AFF")
-    plt.gcf().patch.set_facecolor("#0A1AFF")
-
-    for bar in bars:
-        h = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, h, int(h),
-                 ha='center', va='bottom')
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-
-    winner = a if avg1 > avg2 else b
-
-    embed = UI.embed("⚔ Player Comparison")
-    embed.add_field(name=a.name, value=f"Avg: {money(avg1)}\nEntries: {len(d1)}")
-    embed.add_field(name=b.name, value=f"Avg: {money(avg2)}\nEntries: {len(d2)}")
-    embed.add_field(name="Winner", value=winner.mention, inline=False)
-
-    await ctx.send(embed=embed, file=discord.File(buf, "compareplayer.png"))
-
-
-# ================= STATS =================
-@bot.command()
-async def stats(ctx, member: discord.User=None):
-    member = member or ctx.author
-    await register(member)
-
-    uid = str(member.id)
-
-    latest = cursor_dyn.execute(
-        "SELECT value FROM shares WHERE user_id=? ORDER BY date DESC LIMIT 1", (uid,)
-    ).fetchone()
-
-    act = cursor_dyn.execute(
-        "SELECT total,attended,missed,streak FROM activity WHERE user_id=?", (uid,)
-    ).fetchone()
-
-    if not latest or not act:
-        return await ctx.send("No data")
-
-    total, attended, missed, streak = act
-    cons = (attended/total*100) if total else 0
-
-    embed = UI.embed(f"📊 Detailed Stats - {member}")
-    embed.add_field(name="Latest", value=money(latest["value"]))
-    embed.add_field(name="Consistency", value=f"{cons:.1f}%")
-    embed.add_field(name="Rank", value=rank(cons))
-    embed.add_field(name="Streak", value=streak)
-    embed.add_field(name="Missed", value=missed)
-    embed.add_field(name="Total Entries", value=total)
-
-    await ctx.send(embed=embed)
-
-
-# ================= LEADERBOARD (Share rank) =================
-@bot.command()
-async def shareboard (ctx):
-
-    data = cursor_dyn.execute("""
-    SELECT users.username, AVG(shares.value) as avg_val
-    FROM shares JOIN users ON users.user_id=shares.user_id
-    GROUP BY shares.user_id ORDER BY avg_val DESC LIMIT 5
-    """).fetchall()
-
-    txt = "\n".join([f"{i+1}. {u} → {money(v)}" for i,(u,v) in enumerate(
-        [(r["username"], r["avg_val"]) for r in data]
-    )])
-
-    await ctx.send(embed=UI.embed("🏆 Leaderboard", txt))
-
-# =========================
-# START TASKS
-# =========================
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-    bot.loop.create_task(fuel_alert_loop())
-    bot.loop.create_task(daily_forecast())
-
-# =========================
-# AI COMMAND 
-# =========================
-@bot.command()
-async def ask(ctx, *, question):
-
-    msg = await ctx.send("🧠 Thinking...")
-
-    try:
-        response = groq.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-                    You are JARVIS, an advanced AM4 aviation intelligence assistant.
-
-                    Your main expertise:
-                    - Airline Manager 4
-                    - routes
-                    - fuel strategy
-                    - aircraft comparison
-                    - airline growth
-                    - alliance systems
-                    - aviation analytics
-
-                    You also casually chat naturally like a smart AI assistant.
-
-                    Keep responses clean, smart, and helpful.
-                    """
-                },
-
-                {
-                    "role": "user",
-                    "content": question
-                }
-            ],
-
-            temperature=0.7,
-            max_tokens=700
-        )
-
-        reply = response.choices[0].message.content
-
-        await msg.edit(content=reply[:2000])
-
-    except Exception as e:
-        await msg.edit(content=f"❌ AI Error:\n```{e}```")
-
-# =========================
-# KEEP ALIVE (ONLY ONCE)
-# =========================
-keep_alive()
-
-# =========================
-# SAFE START (IMPORTANT FIX)
-# =========================
-if __name__ == "__main__":
-    bot.run(TOKEN)
+    @discord.ui.button(label="✈ Route System", style=discord.ButtonStyle.blurple)
+    async def route_help(self, i, b):
+        await i.response.send_message(embed=self._emb("✈ Route Command",
+            "`!route DEL BOM A320`\n\n📊 Includes:\n• Flight time, distance, CI\n"
+            "• Demand (Y/J/F) • Config & Ticket\n• A-check, Repair\n"
+            "• Profit (Trip + Day) • Mods & Stopover", 0x3498db), ephemeral=True)
+
+    @discord.ui.button(label="🔥 Best Routes", style=discord.ButtonStyle.red)
+    async def best_help(self, i, b):
+        await i.response.send_message(embed=self._emb("🔥 Best Route Finder",
+            "`!best_r DEL A320`\n`!best_short DEL A320`\n`!best_long DEL A320`\n\n"
+            "📈 Shows: Profit, CI, Trips, Demand, Flight Time", 0xe74c3c), ephemeral=True)
+
+    @discord.ui.button(label="⚖ Compare Planes", style=discord.ButtonStyle.gray)
+    async def compare_help(self, i, b):
+        await i.response.send_message(embed=self._emb("⚖ Plane Comparison",
+            "`!compare A320 vs B737`\n\n📊 Shows:\n• Cost, Capacity, Range, Speed\n"
+            "• Fuel, CO2, Income, Profit, CI\n• Radar + Performance Graph", 0x95a5a6),
+            ephemeral=True)
+
+    @discord.ui.button(label="⛽ Fuel", style=discord.ButtonStyle.secondary)
+    async def fuel_help(self, i, b):
+        await i.response.send_message(embed=self._emb("⛽ Fuel Commands",
+            "`!fuel` — Current prediction (DB-based)\n`!fuelgraph` — Graph\n"
+            "`!fuelschedule <amount>` — Personal DM alert\n\n"
+            "Auto alert every 30min (AM4 cycle)", 0xf39c12), ephemeral=True)
+
+    @discord.ui.button(label="🏦 Alliance", style=discord.ButtonStyle.green)
+    async def alliance_help(self, i, b):
+        await i.response.send_message(embed=self._emb("🏦 Alliance Commands",
+            "`!allianceadd` — Register (modal form)\n`!alliancestats [@user]` — Stats\n"
+            "`!alliancecompare @u1 @u2` — Head-to-head\n`!allianceboard` — Leaderboard\n"
+            "`!alliancegraph` — Graph\n`!alliancehistory` — History\n"
+            "`!allianceexport` — Export CSV/DOCX/PDF\n\n⚠ Admin-only management", 0x2ecc71),
+            ephemeral=True)
+
+    @discord.ui.button(label="🗳 Voting", style=discord.ButtonStyle.blurple)
+    async def vote_help(self, i, b):
+        await i.response.send_message(embed=self._emb("🗳 Voting System",
+            "`!createpoll` — Create poll (modal, 5hr, hidden votes)\n"
+            "`!checkvote <poll_id>` — Check your vote\n"
+            "`!pollexport <poll_id>` — Export results\n\n"
+            "• Voter ID DM'd on vote\n• Auto-results after 5hr", 0x9b59b6), ephemeral=True)
+
+    @discord.ui.button(label="🤖 AI / General", style=discord.ButtonStyle.secondary)
+    async def general_help(self, i, b):
+        await i.response.send_message(embed=self._emb("🤖 General Commands",
+            "`!ask <question>` — AI with memory\n`!clearhistory` — Clear AI memory\n"
+            "`!menu` `!ping` `!difficulty easy/realism`\n"
+            "`!announce <msg>` — Admin DM blast\n"
+            "`!leaderboard` — Usage board\n\n"
+            "Chat: Hi / Hello / Jarvis (mention or DM)", 0
