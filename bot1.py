@@ -139,11 +139,9 @@ class EliteMenu(View):
         embed = discord.Embed(
             title="FLIGHT OPERATIONS",
             description="""
-```ansi
-[1;36mROUTE SYSTEM[0m
 ━━━━━━━━━━━━━━━━━━
 
-!route DEL BOM A320
+`!route DEL BOM A320`
 
 MODULES
 • Flight Time Analysis
@@ -154,40 +152,39 @@ MODULES
 • Stopover Support
 • Maintenance Calculation
 
-[1;32mSTATUS : OPERATIONAL[0m
-
+━━━━━━━━━━━━━━━━━━
+STATUS : OPERATIONAL
 """,
-color=0x00c3ff
-)
+            color=0x00c3ff
+        )
 
-    embed.set_footer(
-        text="JARVIS • Flight Operations Engine"
+        embed.set_footer(
+            text="JARVIS • Flight Operations Engine"
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+    # =========================
+    # ROUTE INTEL
+    # =========================
+    @discord.ui.button(
+        label="Route Intel",
+        style=discord.ButtonStyle.danger,
+        row=0
     )
+    async def best_help(self, interaction: discord.Interaction, button: Button):
 
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True
-    )
-
-# =========================
-# ROUTE INTEL
-# =========================
-@discord.ui.button(
-    label="Route Intel",
-    style=discord.ButtonStyle.danger,
-    row=0
-)
-async def best_help(self, interaction: discord.Interaction, button: Button):
-
-    embed = discord.Embed(
-        title="ROUTE INTELLIGENCE",
-        description="""
-[1;31mPROFIT OPTIMIZATION[0m
+        embed = discord.Embed(
+            title="ROUTE INTELLIGENCE",
+            description="""
 ━━━━━━━━━━━━━━━━━━
 
-!best_r DEL A320
-!best_short DEL A320
-!best_long DEL A320
+`!best_r DEL A320`
+`!best_short DEL A320`
+`!best_long DEL A320`
 
 FEATURES
 • Best Profit Routes
@@ -196,38 +193,37 @@ FEATURES
 • Demand Scanning
 • Route Ranking Engine
 
-[1;32mSTATUS : ACTIVE[0m
-
+━━━━━━━━━━━━━━━━━━
+STATUS : ACTIVE
 """,
-color=0xff4747
-)
+            color=0xff4747
+        )
 
-    embed.set_footer(
-        text="JARVIS • Route Intelligence Core"
+        embed.set_footer(
+            text="JARVIS • Route Intelligence Core"
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+    # =========================
+    # FLEET
+    # =========================
+    @discord.ui.button(
+        label="Fleet Analysis",
+        style=discord.ButtonStyle.secondary,
+        row=0
     )
+    async def compare_help(self, interaction: discord.Interaction, button: Button):
 
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True
-    )
-
-# =========================
-# FLEET
-# =========================
-@discord.ui.button(
-    label="Fleet Analysis",
-    style=discord.ButtonStyle.secondary,
-    row=0
-)
-async def compare_help(self, interaction: discord.Interaction, button: Button):
-
-    embed = discord.Embed(
-        title="FLEET ANALYSIS",
-        description="""
-[1;37mAIRCRAFT PERFORMANCE[0m
+        embed = discord.Embed(
+            title="FLEET ANALYSIS",
+            description="""
 ━━━━━━━━━━━━━━━━━━
 
-!compare A320 vs B737
+`!compare A320 vs B737`
 
 ANALYSIS
 • Profit Comparison
@@ -237,38 +233,37 @@ ANALYSIS
 • Income Statistics
 • Cost Evaluation
 
-[1;32mSTATUS : STABLE[0m
-
+━━━━━━━━━━━━━━━━━━
+STATUS : STABLE
 """,
-color=0xbfc3c7
-)
+            color=0xbfc3c7
+        )
 
-    embed.set_footer(
-        text="JARVIS • Fleet Analysis System"
+        embed.set_footer(
+            text="JARVIS • Fleet Analysis System"
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+    # =========================
+    # AIRPORT
+    # =========================
+    @discord.ui.button(
+        label="Airport Systems",
+        style=discord.ButtonStyle.success,
+        row=1
     )
+    async def airport_help(self, interaction: discord.Interaction, button: Button):
 
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True
-    )
-
-# =========================
-# AIRPORT
-# =========================
-@discord.ui.button(
-    label="Airport Systems",
-    style=discord.ButtonStyle.success,
-    row=1
-)
-async def airport_help(self, interaction: discord.Interaction, button: Button):
-
-    embed = discord.Embed(
-        title="AIRPORT SYSTEMS",
-        description="""
-[1;32mAIRPORT ANALYSIS NETWORK[0m
+        embed = discord.Embed(
+            title="AIRPORT SYSTEMS",
+            description="""
 ━━━━━━━━━━━━━━━━━━
 
-!airport DEL
+`!airport DEL`
 
 DATABASE
 • Runway Information
@@ -278,39 +273,38 @@ DATABASE
 • Airport Coordinates
 • Operational Data
 
-[1;32mDATABASE : CONNECTED[0m
-
+━━━━━━━━━━━━━━━━━━
+DATABASE : CONNECTED
 """,
-color=0x2ecc71
-)
+            color=0x2ecc71
+        )
 
-    embed.set_footer(
-        text="JARVIS • Airport Database System"
+        embed.set_footer(
+            text="JARVIS • Airport Database System"
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+    # =========================
+    # UTILITIES
+    # =========================
+    @discord.ui.button(
+        label="Utilities",
+        style=discord.ButtonStyle.secondary,
+        row=1
     )
+    async def general(self, interaction: discord.Interaction, button: Button):
 
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True
-    )
-
-# =========================
-# UTILITIES
-# =========================
-@discord.ui.button(
-    label="Utilities",
-    style=discord.ButtonStyle.secondary,
-    row=1
-)
-async def general(self, interaction: discord.Interaction, button: Button):
-
-    embed = discord.Embed(
-        title="SYSTEM UTILITIES",
-        description="""
-[1;35mGENERAL SYSTEM MODULES[0m
+        embed = discord.Embed(
+            title="SYSTEM UTILITIES",
+            description="""
 ━━━━━━━━━━━━━━━━━━
 
-!menu
-!ping
+`!menu`
+`!ping`
 
 SYSTEM
 • Control Panel
@@ -318,80 +312,89 @@ SYSTEM
 • Bot Response
 • Utility Commands
 
-[1;32mSYSTEM : ONLINE[0m
-
+━━━━━━━━━━━━━━━━━━
+SYSTEM : ONLINE
 """,
-color=0x9b59b6
-)
+            color=0x9b59b6
+        )
 
-    embed.set_footer(
-        text="JARVIS • Utility Interface"
-    )
+        embed.set_footer(
+            text="JARVIS • Utility Interface"
+        )
 
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True
-    )
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+
 # =========================
 # MENU COMMAND
 # =========================
-
 @bot.command()
 async def menu(ctx):
 
-embed = discord.Embed(
-    title="JARVIS AVIATION COMMAND",
-    description="""
-[1;36mFLIGHT OPERATIONS[0m
-route
-pricing engine
-profit calculation
-flight analysis
+    embed = discord.Embed(
+        title="JARVIS AVIATION COMMAND",
+        description="""
+━━━━━━━━━━━━━━━━━━
 
-[1;31mROUTE INTELLIGENCE[0m
-best_r
-best_short
-best_long
-market optimization
+FLIGHT OPERATIONS
+• route
+• pricing engine
+• profit calculation
+• flight analysis
 
-[1;37mFLEET ANALYSIS[0m
-compare
-aircraft statistics
-performance evaluation
+━━━━━━━━━━━━━━━━━━
 
-[1;32mAIRPORT SYSTEMS[0m
-airport search
-market data
-runway analysis
-traffic information
+ROUTE INTELLIGENCE
+• best_r
+• best_short
+• best_long
+• market optimization
 
-━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
-[1;32mSYSTEM STATUS[0m
+FLEET ANALYSIS
+• compare
+• aircraft statistics
+• performance evaluation
+
+━━━━━━━━━━━━━━━━━━
+
+AIRPORT SYSTEMS
+• airport search
+• market data
+• runway analysis
+• traffic information
+
+━━━━━━━━━━━━━━━━━━
+
+SYSTEM STATUS
 
 Route Engine        ONLINE
 Airport Database    ACTIVE
 Flight Calculator   STABLE
 
-━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
 Aircraft Supported : 490+
-Routes Indexed : 300K+
-Database Version : V3 CORE
+Routes Indexed     : 300K+
+Database Version   : V3 CORE
 
 Use the control buttons below.
 """,
-color=0x0f172a
-)
+        color=0x0f172a
+    )
 
-embed.set_footer(
-    text="JARVIS • A AERO CROWN DYNASTY OFFICIAL BOT"
-)
+    embed.set_footer(
+        text="JARVIS • A AERO CROWN DYNASTY OFFICIAL BOT"
+    )
 
-await ctx.send(
-    embed=embed,
-    view=EliteMenu()
-)
+    await ctx.send(
+        embed=embed,
+        view=EliteMenu()
+    )
 
 # =========================
 # UTILS
