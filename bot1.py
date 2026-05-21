@@ -122,120 +122,276 @@ def set_user_mode(user_id, mode):
 # MENU VIEW
 # =========================
 class EliteMenu(View):
+
     def __init__(self):
         super().__init__(timeout=None)
 
-    # ✈ ROUTE
-    @discord.ui.button(label="✈ Route System", style=discord.ButtonStyle.blurple)
+    # =========================
+    # FLIGHT OPS
+    # =========================
+    @discord.ui.button(
+        label="Flight Ops",
+        style=discord.ButtonStyle.primary,
+        row=0
+    )
     async def route_help(self, interaction: discord.Interaction, button: Button):
+
         embed = discord.Embed(
-            title="✈ Route Command",
+            title="FLIGHT OPERATIONS",
             description="""
-`!route DEL BOM A320`
+```ansi
+[1;36mROUTE SYSTEM[0m
+━━━━━━━━━━━━━━━━━━
 
-📊 Includes:
-• Flight time, distance
-• Demand (Y/J/F)
-• Config & Ticket price
-• A-check, Repair
-• Profit (Trip + Day)
-• Mods & Stopover
+!route DEL BOM A320
+
+MODULES
+• Flight Time Analysis
+• Demand System (Y/J/F)
+• Smart Seat Configuration
+• Dynamic Ticket Pricing
+• Profit Estimation
+• Stopover Support
+• Maintenance Calculation
+
+[1;32mSTATUS : OPERATIONAL[0m
+
 """,
-            color=0x3498db
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+color=0x00c3ff
+)
 
-    # 🔥 BEST
-    @discord.ui.button(label="🔥 Best Routes", style=discord.ButtonStyle.red)
-    async def best_help(self, interaction: discord.Interaction, button: Button):
-        embed = discord.Embed(
-            title="🔥 Best Route Finder",
-            description="""
-`!best_r DEL A320`
-`!best_short DEL A320`
-`!best_long DEL A320`
+    embed.set_footer(
+        text="JARVIS • Flight Operations Engine"
+    )
 
-📈 Finds:
-• Most profitable routes
-• Short / Long optimization
-""",
-            color=0xe74c3c
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ⚖ COMPARE
-    @discord.ui.button(label="⚖ Compare Planes", style=discord.ButtonStyle.gray)
-    async def compare_help(self, interaction: discord.Interaction, button: Button):
-        embed = discord.Embed(
-            title="⚖ Plane Comparison",
-            description="""
-`!compare A320 vs B737`
-
-📊 Shows:
-• Cost, Capacity, Range
-• Speed, Fuel, CO2
-• Income (Flight/Day)
-• Winner Highlight
-""",
-            color=0x95a5a6
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ℹ GENERAL
-    @discord.ui.button(label="ℹ General", style=discord.ButtonStyle.secondary)
-    async def general(self, interaction: discord.Interaction, button: Button):
-        embed = discord.Embed(
-            title="ℹ General Commands",
-            description="""
-`!menu`
-`!ping`
-
-🤖 Chat:
-Hi / Hello / Jarvis
-""",
-            color=0x2ecc71
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
 
 # =========================
-# MENU COMMAND
+# ROUTE INTEL
 # =========================
+@discord.ui.button(
+    label="Route Intel",
+    style=discord.ButtonStyle.danger,
+    row=0
+)
+async def best_help(self, interaction: discord.Interaction, button: Button):
+
+    embed = discord.Embed(
+        title="ROUTE INTELLIGENCE",
+        description="""
+[1;31mPROFIT OPTIMIZATION[0m
+━━━━━━━━━━━━━━━━━━
+
+!best_r DEL A320
+!best_short DEL A320
+!best_long DEL A320
+
+FEATURES
+• Best Profit Routes
+• Short Haul Optimization
+• Long Haul Optimization
+• Demand Scanning
+• Route Ranking Engine
+
+[1;32mSTATUS : ACTIVE[0m
+
+""",
+color=0xff4747
+)
+
+    embed.set_footer(
+        text="JARVIS • Route Intelligence Core"
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+# =========================
+# FLEET
+# =========================
+@discord.ui.button(
+    label="Fleet Analysis",
+    style=discord.ButtonStyle.secondary,
+    row=0
+)
+async def compare_help(self, interaction: discord.Interaction, button: Button):
+
+    embed = discord.Embed(
+        title="FLEET ANALYSIS",
+        description="""
+[1;37mAIRCRAFT PERFORMANCE[0m
+━━━━━━━━━━━━━━━━━━
+
+!compare A320 vs B737
+
+ANALYSIS
+• Profit Comparison
+• Capacity Breakdown
+• Fuel Efficiency
+• Speed & Range
+• Income Statistics
+• Cost Evaluation
+
+[1;32mSTATUS : STABLE[0m
+
+""",
+color=0xbfc3c7
+)
+
+    embed.set_footer(
+        text="JARVIS • Fleet Analysis System"
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+# =========================
+# AIRPORT
+# =========================
+@discord.ui.button(
+    label="Airport Systems",
+    style=discord.ButtonStyle.success,
+    row=1
+)
+async def airport_help(self, interaction: discord.Interaction, button: Button):
+
+    embed = discord.Embed(
+        title="AIRPORT SYSTEMS",
+        description="""
+[1;32mAIRPORT ANALYSIS NETWORK[0m
+━━━━━━━━━━━━━━━━━━
+
+!airport DEL
+
+DATABASE
+• Runway Information
+• Market Analysis
+• Hub Cost
+• Traffic Statistics
+• Airport Coordinates
+• Operational Data
+
+[1;32mDATABASE : CONNECTED[0m
+
+""",
+color=0x2ecc71
+)
+
+    embed.set_footer(
+        text="JARVIS • Airport Database System"
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+# =========================
+# UTILITIES
+# =========================
+@discord.ui.button(
+    label="Utilities",
+    style=discord.ButtonStyle.secondary,
+    row=1
+)
+async def general(self, interaction: discord.Interaction, button: Button):
+
+    embed = discord.Embed(
+        title="SYSTEM UTILITIES",
+        description="""
+[1;35mGENERAL SYSTEM MODULES[0m
+━━━━━━━━━━━━━━━━━━
+
+!menu
+!ping
+
+SYSTEM
+• Control Panel
+• Status Monitoring
+• Bot Response
+• Utility Commands
+
+[1;32mSYSTEM : ONLINE[0m
+
+""",
+color=0x9b59b6
+)
+
+    embed.set_footer(
+        text="JARVIS • Utility Interface"
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+=========================
+MENU COMMAND
+=========================
+
 @bot.command()
 async def menu(ctx):
 
-    embed = discord.Embed(
-        title="🤖 JARVIS CONTROL PANEL",
-        description="""
-━━━━━━━━━━━━━━━━━━━━━━━
+embed = discord.Embed(
+    title="JARVIS AVIATION COMMAND",
+    description="""
+[1;36mFLIGHT OPERATIONS[0m
+route
+pricing engine
+profit calculation
+flight analysis
 
-✈ **ROUTE SYSTEM**
-`!route DEL BOM A320`
+[1;31mROUTE INTELLIGENCE[0m
+best_r
+best_short
+best_long
+market optimization
 
-🔥 **BEST ROUTES**
-`!best_r DEL A320`
-`!best_short DEL A320`
-`!best_long DEL A320`
+[1;37mFLEET ANALYSIS[0m
+compare
+aircraft statistics
+performance evaluation
 
-⚖ **PLANE COMPARISON**
-`!compare A320 vs B737`
+[1;32mAIRPORT SYSTEMS[0m
+airport search
+market data
+runway analysis
+traffic information
 
-━━━━━━━━━━━━━━━━━━━━━━━
-👇 Use buttons below for help
-━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━
+
+[1;32mSYSTEM STATUS[0m
+
+Route Engine        ONLINE
+Airport Database    ACTIVE
+Flight Calculator   STABLE
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+Aircraft Supported : 490+
+Routes Indexed : 300K+
+Database Version : V3 CORE
+
+Use the control buttons below.
 """,
-        color=0x00BFFF
-    )
+color=0x0f172a
+)
 
-    # server icon (optional)
-    guild = ctx.guild
+embed.set_footer(
+    text="JARVIS • A AERO CROWN DYNASTY OFFICIAL BOT"
+)
 
-    if guild is not None and guild.icon is not None:
-        embed.set_thumbnail(url=guild.icon.url)
-
-    embed.set_footer(text="JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
-
-    await ctx.send(embed=embed, view=EliteMenu())
+await ctx.send(
+    embed=embed,
+    view=EliteMenu()
+)
 
 # =========================
 # UTILS
