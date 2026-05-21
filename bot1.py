@@ -332,9 +332,9 @@ color=0x9b59b6
         embed=embed,
         ephemeral=True
     )
-=========================
-MENU COMMAND
-=========================
+# =========================
+# MENU COMMAND
+# =========================
 
 @bot.command()
 async def menu(ctx):
