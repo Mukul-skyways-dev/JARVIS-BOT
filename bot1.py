@@ -3013,210 +3013,117 @@ async def airport(ctx, code):
         file=file
     )
 
-# =========================
-# IMPORTS
-# =========================
+# =========================================================
+# IMPORTS (PLANE SEARCH)
+# =========================================================
 
 import sqlite3
 import discord
 from discord.ext import commands
-
 from PIL import Image, ImageDraw
 import io
 
-# =========================
-# PLANE SEARCH COMMAND
-# =========================
+# =========================================================
+# NORMALIZE
+# =========================================================
 
-@bot.command()
-async def plane(ctx, *, query=None):
+def norm(text):
 
-    if not query:
-        return await ctx.send(
-            "Usage: `!plane A320`"
-        )
+    return (
+        str(text)
+        .lower()
+        .replace("-", "")
+        .replace(" ", "")
+        .replace("_", "")
+    )
+
+# =========================================================
+# GET ALL PLANES
+# =========================================================
+
+def get_all_planes():
 
     conn = sqlite3.connect("am4_data.db")
     cursor = conn.cursor()
 
-    # =========================
-    # SEARCH AIRCRAFT
-    # =========================
-    
-    search_query = query.lower().replace("-", "").replace(" ", "")
-
     cursor.execute("""
 
-    SELECT *
+    SELECT
+    model,
+    variant,
+    manufacturer,
+    capacity,
+    fuel_efficiency,
+    co2_emissions,
+    range,
+    speed,
+    flights_per_day,
+    hours_per_flight,
+    ticket_prices_e,
+    ticket_price_r,
+    `income/cost_e`,
+    `income/cost_r`
+
     FROM aircraft
-    WHERE REPLACE(REPLACE(LOWER(model), '-', ''), ' ', '') LIKE ?
 
-    """, (f"%{query}%",))
+    """)
 
-    results = cursor.fetchall()
+    planes = []
 
-    columns = [d[0] for d in cursor.description]
+    for r in cursor.fetchall():
 
-    # =========================
-    # NO RESULT
-    # =========================
+        planes.append({
 
-    if not results:
+            "model": r[0],
+            "variant": r[1],
+            "manufacturer": r[2],
 
-        cursor.execute("""
+            "capacity": float(r[3] or 0),
+            "fuel_efficiency": float(r[4] or 0),
+            "co2_emissions": float(r[5] or 0),
 
-        SELECT model, variant
-        FROM aircraft
-        WHERE model LIKE ?
-        LIMIT 5
+            "range": float(r[6] or 0),
+            "speed": float(r[7] or 0),
 
-        """, (f"%{query[:2]}%",))
+            "flights_per_day": float(r[8] or 0),
+            "hours_per_flight": float(r[9] or 0),
 
-        suggestions = cursor.fetchall()
+            "ticket_prices_e": r[10],
+            "ticket_price_r": r[11],
 
-        embed = discord.Embed(
-            title="AIRCRAFT NOT FOUND",
-            color=0xff4747
-        )
+            "income_cost_e": r[12],
+            "income_cost_r": r[13]
+        })
 
-        if suggestions:
+    conn.close()
 
-            suggestion_text = "\n".join(
-                [f"• {s[0]} - {s[1]}" for s in suggestions]
-            )
+    return planes
 
-            embed.description = f"""
-No direct aircraft match found.
+# =========================================================
+# GET PLANE
+# =========================================================
 
-Did you mean:
+def get_plane(name):
 
-{suggestion_text}
-"""
+    key = norm(name)
 
-        else:
-            embed.description = "No matching aircraft found."
+    matches = []
 
-        return await ctx.send(embed=embed)
+    for p in get_all_planes():
 
-    # =========================
-    # MULTIPLE RESULTS
-    # =========================
+        full_name = f"{p['model']} {p['variant']}"
 
-    if len(results) > 1:
+        if key in norm(full_name):
 
-        aircraft_list = "\n".join(
-            [
-                f"• {r[columns.index('model')]} - {r[columns.index('variant')]}"
-                for r in results[:10]
-            ]
-        )
+            matches.append(p)
 
-        embed = discord.Embed(
-            title="MULTIPLE AIRCRAFT FOUND",
-            description=f"""
-{aircraft_list}
+    return matches
 
-Use a more specific aircraft name.
-""",
-            color=0xf1c40f
-        )
+# =========================================================
+# DRAW AIRCRAFT
+# =========================================================
 
-        return await ctx.send(embed=embed)
-
-    # =========================
-    # EXACT AIRCRAFT
-    # =========================
-
-    row = results[0]
-
-    aircraft = dict(zip(columns, row))
-
-    model = aircraft.get("model", "Unknown")
-    variant = aircraft.get("variant", "Unknown")
-    manufacturer = aircraft.get("manufacturer", "Unknown")
-
-    capacity = float(aircraft.get("capacity", 0))
-    speed = float(aircraft.get("speed", 0))
-    rng = float(aircraft.get("range", 0))
-
-    fuel_eff = float(aircraft.get("fuel_efficiency", 0))
-    co2 = float(aircraft.get("co2_emissions", 0))
-
-    flights_day = float(aircraft.get("flights_per_day", 0))
-    hours_flight = float(aircraft.get("hours_per_flight", 0))
-
-    easy_roi = aircraft.get("income/cost_e", "N/A")
-    realism_roi = aircraft.get("income/cost_r", "N/A")
-
-    ticket_e = aircraft.get("ticket_prices_e", "N/A")
-    ticket_r = aircraft.get("ticket_price_r", "N/A")
-
-    # =========================
-    # AIRCRAFT ROLE
-    # =========================
-
-    role = "Balanced Aircraft"
-
-    if rng >= 12000:
-        role = "Ultra Long Haul Specialist"
-
-    elif rng >= 8000:
-        role = "Long Haul Specialist"
-
-    elif flights_day >= 7:
-        role = "Short Haul Grinder"
-
-    elif capacity >= 350:
-        role = "High Density Aircraft"
-
-    # =========================
-    # AUTO RECOMMENDATIONS
-    # =========================
-
-    recommendations = []
-
-    if rng >= 10000:
-        recommendations.append(
-            "• Recommended for long haul operations"
-        )
-
-    if capacity >= 300:
-        recommendations.append(
-            "• Excellent for hub expansion"
-        )
-
-    if fuel_eff <= 3:
-        recommendations.append(
-            "• Strong fuel efficiency profile"
-        )
-
-    if flights_day >= 6:
-        recommendations.append(
-            "• Optimized for frequent operations"
-        )
-
-    if not recommendations:
-        recommendations.append(
-            "• Balanced operational aircraft"
-        )
-
-    recommendation_text = "\n".join(recommendations)
-
-    # =========================
-    # EMBED COLOR
-    # =========================
-
-    embed_color = 0x3498db
-
-    if "boeing" in manufacturer.lower():
-        embed_color = 0x95a5a6
-
-    elif "airbus" in manufacturer.lower():
-        embed_color = 0x3498db
-
-    # =========================
-    # DRAW AIRCRAFT
-    # =========================
+def draw_aircraft(capacity):
 
     img = Image.new(
         "RGBA",
@@ -3272,10 +3179,7 @@ Use a more specific aircraft name.
         fill=(100, 100, 100)
     )
 
-    # =========================
-    # SEAT VISUALIZATION
-    # =========================
-
+    # Seat Color
     seat_color = (0, 191, 255)
 
     if capacity >= 300:
@@ -3305,27 +3209,211 @@ Use a more specific aircraft name.
             fill=seat_color
         )
 
-    # =========================
-    # SAVE IMAGE
-    # =========================
-
     buffer = io.BytesIO()
 
     img.save(buffer, format="PNG")
 
     buffer.seek(0)
 
+    return buffer
+
+# =========================================================
+# PLANE COMMAND
+# =========================================================
+
+@bot.command()
+async def plane(ctx, *, query=None):
+
+    if not query:
+
+        return await ctx.send(
+            "Usage: `!plane A320`"
+        )
+
+    results = get_plane(query)
+
+    # =====================================================
+    # NO RESULT
+    # =====================================================
+
+    if not results:
+
+        all_planes = get_all_planes()
+
+        suggestions = []
+
+        key = norm(query)
+
+        for p in all_planes:
+
+            full_name = f"{p['model']} {p['variant']}"
+
+            if key[:2] in norm(full_name):
+
+                suggestions.append(full_name)
+
+        suggestions = suggestions[:5]
+
+        embed = discord.Embed(
+            title="AIRCRAFT NOT FOUND",
+            color=0xff4747
+        )
+
+        if suggestions:
+
+            embed.description = f"""
+
+No direct aircraft match found.
+
+Did you mean:
+
+{chr(10).join([f"• {s}" for s in suggestions])}
+
+"""
+
+        else:
+
+            embed.description = "No matching aircraft found."
+
+        return await ctx.send(embed=embed)
+
+    # =====================================================
+    # MULTIPLE RESULTS
+    # =====================================================
+
+    if len(results) > 1:
+
+        aircraft_text = "\n".join([
+
+            f"• {p['model']} {p['variant']}"
+
+            for p in results[:10]
+
+        ])
+
+        embed = discord.Embed(
+            title="MULTIPLE AIRCRAFT FOUND",
+            description=f"""
+
+{aircraft_text}
+
+Use a more specific aircraft name.
+
+""",
+            color=0xf1c40f
+        )
+
+        return await ctx.send(embed=embed)
+
+    # =====================================================
+    # EXACT AIRCRAFT
+    # =====================================================
+
+    aircraft = results[0]
+
+    model = aircraft["model"]
+    variant = aircraft["variant"]
+    manufacturer = aircraft["manufacturer"]
+
+    capacity = aircraft["capacity"]
+    fuel_eff = aircraft["fuel_efficiency"]
+    co2 = aircraft["co2_emissions"]
+
+    rng = aircraft["range"]
+    speed = aircraft["speed"]
+
+    flights_day = aircraft["flights_per_day"]
+    hours_flight = aircraft["hours_per_flight"]
+
+    easy_roi = aircraft["income_cost_e"]
+    realism_roi = aircraft["income_cost_r"]
+
+    ticket_e = aircraft["ticket_prices_e"]
+    ticket_r = aircraft["ticket_price_r"]
+
+    # =====================================================
+    # ROLE DETECTION
+    # =====================================================
+
+    role = "Balanced Aircraft"
+
+    if rng >= 12000:
+        role = "Ultra Long Haul Specialist"
+
+    elif rng >= 8000:
+        role = "Long Haul Specialist"
+
+    elif flights_day >= 7:
+        role = "Short Haul Grinder"
+
+    elif capacity >= 350:
+        role = "High Density Aircraft"
+
+    # =====================================================
+    # AUTO RECOMMENDATIONS
+    # =====================================================
+
+    recommendations = []
+
+    if rng >= 10000:
+        recommendations.append(
+            "• Recommended for long haul operations"
+        )
+
+    if capacity >= 300:
+        recommendations.append(
+            "• Excellent for hub expansion"
+        )
+
+    if fuel_eff <= 3:
+        recommendations.append(
+            "• Strong fuel efficiency profile"
+        )
+
+    if flights_day >= 6:
+        recommendations.append(
+            "• Optimized for frequent operations"
+        )
+
+    if not recommendations:
+
+        recommendations.append(
+            "• Balanced operational aircraft"
+        )
+
+    recommendation_text = "\n".join(recommendations)
+
+    # =====================================================
+    # EMBED COLOR
+    # =====================================================
+
+    embed_color = 0x3498db
+
+    if manufacturer:
+
+        if "boeing" in manufacturer.lower():
+            embed_color = 0x95a5a6
+
+        elif "airbus" in manufacturer.lower():
+            embed_color = 0x3498db
+
+    # =====================================================
+    # DRAW AIRCRAFT
+    # =====================================================
+
+    image_buffer = draw_aircraft(capacity)
+
     file = discord.File(
-        buffer,
+        image_buffer,
         filename="aircraft.png"
     )
 
-    # =========================
-    # MAIN EMBED
-    # =========================
+    # =====================================================
+    # EMBED
+    # =====================================================
 
     embed = discord.Embed(
-        title=f"{model} - {variant}",
+        title=f"{model} {variant}",
         description=f"""
 ━━━━━━━━━━━━━━━━━━
 
@@ -3348,6 +3436,12 @@ Use a more specific aircraft name.
 **Capacity**
 {capacity:,.0f}
 
+**Flights Per Day**
+{flights_day}
+
+**Hours Per Flight**
+{hours_flight}
+
 ━━━━━━━━━━━━━━━━━━
 
 ⛽ EFFICIENCY
@@ -3357,9 +3451,6 @@ Use a more specific aircraft name.
 
 **CO2 Emissions**
 {co2}
-
-**Flights Per Day**
-{flights_day}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -3407,8 +3498,6 @@ JARVIS V3 CORE
         file=file,
         embed=embed
     )
-
-    conn.close()
 
 # =========================
 # KEEP ALIVE (ONLY ONCE)
