@@ -3034,7 +3034,7 @@ async def plane(ctx, *, query=None):
     cursor.execute("""
 
     SELECT *
-    FROM aircrafts
+    FROM aircraft
     WHERE model LIKE ?
 
     """, (f"%{query}%",))
@@ -3052,7 +3052,7 @@ async def plane(ctx, *, query=None):
         cursor.execute("""
 
         SELECT model
-        FROM aircrafts
+        FROM aircraft
         WHERE model LIKE ?
 
         LIMIT 5
