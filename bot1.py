@@ -3042,12 +3042,14 @@ async def plane(ctx, *, query=None):
     # =========================
     # SEARCH AIRCRAFT
     # =========================
+    
+    search_query = query.lower().replace("-", "").replace(" ", "")
 
     cursor.execute("""
 
     SELECT *
     FROM aircraft
-    WHERE model LIKE ?
+    WHERE REPLACE(REPLACE(LOWER(model), '-', ''), ' ', '') LIKE ?
 
     """, (f"%{query}%",))
 
