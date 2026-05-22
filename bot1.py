@@ -3014,7 +3014,7 @@ async def airport(ctx, code):
     )
 
 # =========================================================
-# IMPORTS (PLANE SEARCH)
+# IMPORTS
 # =========================================================
 
 import sqlite3
@@ -3022,6 +3022,27 @@ import discord
 from discord.ext import commands
 from PIL import Image, ImageDraw
 import io
+
+# =========================================================
+# SAFE CONVERTERS
+# =========================================================
+
+def safe_float(value):
+
+    try:
+        return float(value)
+
+    except:
+        return 0
+
+
+def safe_int(value):
+
+    try:
+        return int(float(value))
+
+    except:
+        return 0
 
 # =========================================================
 # NORMALIZE
@@ -3078,21 +3099,21 @@ def get_all_planes():
             "variant": r[1],
             "manufacturer": r[2],
 
-            "capacity": float(r[3] or 0),
-            "fuel_efficiency": float(r[4] or 0),
-            "co2_emissions": float(r[5] or 0),
+            "capacity": safe_float(r[3]),
+            "fuel_efficiency": safe_float(r[4]),
+            "co2_emissions": safe_float(r[5]),
 
-            "range": float(r[6] or 0),
-            "speed": float(r[7] or 0),
+            "range": safe_float(r[6]),
+            "speed": safe_float(r[7]),
 
-            "flights_per_day": float(r[8] or 0),
-            "hours_per_flight": float(r[9] or 0),
+            "flights_per_day": safe_float(r[8]),
+            "hours_per_flight": safe_float(r[9]),
 
             "ticket_prices_e": r[10],
             "ticket_price_r": r[11],
 
-            "income_cost_e": r[12],
-            "income_cost_r": r[13]
+            "income_cost_e": safe_float(r[12]),
+            "income_cost_r": safe_float(r[13])
         })
 
     conn.close()
@@ -3179,7 +3200,7 @@ def draw_aircraft(capacity):
         fill=(100, 100, 100)
     )
 
-    # Seat Color
+    # Seat Colors
     seat_color = (0, 191, 255)
 
     if capacity >= 300:
