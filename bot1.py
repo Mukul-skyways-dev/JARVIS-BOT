@@ -3013,6 +3013,290 @@ async def airport(ctx, code):
     )
 
 # =========================
+# PLANE SEARCH COMMAND
+# =========================
+
+@bot.command()
+async def plane(ctx, *, query=None):
+
+    if not query:
+        return await ctx.send(
+            "Usage: `!plane A320`"
+        )
+
+    conn = sqlite3.connect("am4_data.db")
+    cursor = conn.cursor()
+
+    # =========================
+    # SEARCH
+    # =========================
+
+    cursor.execute("""
+
+    SELECT *
+    FROM aircrafts
+    WHERE model LIKE ?
+
+    """, (f"%{query}%",))
+
+    results = cursor.fetchall()
+
+    columns = [d[0] for d in cursor.description]
+
+    # =========================
+    # NO RESULT
+    # =========================
+
+    if not results:
+
+        cursor.execute("""
+
+        SELECT model
+        FROM aircrafts
+        WHERE model LIKE ?
+
+        LIMIT 5
+
+        """, (f"%{query[:2]}%",))
+
+        suggestions = cursor.fetchall()
+
+        embed = discord.Embed(
+            title="AIRCRAFT NOT FOUND",
+            color=0xff4747
+        )
+
+        if suggestions:
+
+            suggestion_text = "\n".join(
+                [f"• {s[0]}" for s in suggestions]
+            )
+
+            embed.description = f"""
+No exact aircraft found.
+
+Did you mean:
+
+{suggestion_text}
+"""
+
+        else:
+            embed.description = "No matching aircraft found."
+
+        return await ctx.send(embed=embed)
+
+    # =========================
+    # MULTIPLE RESULTS
+    # =========================
+
+    if len(results) > 1:
+
+        aircraft_list = "\n".join(
+            [f"• {r[columns.index('model')]}" for r in results[:10]]
+        )
+
+        embed = discord.Embed(
+            title="MULTIPLE AIRCRAFT FOUND",
+            description=f"""
+{aircraft_list}
+
+Use a more specific aircraft name.
+""",
+            color=0xf1c40f
+        )
+
+        return await ctx.send(embed=embed)
+
+    # =========================
+    # EXACT RESULT
+    # =========================
+
+    row = results[0]
+
+    aircraft = dict(zip(columns, row))
+
+    model = aircraft.get("model", "Unknown")
+    manufacturer = aircraft.get("manufacturer", "Unknown")
+    variant = aircraft.get("variant", "Unknown")
+
+    capacity = aircraft.get("capacity", 0)
+    speed = aircraft.get("speed", 0)
+    rng = aircraft.get("range", 0)
+
+    runway = aircraft.get("runway", 0)
+
+    fuel_eff = aircraft.get("fuel_efficiency", 0)
+    co2 = aircraft.get("co2_emissions", 0)
+
+    flights_day = aircraft.get("flights_per_day", 0)
+    hours_flight = aircraft.get("hours_per_flight", 0)
+
+    easy_roi = aircraft.get("income_per_cost_easy", 0)
+    realism_roi = aircraft.get("income_per_cost_realism", 0)
+
+    ticket_e = aircraft.get("ticket_price_easy", "N/A")
+    ticket_r = aircraft.get("ticket_price_realism", "N/A")
+
+    # =========================
+    # ROLE DETECTION
+    # =========================
+
+    role = "Balanced Aircraft"
+
+    if rng >= 12000:
+        role = "Ultra Long Haul Specialist"
+
+    elif rng >= 8000:
+        role = "Long Haul Specialist"
+
+    elif flights_day >= 7:
+        role = "Short Haul Grinder"
+
+    elif capacity >= 400:
+        role = "High Density Aircraft"
+
+    # =========================
+    # AUTO RECOMMENDATIONS
+    # =========================
+
+    recommendations = []
+
+    if easy_roi >= 3:
+        recommendations.append(
+            "• Excellent profitability profile"
+        )
+
+    if fuel_eff <= 3:
+        recommendations.append(
+            "• Efficient fuel consumption"
+        )
+
+    if rng >= 8000:
+        recommendations.append(
+            "• Recommended for long haul routes"
+        )
+
+    if capacity >= 250:
+        recommendations.append(
+            "• Strong hub expansion aircraft"
+        )
+
+    if flights_day >= 6:
+        recommendations.append(
+            "• Optimized for frequent operations"
+        )
+
+    if not recommendations:
+        recommendations.append(
+            "• Balanced operational aircraft"
+        )
+
+    recommendations_text = "\n".join(recommendations)
+
+    # =========================
+    # EMBED COLOR
+    # =========================
+
+    embed_color = 0x3498db
+
+    if "boeing" in manufacturer.lower():
+        embed_color = 0x95a5a6
+
+    elif "airbus" in manufacturer.lower():
+        embed_color = 0x3498db
+
+    elif "cargo" in model.lower():
+        embed_color = 0xe67e22
+
+    # =========================
+    # MAIN EMBED
+    # =========================
+
+    embed = discord.Embed(
+        title=f"{model}",
+        description=f"""
+━━━━━━━━━━━━━━━━━━
+
+**Manufacturer**
+{manufacturer}
+
+**Variant**
+{variant}
+
+**Operational Profile**
+{role}
+
+━━━━━━━━━━━━━━━━━━
+
+✈ PERFORMANCE
+
+**Range**
+{rng} km
+
+**Cruise Speed**
+{speed} km/h
+
+**Capacity**
+{capacity}
+
+**Runway Required**
+{runway} m
+
+**Flights Per Day**
+{flights_day}
+
+**Hours Per Flight**
+{hours_flight}
+
+━━━━━━━━━━━━━━━━━━
+
+⛽ EFFICIENCY
+
+**Fuel Efficiency**
+{fuel_eff}
+
+**CO2 Emissions**
+{co2}
+
+━━━━━━━━━━━━━━━━━━
+
+💰 ECONOMIC ANALYSIS
+
+**Easy Mode ROI**
+{easy_roi}
+
+**Realism Mode ROI**
+{realism_roi}
+
+**Easy Ticket Price**
+{ticket_e}
+
+**Realism Ticket Price**
+{ticket_r}
+
+━━━━━━━━━━━━━━━━━━
+
+🧠 AUTOMATED ANALYSIS
+
+{recommendations_text}
+
+━━━━━━━━━━━━━━━━━━
+
+490+ Aircraft Supported
+JARVIS V3 CORE
+""",
+        color=embed_color
+    )
+
+    embed.set_footer(
+        text="JARVIS • Aircraft Intelligence System"
+    )
+
+    await ctx.send(embed=embed)
+
+    conn.close()
+
+# =========================
 # KEEP ALIVE (ONLY ONCE)
 # =========================
 keep_alive()
