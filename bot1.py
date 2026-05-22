@@ -3014,6 +3014,17 @@ async def airport(ctx, code):
     )
 
 # =========================
+# IMPORTS
+# =========================
+
+import sqlite3
+import discord
+from discord.ext import commands
+
+from PIL import Image, ImageDraw
+import io
+
+# =========================
 # PLANE SEARCH COMMAND
 # =========================
 
@@ -3029,7 +3040,7 @@ async def plane(ctx, *, query=None):
     cursor = conn.cursor()
 
     # =========================
-    # SEARCH
+    # SEARCH AIRCRAFT
     # =========================
 
     cursor.execute("""
@@ -3052,10 +3063,9 @@ async def plane(ctx, *, query=None):
 
         cursor.execute("""
 
-        SELECT model
+        SELECT model, variant
         FROM aircraft
         WHERE model LIKE ?
-
         LIMIT 5
 
         """, (f"%{query[:2]}%",))
@@ -3070,11 +3080,11 @@ async def plane(ctx, *, query=None):
         if suggestions:
 
             suggestion_text = "\n".join(
-                [f"• {s[0]}" for s in suggestions]
+                [f"• {s[0]} - {s[1]}" for s in suggestions]
             )
 
             embed.description = f"""
-No exact aircraft found.
+No direct aircraft match found.
 
 Did you mean:
 
@@ -3093,7 +3103,10 @@ Did you mean:
     if len(results) > 1:
 
         aircraft_list = "\n".join(
-            [f"• {r[columns.index('model')]}" for r in results[:10]]
+            [
+                f"• {r[columns.index('model')]} - {r[columns.index('variant')]}"
+                for r in results[:10]
+            ]
         )
 
         embed = discord.Embed(
@@ -3109,7 +3122,7 @@ Use a more specific aircraft name.
         return await ctx.send(embed=embed)
 
     # =========================
-    # EXACT RESULT
+    # EXACT AIRCRAFT
     # =========================
 
     row = results[0]
@@ -3117,29 +3130,27 @@ Use a more specific aircraft name.
     aircraft = dict(zip(columns, row))
 
     model = aircraft.get("model", "Unknown")
-    manufacturer = aircraft.get("manufacturer", "Unknown")
     variant = aircraft.get("variant", "Unknown")
+    manufacturer = aircraft.get("manufacturer", "Unknown")
 
-    capacity = aircraft.get("capacity", 0)
-    speed = aircraft.get("speed", 0)
-    rng = aircraft.get("range", 0)
+    capacity = float(aircraft.get("capacity", 0))
+    speed = float(aircraft.get("speed", 0))
+    rng = float(aircraft.get("range", 0))
 
-    runway = aircraft.get("runway", 0)
+    fuel_eff = float(aircraft.get("fuel_efficiency", 0))
+    co2 = float(aircraft.get("co2_emissions", 0))
 
-    fuel_eff = aircraft.get("fuel_efficiency", 0)
-    co2 = aircraft.get("co2_emissions", 0)
+    flights_day = float(aircraft.get("flights_per_day", 0))
+    hours_flight = float(aircraft.get("hours_per_flight", 0))
 
-    flights_day = aircraft.get("flights_per_day", 0)
-    hours_flight = aircraft.get("hours_per_flight", 0)
+    easy_roi = aircraft.get("income/cost_e", "N/A")
+    realism_roi = aircraft.get("income/cost_r", "N/A")
 
-    easy_roi = aircraft.get("income_per_cost_easy", 0)
-    realism_roi = aircraft.get("income_per_cost_realism", 0)
-
-    ticket_e = aircraft.get("ticket_price_easy", "N/A")
-    ticket_r = aircraft.get("ticket_price_realism", "N/A")
+    ticket_e = aircraft.get("ticket_prices_e", "N/A")
+    ticket_r = aircraft.get("ticket_price_r", "N/A")
 
     # =========================
-    # ROLE DETECTION
+    # AIRCRAFT ROLE
     # =========================
 
     role = "Balanced Aircraft"
@@ -3153,7 +3164,7 @@ Use a more specific aircraft name.
     elif flights_day >= 7:
         role = "Short Haul Grinder"
 
-    elif capacity >= 400:
+    elif capacity >= 350:
         role = "High Density Aircraft"
 
     # =========================
@@ -3162,24 +3173,19 @@ Use a more specific aircraft name.
 
     recommendations = []
 
-    if easy_roi >= 3:
+    if rng >= 10000:
         recommendations.append(
-            "• Excellent profitability profile"
+            "• Recommended for long haul operations"
+        )
+
+    if capacity >= 300:
+        recommendations.append(
+            "• Excellent for hub expansion"
         )
 
     if fuel_eff <= 3:
         recommendations.append(
-            "• Efficient fuel consumption"
-        )
-
-    if rng >= 8000:
-        recommendations.append(
-            "• Recommended for long haul routes"
-        )
-
-    if capacity >= 250:
-        recommendations.append(
-            "• Strong hub expansion aircraft"
+            "• Strong fuel efficiency profile"
         )
 
     if flights_day >= 6:
@@ -3192,7 +3198,7 @@ Use a more specific aircraft name.
             "• Balanced operational aircraft"
         )
 
-    recommendations_text = "\n".join(recommendations)
+    recommendation_text = "\n".join(recommendations)
 
     # =========================
     # EMBED COLOR
@@ -3206,23 +3212,123 @@ Use a more specific aircraft name.
     elif "airbus" in manufacturer.lower():
         embed_color = 0x3498db
 
-    elif "cargo" in model.lower():
-        embed_color = 0xe67e22
+    # =========================
+    # DRAW AIRCRAFT
+    # =========================
+
+    img = Image.new(
+        "RGBA",
+        (1000, 500),
+        (15, 23, 42, 255)
+    )
+
+    draw = ImageDraw.Draw(img)
+
+    # Body
+    draw.rounded_rectangle(
+        (430, 40, 570, 460),
+        radius=60,
+        fill=(220, 220, 220)
+    )
+
+    # Wings
+    draw.polygon(
+        [(200, 220), (430, 260), (430, 320), (200, 300)],
+        fill=(160, 160, 160)
+    )
+
+    draw.polygon(
+        [(800, 220), (570, 260), (570, 320), (800, 300)],
+        fill=(160, 160, 160)
+    )
+
+    # Tail Wings
+    draw.polygon(
+        [(390, 390), (430, 360), (430, 420)],
+        fill=(140, 140, 140)
+    )
+
+    draw.polygon(
+        [(610, 390), (570, 360), (570, 420)],
+        fill=(140, 140, 140)
+    )
+
+    # Cockpit
+    draw.ellipse(
+        (455, 25, 545, 95),
+        fill=(200, 200, 200)
+    )
+
+    # Engines
+    draw.ellipse(
+        (310, 255, 360, 305),
+        fill=(100, 100, 100)
+    )
+
+    draw.ellipse(
+        (640, 255, 690, 305),
+        fill=(100, 100, 100)
+    )
+
+    # =========================
+    # SEAT VISUALIZATION
+    # =========================
+
+    seat_color = (0, 191, 255)
+
+    if capacity >= 300:
+        seat_color = (255, 215, 0)
+
+    elif capacity >= 180:
+        seat_color = (155, 89, 182)
+
+    seats = min(int(capacity / 4), 70)
+
+    start_y = 110
+
+    for i in range(seats):
+
+        x_left = 455
+        x_right = 525
+
+        y = start_y + (i * 4)
+
+        draw.rectangle(
+            (x_left, y, x_left + 15, y + 8),
+            fill=seat_color
+        )
+
+        draw.rectangle(
+            (x_right, y, x_right + 15, y + 8),
+            fill=seat_color
+        )
+
+    # =========================
+    # SAVE IMAGE
+    # =========================
+
+    buffer = io.BytesIO()
+
+    img.save(buffer, format="PNG")
+
+    buffer.seek(0)
+
+    file = discord.File(
+        buffer,
+        filename="aircraft.png"
+    )
 
     # =========================
     # MAIN EMBED
     # =========================
 
     embed = discord.Embed(
-        title=f"{model}",
+        title=f"{model} - {variant}",
         description=f"""
 ━━━━━━━━━━━━━━━━━━
 
 **Manufacturer**
 {manufacturer}
-
-**Variant**
-{variant}
 
 **Operational Profile**
 {role}
@@ -3232,22 +3338,13 @@ Use a more specific aircraft name.
 ✈ PERFORMANCE
 
 **Range**
-{rng} km
+{rng:,.0f} km
 
 **Cruise Speed**
-{speed} km/h
+{speed:,.0f} km/h
 
 **Capacity**
-{capacity}
-
-**Runway Required**
-{runway} m
-
-**Flights Per Day**
-{flights_day}
-
-**Hours Per Flight**
-{hours_flight}
+{capacity:,.0f}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -3259,27 +3356,34 @@ Use a more specific aircraft name.
 **CO2 Emissions**
 {co2}
 
+**Flights Per Day**
+{flights_day}
+
 ━━━━━━━━━━━━━━━━━━
 
 💰 ECONOMIC ANALYSIS
 
-**Easy Mode ROI**
+**Easy ROI**
 {easy_roi}
 
-**Realism Mode ROI**
+**Realism ROI**
 {realism_roi}
 
-**Easy Ticket Price**
+━━━━━━━━━━━━━━━━━━
+
+🎫 TICKET PRICING
+
+**Easy Mode**
 {ticket_e}
 
-**Realism Ticket Price**
+**Realism Mode**
 {ticket_r}
 
 ━━━━━━━━━━━━━━━━━━
 
 🧠 AUTOMATED ANALYSIS
 
-{recommendations_text}
+{recommendation_text}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -3289,11 +3393,18 @@ JARVIS V3 CORE
         color=embed_color
     )
 
+    embed.set_image(
+        url="attachment://aircraft.png"
+    )
+
     embed.set_footer(
         text="JARVIS • Aircraft Intelligence System"
     )
 
-    await ctx.send(embed=embed)
+    await ctx.send(
+        file=file,
+        embed=embed
+    )
 
     conn.close()
 
