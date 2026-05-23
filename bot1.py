@@ -1331,6 +1331,7 @@ async def route(ctx, frm, to, *, plane_name):
 
         "CI": f"{result['ci']}%"
     }
+    capacity = plane["capacity"]
   # =====================================================
   # AIRCRAFT DRAWING
   # =====================================================
