@@ -1360,9 +1360,8 @@ embed.set_image(
     # SEND
     # =========================
     await ctx.send(
-    file=file,
-    embed=embed
-        view=ExportView(report_data)
+    embed=embed,
+    files=[export_file, aircraft_file]
     )
         
 # =========================
