@@ -2578,38 +2578,114 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 # =========================
 @bot.command()
 async def fuel(ctx):
+
     cursor_dyn.execute("""
         SELECT fuel, co2 
         FROM fuel_data 
         ORDER BY day DESC, time DESC 
-        LIMIT 6
+        LIMIT 12
     """)
+
     rows = cursor_dyn.fetchall()
 
-    if len(rows) < 2:
-        await ctx.send("Not enough data")
-        return
+    if len(rows) < 4:
+        return await ctx.send("❌ Not enough fuel data")
 
-    fuels = [r["fuel"] for r in rows]
-    co2s = [r["co2"] for r in rows]
+    # =========================
+    # DATA
+    # =========================
+    fuels = [float(r["fuel"]) for r in rows]
+    co2s = [float(r["co2"]) for r in rows]
 
-    avg_fuel = sum(fuels) / len(fuels)
-    avg_co2 = sum(co2s) / len(co2s)
+    current_fuel = fuels[0]
+    current_co2 = co2s[0]
 
-    last_fuel = fuels[0]
-    last_co2 = co2s[0]
+    # =========================
+    # TREND SYSTEM
+    # =========================
+    recent_avg = sum(fuels[:4]) / 4
+    old_avg = sum(fuels[4:8]) / 4
 
-    trend = "🔺 Rising" if last_fuel > fuels[1] else "🔻 Falling"
+    movement = recent_avg - old_avg
 
-    embed = discord.Embed(title="⛽ Fuel Prediction", color=0x0A1AFF)
-    embed.add_field(name="Current Fuel", value=f"{last_fuel}", inline=True)
-    embed.add_field(name="Predicted", value=f"{int(avg_fuel)}", inline=True)
-    embed.add_field(name="Trend", value=trend, inline=True)
-    embed.add_field(name="CO2", value=f"{last_co2}", inline=True)
-    embed.add_field(name="CO2 Avg", value=f"{int(avg_co2)}", inline=True)
+    # prediction
+    predicted = current_fuel + (movement * 0.8)
+
+    # smoothing
+    predicted = int((predicted + recent_avg) / 2)
+
+    # =========================
+    # TREND LABEL
+    # =========================
+    if movement > 40:
+        trend = "🔺 Strong Rising"
+
+    elif movement > 10:
+        trend = "🟧 Rising"
+
+    elif movement < -40:
+        trend = "🔻 Strong Falling"
+
+    elif movement < -10:
+        trend = "🟦 Falling"
+
+    else:
+        trend = "➡ Stable"
+
+    # =========================
+    # VOLATILITY
+    # =========================
+    volatility = max(fuels[:6]) - min(fuels[:6])
+
+    # =========================
+    # EMBED
+    # =========================
+    embed = discord.Embed(
+        title="⛽ Smart Fuel Prediction",
+        color=0x0A1AFF
+    )
+
+    embed.add_field(
+        name="Current Fuel",
+        value=f"{int(current_fuel)}",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Predicted Fuel",
+        value=f"{predicted}",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Trend",
+        value=trend,
+        inline=True
+    )
+
+    embed.add_field(
+        name="Current CO2",
+        value=f"{int(current_co2)}",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Market Volatility",
+        value=f"{int(volatility)}",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Data Samples",
+        value=f"{len(fuels)}",
+        inline=True
+    )
+
+    embed.set_footer(
+        text="JARVIS • Smart Fuel Analytics"
+    )
 
     await ctx.send(embed=embed)
-
 
 # =========================
 # AUTO ALERT LOOP
