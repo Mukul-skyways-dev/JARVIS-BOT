@@ -1348,23 +1348,25 @@ image_buffer = draw_aircraft(
     aircraft_type=aircraft_type
 )
 
-file = discord.File(
+aircraft_file = discord.File(
     image_buffer,
     filename="aircraft.png"
 )
 
 embed.set_image(
     url="attachment://aircraft.png"
-    )
+)
+
 # =========================
 # SEND
 # =========================
-    await ctx.send(
+
+await ctx.send(
     embed=embed,
     files=[export_file, aircraft_file]
-)    
+    )
         
-# =========================
+# ========================
 # IMPORTS (SAFE MERGE)
 # =========================
 import discord
