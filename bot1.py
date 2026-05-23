@@ -1363,7 +1363,7 @@ async def route(ctx, frm, to, *, plane_name):
 
     await ctx.send(
         embed=embed,
-        files=[export_file, aircraft_file]
+        files=aircraft_file
     )
                
 # ========================
