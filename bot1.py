@@ -1352,8 +1352,8 @@ async def route(ctx, frm, to, *, plane_name):
         filename="aircraft.png"
     )
 
-    embed.set_image(
-        url="attachment://aircraft.png"
+    embed.set_thumbnail(
+    url="attachment://aircraft.png"
     )
 
     # =========================
