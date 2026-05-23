@@ -1356,12 +1356,7 @@ aircraft_file = discord.File(
 embed.set_image(
     url="attachment://aircraft.png"
 )
-
-# =========================
-# SEND
-# =========================
-
-await ctx.send(
+    await ctx.send(
     embed=embed,
     files=[export_file, aircraft_file]
     )
