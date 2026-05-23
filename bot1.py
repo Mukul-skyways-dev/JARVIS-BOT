@@ -1331,34 +1331,38 @@ async def route(ctx, frm, to, *, plane_name):
 
         "CI": f"{result['ci']}%"
     }
-# =====================================================
-# AIRCRAFT DRAWING
-# =====================================================
+  # =====================================================
+  # AIRCRAFT DRAWING
+  # =====================================================
+    aircraft_type = "medium"
 
-aircraft_type = "medium"
+    if plane_range >= 10000:
+        aircraft_type = "long"
 
-if plane_range >= 10000:
-    aircraft_type = "long"
+    elif plane_range <= 4000:
+        aircraft_type = "short"
 
-elif plane_range <= 4000:
-    aircraft_type = "short"
+    image_buffer = draw_aircraft(
+        capacity=capacity,
+        aircraft_type=aircraft_type
+    )
 
-image_buffer = draw_aircraft(
-    capacity=capacity,
-    aircraft_type=aircraft_type
-)
+    aircraft_file = discord.File(
+        image_buffer,
+        filename="aircraft.png"
+    )
 
-aircraft_file = discord.File(
-    image_buffer,
-    filename="aircraft.png"
-)
+    embed.set_image(
+        url="attachment://aircraft.png"
+    )
 
-embed.set_image(
-    url="attachment://aircraft.png"
-)
-await ctx.send(
-    embed=embed,
-    files=[export_file, aircraft_file]
+    # =========================
+    # SEND
+    # =========================
+
+    await ctx.send(
+        embed=embed,
+        files=[export_file, aircraft_file]
     )
                
 # ========================
