@@ -21,6 +21,7 @@ from threading import Thread
 from datetime import datetime, timedelta
 import asyncio
 import time
+from PIL import Image, ImageDraw
 
 # =========================
 # KEEP ALIVE SERVER
@@ -935,6 +936,202 @@ def airport_name(iata):
 
     return iata  # fallback (no blank ever)
 
+# =========================================================
+# DRAW AIRCRAFT
+# =========================================================
+
+def draw_aircraft(capacity=180, aircraft_type="medium"):
+
+    img = Image.new(
+        "RGBA",
+        (1000, 500),
+        (10, 15, 25, 255)
+    )
+
+    draw = ImageDraw.Draw(img)
+
+    # =====================================================
+    # BODY SIZE
+    # =====================================================
+
+    body_top = 40
+    body_bottom = 460
+
+    wing_y = 260
+
+    if aircraft_type == "short":
+        body_left = 445
+        body_right = 555
+
+    elif aircraft_type == "long":
+        body_left = 420
+        body_right = 580
+
+    else:
+        body_left = 435
+        body_right = 565
+
+    # =====================================================
+    # BODY
+    # =====================================================
+
+    draw.rounded_rectangle(
+        (
+            body_left,
+            body_top,
+            body_right,
+            body_bottom
+        ),
+        radius=60,
+        fill=(220, 220, 220)
+    )
+
+    # =====================================================
+    # WINGS
+    # =====================================================
+
+    wing_size = 220
+
+    if aircraft_type == "long":
+        wing_size = 320
+
+    elif aircraft_type == "short":
+        wing_size = 170
+
+    draw.polygon(
+        [
+            (body_left, wing_y),
+            (body_left - wing_size, wing_y - 40),
+            (body_left - wing_size, wing_y + 40),
+            (body_left, wing_y + 60)
+        ],
+        fill=(150, 150, 150)
+    )
+
+    draw.polygon(
+        [
+            (body_right, wing_y),
+            (body_right + wing_size, wing_y - 40),
+            (body_right + wing_size, wing_y + 40),
+            (body_right, wing_y + 60)
+        ],
+        fill=(150, 150, 150)
+    )
+
+    # =====================================================
+    # TAIL
+    # =====================================================
+
+    draw.polygon(
+        [
+            (body_left, 390),
+            (body_left - 50, 430),
+            (body_left, 420)
+        ],
+        fill=(120, 120, 120)
+    )
+
+    draw.polygon(
+        [
+            (body_right, 390),
+            (body_right + 50, 430),
+            (body_right, 420)
+        ],
+        fill=(120, 120, 120)
+    )
+
+    # =====================================================
+    # COCKPIT
+    # =====================================================
+
+    draw.ellipse(
+        (
+            body_left + 15,
+            20,
+            body_right - 15,
+            90
+        ),
+        fill=(200, 200, 200)
+    )
+
+    # =====================================================
+    # ENGINES
+    # =====================================================
+
+    engine_color = (90, 90, 90)
+
+    draw.ellipse(
+        (
+            body_left - 120,
+            wing_y - 10,
+            body_left - 70,
+            wing_y + 40
+        ),
+        fill=engine_color
+    )
+
+    draw.ellipse(
+        (
+            body_right + 70,
+            wing_y - 10,
+            body_right + 120,
+            wing_y + 40
+        ),
+        fill=engine_color
+    )
+
+    # =====================================================
+    # SEAT LAYOUT
+    # =====================================================
+
+    seat_color = (0, 191, 255)
+
+    if capacity >= 300:
+        seat_color = (255, 215, 0)
+
+    elif capacity >= 180:
+        seat_color = (155, 89, 182)
+
+    seats = min(int(capacity / 4), 80)
+
+    start_y = 110
+
+    for i in range(seats):
+
+        y = start_y + (i * 4)
+
+        draw.rectangle(
+            (
+                body_left + 20,
+                y,
+                body_left + 35,
+                y + 8
+            ),
+            fill=seat_color
+        )
+
+        draw.rectangle(
+            (
+                body_right - 35,
+                y,
+                body_right - 20,
+                y + 8
+            ),
+            fill=seat_color
+        )
+
+    # =====================================================
+    # SAVE BUFFER
+    # =====================================================
+
+    buffer = io.BytesIO()
+
+    img.save(buffer, format="PNG")
+
+    buffer.seek(0)
+
+    return buffer
+
 # =========================
 # ROUTE COMMAND V3
 # =========================
@@ -1134,12 +1331,37 @@ async def route(ctx, frm, to, *, plane_name):
 
         "CI": f"{result['ci']}%"
     }
+# =====================================================
+# AIRCRAFT DRAWING
+# =====================================================
 
+aircraft_type = "medium"
+
+if plane_range >= 10000:
+    aircraft_type = "long"
+
+elif plane_range <= 4000:
+    aircraft_type = "short"
+
+image_buffer = draw_aircraft(
+    capacity=capacity,
+    aircraft_type=aircraft_type
+)
+
+file = discord.File(
+    image_buffer,
+    filename="aircraft.png"
+)
+
+embed.set_image(
+    url="attachment://aircraft.png"
+    )
     # =========================
     # SEND
     # =========================
     await ctx.send(
-        embed=embed,
+    file=file,
+    embed=embed
         view=ExportView(report_data)
     )
         
