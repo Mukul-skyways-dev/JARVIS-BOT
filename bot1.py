@@ -683,7 +683,7 @@ COOLDOWN = 3  # seconds
 def add_usage(user):
     now = time.time()
 
-    cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (str(user.id),))
     row = cursor.fetchone()
 
     # anti spam protection
