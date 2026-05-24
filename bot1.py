@@ -1792,35 +1792,37 @@ async def route(ctx, frm, to, *, plane_name):
         embed.set_footer(
             text="JARVIS • A AERO CROWN DYNASTY OFFICIAL BOT"
         )
-
         # =========================
         # AIRCRAFT VISUAL
         # =========================
 
         img_path = draw_aircraft_card(
-        plane,
-        result,
-        route,
-        frm,
-        to
+            plane,
+            result,
+            route,
+            frm,
+            to
         )
 
         file = discord.File(
-        img_path,
-        filename="route.png"
+            img_path,
+            filename="route.png"
         )
 
         embed.set_image(
-       url="attachment://route.png"
+            url="attachment://route.png"
         )
 
-       # =========================
-       # SEND
-       # =========================
-       await ctx.send(
-       embed=embed,
-       file=file
-       )
+        # =========================
+        # SEND
+        # =========================
+
+        await ctx.send(
+            embed=embed,
+            file=file
+        )
+
+         
                
 # ========================
 # IMPORTS (SAFE MERGE)
