@@ -1513,256 +1513,203 @@ def draw_aircraft_card(
 
     return temp.name
 
-# =========================
-# ROUTE COMMAND (FULL FIXED)
-# =========================
 @bot.command()
 async def route(ctx, frm, to, *, plane_name):
 
-    try:
+    route = get_route(frm, to)
+    plane = get_plane(plane_name)
 
-        # =========================
-        # FETCH DATA
-        # =========================
-        route = get_route(frm, to)
+    if not route:
+        return await ctx.send("❌ Route not found")
 
-        if not route:
-            return await ctx.send(
-                "❌ Route not found"
-            )
+    if not plane:
+        return await ctx.send("❌ Plane not found")
 
-        plane = get_plane(plane_name)
+    distance_total = float(route["distance"])
+    plane_range = float(plane["range"])
 
-        if not plane:
-            return await ctx.send(
-                "❌ Plane not found"
-            )
+    # =========================
+    # STOPOVER SYSTEM
+    # =========================
+    stop_airport = None
 
-        # =========================
-        # BASIC VALUES
-        # =========================
-        distance_total = float(
-            route["distance"]
+    if distance_total > plane_range:
+
+        cursor.execute("""
+        SELECT t_iata
+        FROM routes
+        WHERE f_iata = ?
+        AND CAST(distance AS REAL) < ?
+        ORDER BY CAST(distance AS REAL) DESC
+        LIMIT 1
+        """, (frm.upper(), plane_range))
+
+        row = cursor.fetchone()
+
+        if row:
+            stop_airport = row[0]
+
+    # =========================
+    # CALC ENGINE
+    # =========================
+    result = calc(route, plane, ctx.author.id)
+
+    mode = result["mode"]
+
+    # =========================
+    # ROUTE DISPLAY
+    # =========================
+    from_txt = airport_name(frm)
+    to_txt = airport_name(to)
+
+    if stop_airport:
+
+        stop_txt = airport_name(stop_airport)
+
+        route_display = (
+            f"{from_txt}\n"
+            f"→ {stop_txt}\n"
+            f"→ {to_txt}"
         )
 
-        plane_range = float(
-            plane["range"]
+    else:
+
+        route_display = (
+            f"{from_txt}\n"
+            f"→ {to_txt}"
         )
 
-        # =========================
-        # STOPOVER SYSTEM
-        # =========================
-        stop_airport = None
+    # =========================
+    # EMBED
+    # =========================
+    embed = discord.Embed(
+        title=f"{plane['name']} • Route Analysis V3.0.1",
+        description=f"```{route_display}```",
+        color=0x2b2d31
+    )
 
-        if distance_total > plane_range:
+    # =========================
+    # FLIGHT INFO
+    # =========================
+    embed.add_field(
+        name="✈ Flight Info",
+        value=(
+            f"**Distance:** {int(distance_total):,} km\n"
+            f"**Trips:** {result['trips']}/day\n"
+            f"**Mode:** {mode.upper()}"
+        ),
+        inline=False
+    )
 
-            cursor.execute("""
-            SELECT t_iata, distance
-            FROM routes
-            WHERE
-            f_iata = ?
-            AND CAST(distance AS REAL) <= ?
-            ORDER BY CAST(distance AS REAL) DESC
-            LIMIT 1
-            """, (
-                frm.upper(),
-                plane_range
-            ))
+    # =========================
+    # DEMAND
+    # =========================
+    embed.add_field(
+        name="📊 Demand",
+        value=(
+            f"**Y:** {route['y']}\n"
+            f"**J:** {route['j']}\n"
+            f"**F:** {route['f']}"
+        ),
+        inline=True
+    )
 
-            row = cursor.fetchone()
+    # =========================
+    # CONFIGURATION
+    # =========================
+    embed.add_field(
+        name="⚙ Configuration",
+        value=(
+            f"**Y:** {result['y']}\n"
+            f"**J:** {result['j']}\n"
+            f"**F:** {result['f']}"
+        ),
+        inline=True
+    )
 
-            if row:
-                stop_airport = row["t_iata"]
+    # =========================
+    # TICKET PRICING
+    # =========================
+    embed.add_field(
+        name="🎟 Ticket Pricing",
+        value=(
+            f"**Y:** ${result['y_price']:,}\n"
+            f"**J:** ${result['j_price']:,}\n"
+            f"**F:** ${result['f_price']:,}"
+        ),
+        inline=True
+    )
 
-        # =========================
-        # CALCULATION
-        # =========================
-        result = calc(
-            route,
-            plane,
-            ctx.author.id
-        )
+    # =========================
+    # PER FLIGHT
+    # =========================
+    embed.add_field(
+        name="💰 Per Flight",
+        value=(
+            f"**Income:** ${result['income_trip']:,}\n"
+            f"**Fuel:** ${result['fuel']:,}\n"
+            f"**CO2:** ${result['co2']:,}\n"
+            f"**Maint:** ${result['acheck'] + result['repair']:,}\n\n"
+            f"**Profit:** ${result['profit_trip']:,}\n"
+            f"**CI:** {result['ci']}%"
+        ),
+        inline=False
+    )
 
-        mode = result["mode"]
+    # =========================
+    # PER DAY
+    # =========================
+    embed.add_field(
+        name="📅 Per Day",
+        value=(
+            f"**Income:** ${result['income_day']:,}\n"
+            f"**Fuel:** ${result['fuel_day']:,}\n"
+            f"**CO2:** ${result['co2_day']:,}\n"
+            f"**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n"
+            f"**Profit:** ${result['profit_day']:,}\n"
+            f"**Flights:** {result['trips']}"
+        ),
+        inline=False
+    )
 
-        # =========================
-        # AIRPORT DISPLAY
-        # =========================
-        from_txt = airport_name(frm)
-        to_txt = airport_name(to)
+    embed.set_footer(
+        text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT"
+    )
 
-        if stop_airport:
+    # =========================
+    # EXPORT DATA
+    # =========================
+    report_data = {
 
-            stop_txt = airport_name(
-                stop_airport
-            )
+        "Route": f"{frm.upper()} -> {to.upper()}",
+        "Aircraft": plane["name"],
+        "Distance": f"{int(distance_total):,} km",
+        "Mode": mode.upper(),
 
-            route_display = (
-                f"{from_txt}\n"
-                f"→ {stop_txt}\n"
-                f"→ {to_txt}"
-            )
+        "Trips/Day": result["trips"],
 
-        else:
+        "Economy Demand": route["y"],
+        "Business Demand": route["j"],
+        "First Demand": route["f"],
 
-            route_display = (
-                f"{from_txt}\n"
-                f"→ {to_txt}"
-            )
+        "Economy Config": result["y"],
+        "Business Config": result["j"],
+        "First Config": result["f"],
 
-        # =========================
-        # EMBED
-        # =========================
-        embed = discord.Embed(
-            title=f"{plane['name']} • Route Analysis",
-            description=f"```{route_display}```",
-            color=0x2b2d31
-        )
+        "Economy Ticket": result["y_price"],
+        "Business Ticket": result["j_price"],
+        "First Ticket": result["f_price"],
 
-        # =========================
-        # FLIGHT INFO
-        # =========================
-        embed.add_field(
-            name="✈ Flight Info",
-            value=(
-                f"**Distance:** "
-                f"{int(distance_total):,} km\n"
+        "Income/Flight": result["income_trip"],
+        "Fuel/Flight": result["fuel"],
+        "CO2/Flight": result["co2"],
 
-                f"**Flight Time:** "
-                f"{format_time(result['time'])}\n"
+        "Profit/Flight": result["profit_trip"],
+        "Profit/Day": result["profit_day"],
 
-                f"**Trips/Day:** "
-                f"{result['trips']}\n"
+        "CI": f"{result['ci']}%"
+    }
 
-                f"**Mode:** "
-                f"{mode.upper()}"
-            ),
-            inline=False
-        )
-
-        # =========================
-        # DEMAND
-        # =========================
-        embed.add_field(
-            name="📊 Demand",
-            value=(
-                f"**Economy:** "
-                f"{route['y']}\n"
-
-                f"**Business:** "
-                f"{route['j']}\n"
-
-                f"**First:** "
-                f"{route['f']}"
-            ),
-            inline=True
-        )
-
-        # =========================
-        # CONFIG
-        # =========================
-        embed.add_field(
-            name="⚙ Seat Config",
-            value=(
-                f"**Economy:** "
-                f"{result['y']}\n"
-
-                f"**Business:** "
-                f"{result['j']}\n"
-
-                f"**First:** "
-                f"{result['f']}"
-            ),
-            inline=True
-        )
-
-        # =========================
-        # TICKET
-        # =========================
-        embed.add_field(
-            name="🎟 Ticket Prices",
-            value=(
-                f"**Y:** "
-                f"${result['y_price']:,}\n"
-
-                f"**J:** "
-                f"${result['j_price']:,}\n"
-
-                f"**F:** "
-                f"${result['f_price']:,}"
-            ),
-            inline=True
-        )
-
-        # =========================
-        # PER FLIGHT
-        # =========================
-        embed.add_field(
-            name="💰 Per Flight",
-            value=(
-                f"**Income:** "
-                f"${result['income_trip']:,}\n"
-
-                f"**Fuel Cost:** "
-                f"${result['fuel']:,}\n"
-
-                f"**CO2 Cost:** "
-                f"${result['co2']:,}\n"
-
-                f"**Maintenance:** "
-                f"${result['acheck'] + result['repair']:,}\n\n"
-
-                f"**Profit:** "
-                f"${result['profit_trip']:,}\n"
-
-                f"**CI:** "
-                f"{result['ci']}%"
-            ),
-            inline=False
-        )
-
-        # =========================
-        # PER DAY
-        # =========================
-        embed.add_field(
-            name="📅 Daily Statistics",
-            value=(
-                f"**Daily Income:** "
-                f"${result['income_day']:,}\n"
-
-                f"**Daily Profit:** "
-                f"${result['profit_day']:,}\n"
-
-                f"**Daily Fuel:** "
-                f"${result['fuel_day']:,}\n"
-
-                f"**Daily CO2:** "
-                f"${result['co2_day']:,}"
-            ),
-            inline=False
-        )
-
-        # =========================
-        # STOPOVER NOTICE
-        # =========================
-        if stop_airport:
-
-            embed.add_field(
-                name="🛑 Stopover Required",
-                value=(
-                    f"Aircraft range exceeded.\n"
-                    f"Suggested stop:\n"
-                    f"**{stop_airport}**"
-                ),
-                inline=False
-            )
-
-        # =========================
-        # FOOTER
-        # =========================
-        embed.set_footer(
-            text="JARVIS • A AERO CROWN DYNASTY OFFICIAL BOT"
-        )
         # =========================
         # AIRCRAFT VISUAL
         # =========================
@@ -1787,16 +1734,11 @@ async def route(ctx, frm, to, *, plane_name):
         # =========================
         # SEND
         # =========================
-
+        
         await ctx.send(
             embed=embed,
-            file=file
-        )
-
-    except Exception as e:
-
-        await ctx.send(
-            f"❌ Route system crashed:\n```{e}```"
+            file=file,
+            view=ExportView(report_data)
         )
 
 # =========================
