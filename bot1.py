@@ -3860,6 +3860,10 @@ def create_growth_graph(entries, alliance_name):
     )
 
     plt.close()
+    plt.clf()
+    
+    import gc
+    gc.collect()
 
     return temp.name
 
@@ -5537,6 +5541,10 @@ def generate_alliance_graph(
     )
 
     plt.close()
+    plt.clf()
+    
+    import gc
+    gc.collect()
 
     return temp.name
 
@@ -6481,6 +6489,10 @@ async def export_alliance(
             filename=f"{alliance_name}.csv"
         )
     )
+        try:
+        os.remove(temp.name)
+    except:
+        pass
 
 # =========================================================
 # COMPARE VIEW
