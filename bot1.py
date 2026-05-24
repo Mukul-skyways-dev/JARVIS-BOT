@@ -1821,11 +1821,12 @@ async def route(ctx, frm, to, *, plane_name):
             embed=embed,
             file=file
         )
-        except Exception as e:
+
+    except Exception as e:
 
         await ctx.send(
             f"❌ Route system crashed:\n```{e}```"
-    )
+        )
 
 # =========================
 # COMPARE VIEW V3
