@@ -896,475 +896,931 @@ async def difficulty(ctx, mode=None):
     await ctx.send(f"✅ Difficulty set to **{mode.upper()}**")
 
 # =========================
-# AIRPORT HELPER (FINAL STABLE)
+# AIRPORT HELPER (FIXED)
 # =========================
 def airport_name(iata):
+
     try:
+
         iata = iata.upper()
 
-        # BEST METHOD → directly airport table style lookup
+        # FROM SIDE
         cursor.execute("""
-        SELECT city, country 
+        SELECT f_city, f_country
         FROM routes
-        WHERE iata = ?
+        WHERE f_iata = ?
         LIMIT 1
         """, (iata,))
 
         row = cursor.fetchone()
 
-        # fallback (very important)
+        # TO SIDE
         if not row:
+
             cursor.execute("""
-            SELECT city, country 
+            SELECT t_city, t_country
             FROM routes
-            WHERE f_iata = ? OR t_iata = ?
+            WHERE t_iata = ?
             LIMIT 1
-            """, (iata, iata))
+            """, (iata,))
 
             row = cursor.fetchone()
 
         if row:
+
             city = row[0]
             country = row[1]
 
-            # safe return
-            if city and country:
-                return f"{iata} — {city}, {country}"
+            return f"{iata} — {city}, {country}"
 
-    except:
-        pass
+    except Exception as e:
+        print("airport_name error:", e)
 
-    return iata  # fallback (no blank ever)
+    return iata
+
+
+# =========================
+# GET ROUTE (FIXED)
+# =========================
+def get_route(frm, to):
+
+    cursor.execute("""
+    SELECT *
+    FROM routes
+    WHERE
+    (f_iata = ? AND t_iata = ?)
+    OR
+    (f_iata = ? AND t_iata = ?)
+    LIMIT 1
+    """, (
+        frm.upper(),
+        to.upper(),
+        to.upper(),
+        frm.upper()
+    ))
+
+    row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    return {
+
+        "distance": to_float(
+            row["distance"]
+        ),
+
+        "y": to_int(
+            row["dem_y"]
+        ),
+
+        "j": to_int(
+            row["dem_j"]
+        ),
+
+        "f": to_int(
+            row["dem_f"]
+        ),
+
+        "cargo": to_int(
+            row["cargo"]
+        ) if "cargo" in row.keys() else 0
+    }
+
+
+# =========================
+# GET PLANE (FIXED)
+# =========================
+def get_plane(name):
+
+    key = norm(name)
+
+    for p in get_all_planes():
+
+        plane_key = norm(
+            p["name"]
+        )
+
+        if (
+            key == plane_key
+            or key in plane_key
+            or plane_key in key
+        ):
+            return p
+
+    return None
 
 # =========================================================
-# DRAW AIRCRAFT
+# REQUIRED IMPORTS
 # =========================================================
 
-def draw_aircraft(capacity=180, aircraft_type="medium"):
+import tempfile
+
+from PIL import (
+    Image,
+    ImageDraw,
+    ImageFont,
+    ImageFilter
+)
+
+# =========================================================
+# GLASS AIRCRAFT VISUAL SYSTEM
+# =========================================================
+
+def draw_aircraft_card(
+    plane,
+    result,
+    route,
+    frm,
+    to
+):
+
+    W = 1400
+    H = 820
 
     img = Image.new(
-        "RGBA",
-        (1000, 500),
-        (10, 15, 25, 255)
+        "RGB",
+        (W, H),
+        (8, 12, 20)
     )
 
     draw = ImageDraw.Draw(img)
 
     # =====================================================
-    # BODY SIZE
+    # BACKGROUND GLOW
     # =====================================================
 
-    body_top = 40
-    body_bottom = 460
+    glow = Image.new(
+        "RGBA",
+        (W, H),
+        (0, 0, 0, 0)
+    )
 
-    wing_y = 260
+    gd = ImageDraw.Draw(glow)
 
-    if aircraft_type == "short":
-        body_left = 445
-        body_right = 555
+    gd.ellipse(
+        (-150, -150, 550, 550),
+        fill=(0, 180, 255, 70)
+    )
 
-    elif aircraft_type == "long":
-        body_left = 420
-        body_right = 580
+    gd.ellipse(
+        (900, 250, 1500, 850),
+        fill=(255, 80, 150, 50)
+    )
 
-    else:
-        body_left = 435
-        body_right = 565
+    glow = glow.filter(
+        ImageFilter.GaussianBlur(120)
+    )
+
+    img.paste(glow, (0, 0), glow)
 
     # =====================================================
-    # BODY
+    # GLASS PANEL
     # =====================================================
 
+    panel = Image.new(
+        "RGBA",
+        (1260, 640),
+        (255, 255, 255, 24)
+    )
+
+    panel = panel.filter(
+        ImageFilter.GaussianBlur(2)
+    )
+
+    img.paste(
+        panel,
+        (70, 120),
+        panel
+    )
+
+    # border
     draw.rounded_rectangle(
         (
-            body_left,
-            body_top,
-            body_right,
-            body_bottom
+            70,
+            120,
+            1330,
+            760
         ),
-        radius=60,
-        fill=(220, 220, 220)
+        radius=32,
+        outline=(255, 255, 255),
+        width=2
+    )
+
+    # =====================================================
+    # FONTS
+    # =====================================================
+
+    try:
+
+        title_font = ImageFont.truetype(
+            "arial.ttf",
+            42
+        )
+
+        text_font = ImageFont.truetype(
+            "arial.ttf",
+            26
+        )
+
+        small_font = ImageFont.truetype(
+            "arial.ttf",
+            20
+        )
+
+    except:
+
+        title_font = ImageFont.load_default()
+        text_font = ImageFont.load_default()
+        small_font = ImageFont.load_default()
+
+    # =====================================================
+    # HEADER
+    # =====================================================
+
+    draw.text(
+        (100, 55),
+        "JARVIS • Dynamic Aviation Visual System",
+        fill=(255, 255, 255),
+        font=title_font
+    )
+
+    draw.text(
+        (100, 110),
+        f"{frm.upper()} → {to.upper()}",
+        fill=(90, 220, 255),
+        font=text_font
+    )
+
+    # =====================================================
+    # AIRCRAFT BODY
+    # =====================================================
+
+    capacity = int(
+        float(plane["capacity"])
+    )
+
+    aircraft_range = int(
+        float(plane["range"])
+    )
+
+    body_x = 220
+    body_y = 290
+
+    body_len = int(
+        520 + (capacity * 0.8)
+    )
+
+    body_h = 90
+
+    # body
+    draw.rounded_rectangle(
+        (
+            body_x,
+            body_y,
+            body_x + body_len,
+            body_y + body_h
+        ),
+        radius=45,
+        fill=(220, 230, 240)
+    )
+
+    # nose
+    draw.polygon(
+        [
+            (
+                body_x + body_len,
+                body_y + 8
+            ),
+
+            (
+                body_x + body_len + 85,
+                body_y + 45
+            ),
+
+            (
+                body_x + body_len,
+                body_y + 82
+            )
+        ],
+        fill=(220, 230, 240)
+    )
+
+    # tail
+    draw.polygon(
+        [
+            (
+                body_x + 25,
+                body_y
+            ),
+
+            (
+                body_x - 40,
+                body_y - 75
+            ),
+
+            (
+                body_x + 60,
+                body_y
+            )
+        ],
+        fill=(190, 205, 220)
     )
 
     # =====================================================
     # WINGS
     # =====================================================
 
-    wing_size = 220
+    wing_y = body_y + 45
 
-    if aircraft_type == "long":
-        wing_size = 320
-
-    elif aircraft_type == "short":
-        wing_size = 170
-
-    draw.polygon(
-        [
-            (body_left, wing_y),
-            (body_left - wing_size, wing_y - 40),
-            (body_left - wing_size, wing_y + 40),
-            (body_left, wing_y + 60)
-        ],
-        fill=(150, 150, 150)
+    wing_span = int(
+        160 + (aircraft_range / 110)
     )
 
+    # upper
     draw.polygon(
         [
-            (body_right, wing_y),
-            (body_right + wing_size, wing_y - 40),
-            (body_right + wing_size, wing_y + 40),
-            (body_right, wing_y + 60)
+            (
+                body_x + 320,
+                wing_y
+            ),
+
+            (
+                body_x + 130,
+                wing_y - wing_span
+            ),
+
+            (
+                body_x + 380,
+                wing_y
+            )
         ],
-        fill=(150, 150, 150)
+        fill=(180, 200, 220)
     )
 
-    # =====================================================
-    # TAIL
-    # =====================================================
-
+    # lower
     draw.polygon(
         [
-            (body_left, 390),
-            (body_left - 50, 430),
-            (body_left, 420)
+            (
+                body_x + 320,
+                wing_y
+            ),
+
+            (
+                body_x + 130,
+                wing_y + wing_span
+            ),
+
+            (
+                body_x + 380,
+                wing_y
+            )
         ],
-        fill=(120, 120, 120)
-    )
-
-    draw.polygon(
-        [
-            (body_right, 390),
-            (body_right + 50, 430),
-            (body_right, 420)
-        ],
-        fill=(120, 120, 120)
-    )
-
-    # =====================================================
-    # COCKPIT
-    # =====================================================
-
-    draw.ellipse(
-        (
-            body_left + 15,
-            20,
-            body_right - 15,
-            90
-        ),
-        fill=(200, 200, 200)
+        fill=(180, 200, 220)
     )
 
     # =====================================================
     # ENGINES
     # =====================================================
 
-    engine_color = (90, 90, 90)
-
     draw.ellipse(
         (
-            body_left - 120,
-            wing_y - 10,
-            body_left - 70,
-            wing_y + 40
+            body_x + 250,
+            wing_y + 80,
+            body_x + 290,
+            wing_y + 120
         ),
-        fill=engine_color
+        fill=(100, 120, 140)
     )
 
     draw.ellipse(
         (
-            body_right + 70,
-            wing_y - 10,
-            body_right + 120,
-            wing_y + 40
+            body_x + 250,
+            wing_y - 120,
+            body_x + 290,
+            wing_y - 80
         ),
-        fill=engine_color
+        fill=(100, 120, 140)
     )
 
     # =====================================================
-    # SEAT LAYOUT
+    # CABIN AREA
     # =====================================================
 
-    seat_color = (0, 191, 255)
+    cabin_x = body_x + 40
+    cabin_y = body_y + 18
 
-    if capacity >= 300:
-        seat_color = (255, 215, 0)
+    cabin_w = body_len - 80
 
-    elif capacity >= 180:
-        seat_color = (155, 89, 182)
+    y_seats = result["y"]
+    j_seats = result["j"]
+    f_seats = result["f"]
 
-    seats = min(int(capacity / 4), 80)
+    total = max(
+        y_seats + j_seats + f_seats,
+        1
+    )
 
-    start_y = 110
+    # class ratios
+    f_ratio = f_seats / total
+    j_ratio = j_seats / total
+    y_ratio = y_seats / total
 
-    for i in range(seats):
+    f_w = int(cabin_w * f_ratio)
+    j_w = int(cabin_w * j_ratio)
+    y_w = int(cabin_w * y_ratio)
 
-        y = start_y + (i * 4)
+    current_x = cabin_x
 
-        draw.rectangle(
-            (
-                body_left + 20,
-                y,
-                body_left + 35,
-                y + 8
-            ),
-            fill=seat_color
+    # =====================================================
+    # FIRST CLASS
+    # =====================================================
+
+    for row in range(2):
+
+        seats = max(
+            int(f_seats / 2),
+            1
         )
 
-        draw.rectangle(
+        spacing = max(
+            int(f_w / seats),
+            20
+        )
+
+        for i in range(seats):
+
+            sx = current_x + i * spacing
+            sy = cabin_y + row * 28
+
+            draw.rounded_rectangle(
+                (
+                    sx,
+                    sy,
+                    sx + 13,
+                    sy + 13
+                ),
+                radius=4,
+                fill=(255, 80, 140)
+            )
+
+    current_x += f_w
+
+    # =====================================================
+    # BUSINESS
+    # =====================================================
+
+    for row in range(3):
+
+        seats = max(
+            int(j_seats / 3),
+            1
+        )
+
+        spacing = max(
+            int(j_w / seats),
+            12
+        )
+
+        for i in range(seats):
+
+            sx = current_x + i * spacing
+            sy = cabin_y + row * 20
+
+            draw.rounded_rectangle(
+                (
+                    sx,
+                    sy,
+                    sx + 9,
+                    sy + 9
+                ),
+                radius=3,
+                fill=(255, 190, 40)
+            )
+
+    current_x += j_w
+
+    # =====================================================
+    # ECONOMY
+    # =====================================================
+
+    for row in range(6):
+
+        seats = max(
+            int(y_seats / 6),
+            1
+        )
+
+        spacing = max(
+            int(y_w / seats),
+            6
+        )
+
+        for i in range(seats):
+
+            sx = current_x + i * spacing
+            sy = cabin_y + row * 12
+
+            draw.rounded_rectangle(
+                (
+                    sx,
+                    sy,
+                    sx + 6,
+                    sy + 6
+                ),
+                radius=2,
+                fill=(60, 200, 255)
+            )
+
+    # =====================================================
+    # AIRCRAFT LABEL
+    # =====================================================
+
+    draw.text(
+        (
+            body_x + 120,
+            body_y + 115
+        ),
+        plane["name"],
+        fill=(255, 255, 255),
+        font=text_font
+    )
+
+    # =====================================================
+    # STATS SECTION
+    # =====================================================
+
+    sx = 110
+    sy = 570
+
+    stats = [
+
+        f"Distance        : {int(route['distance']):,} km",
+        f"Trips / Day     : {result['trips']}",
+        f"Flight Time     : {format_time(result['time'])}",
+        f"Daily Profit    : ${result['profit_day']:,}",
+        f"Fuel / Day      : ${result['fuel_day']:,}",
+        f"CO2 / Day       : ${result['co2_day']:,}",
+        f"Confidence Index: {result['ci']}%"
+    ]
+
+    for i, line in enumerate(stats):
+
+        draw.text(
             (
-                body_right - 35,
-                y,
-                body_right - 20,
-                y + 8
+                sx,
+                sy + i * 34
             ),
-            fill=seat_color
+            line,
+            fill=(255, 255, 255),
+            font=text_font
         )
 
     # =====================================================
-    # SAVE BUFFER
+    # LEGEND
     # =====================================================
 
-    buffer = io.BytesIO()
+    lx = 980
+    ly = 575
 
-    img.save(buffer, format="PNG")
+    legend = [
 
-    buffer.seek(0)
+        (
+            "First Class",
+            (255, 80, 140)
+        ),
 
-    return buffer
+        (
+            "Business",
+            (255, 190, 40)
+        ),
+
+        (
+            "Economy",
+            (60, 200, 255)
+        )
+    ]
+
+    for i, item in enumerate(legend):
+
+        yy = ly + i * 48
+
+        draw.rounded_rectangle(
+            (
+                lx,
+                yy,
+                lx + 28,
+                yy + 28
+            ),
+            radius=8,
+            fill=item[1]
+        )
+
+        draw.text(
+            (
+                lx + 42,
+                yy + 1
+            ),
+            item[0],
+            fill=(255, 255, 255),
+            font=small_font
+        )
+
+    # =====================================================
+    # SAVE TEMP
+    # =====================================================
+
+    temp = tempfile.NamedTemporaryFile(
+        suffix=".png",
+        delete=False
+    )
+
+    img.save(
+        temp.name,
+        quality=95
+    )
+
+    return temp.name
 
 # =========================
-# ROUTE COMMAND V3
+# ROUTE COMMAND (FULL FIXED)
 # =========================
 @bot.command()
 async def route(ctx, frm, to, *, plane_name):
 
-    route = get_route(frm, to)
-    plane = get_plane(plane_name)
+    try:
 
-    if not route:
-        return await ctx.send("❌ Route not found")
+        # =========================
+        # FETCH DATA
+        # =========================
+        route = get_route(frm, to)
 
-    if not plane:
-        return await ctx.send("❌ Plane not found")
+        if not route:
+            return await ctx.send(
+                "❌ Route not found"
+            )
 
-    distance_total = float(route["distance"])
-    plane_range = float(plane["range"])
+        plane = get_plane(plane_name)
 
-    # =========================
-    # STOPOVER SYSTEM
-    # =========================
-    stop_airport = None
+        if not plane:
+            return await ctx.send(
+                "❌ Plane not found"
+            )
 
-    if distance_total > plane_range:
-
-        cursor.execute("""
-        SELECT t_iata
-        FROM routes
-        WHERE f_iata = ?
-        AND CAST(distance AS REAL) < ?
-        ORDER BY CAST(distance AS REAL) DESC
-        LIMIT 1
-        """, (frm.upper(), plane_range))
-
-        row = cursor.fetchone()
-
-        if row:
-            stop_airport = row[0]
-
-    # =========================
-    # CALC ENGINE
-    # =========================
-    result = calc(route, plane, ctx.author.id)
-
-    mode = result["mode"]
-
-    # =========================
-    # ROUTE DISPLAY
-    # =========================
-    from_txt = airport_name(frm)
-    to_txt = airport_name(to)
-
-    if stop_airport:
-
-        stop_txt = airport_name(stop_airport)
-
-        route_display = (
-            f"{from_txt}\n"
-            f"→ {stop_txt}\n"
-            f"→ {to_txt}"
+        # =========================
+        # BASIC VALUES
+        # =========================
+        distance_total = float(
+            route["distance"]
         )
 
-    else:
-
-        route_display = (
-            f"{from_txt}\n"
-            f"→ {to_txt}"
+        plane_range = float(
+            plane["range"]
         )
 
-    # =========================
-    # EMBED
-    # =========================
-    embed = discord.Embed(
-        title=f"{plane['name']} • Route Analysis V3.0.1",
-        description=f"```{route_display}```",
-        color=0x2b2d31
-    )
+        # =========================
+        # STOPOVER SYSTEM
+        # =========================
+        stop_airport = None
 
-    # =========================
-    # FLIGHT INFO
-    # =========================
-    embed.add_field(
-        name="✈ Flight Info",
-        value=(
-            f"**Distance:** {int(distance_total):,} km\n"
-            f"**Trips:** {result['trips']}/day\n"
-            f"**Mode:** {mode.upper()}"
-        ),
-        inline=False
-    )
+        if distance_total > plane_range:
 
-    # =========================
-    # DEMAND
-    # =========================
-    embed.add_field(
-        name="📊 Demand",
-        value=(
-            f"**Y:** {route['y']}\n"
-            f"**J:** {route['j']}\n"
-            f"**F:** {route['f']}"
-        ),
-        inline=True
-    )
+            cursor.execute("""
+            SELECT t_iata, distance
+            FROM routes
+            WHERE
+            f_iata = ?
+            AND CAST(distance AS REAL) <= ?
+            ORDER BY CAST(distance AS REAL) DESC
+            LIMIT 1
+            """, (
+                frm.upper(),
+                plane_range
+            ))
 
-    # =========================
-    # CONFIGURATION
-    # =========================
-    embed.add_field(
-        name="⚙ Configuration",
-        value=(
-            f"**Y:** {result['y']}\n"
-            f"**J:** {result['j']}\n"
-            f"**F:** {result['f']}"
-        ),
-        inline=True
-    )
+            row = cursor.fetchone()
 
-    # =========================
-    # TICKET PRICING
-    # =========================
-    embed.add_field(
-        name="🎟 Ticket Pricing",
-        value=(
-            f"**Y:** ${result['y_price']:,}\n"
-            f"**J:** ${result['j_price']:,}\n"
-            f"**F:** ${result['f_price']:,}"
-        ),
-        inline=True
-    )
+            if row:
+                stop_airport = row["t_iata"]
 
-    # =========================
-    # PER FLIGHT
-    # =========================
-    embed.add_field(
-        name="💰 Per Flight",
-        value=(
-            f"**Income:** ${result['income_trip']:,}\n"
-            f"**Fuel:** ${result['fuel']:,}\n"
-            f"**CO2:** ${result['co2']:,}\n"
-            f"**Maint:** ${result['acheck'] + result['repair']:,}\n\n"
-            f"**Profit:** ${result['profit_trip']:,}\n"
-            f"**CI:** {result['ci']}%"
-        ),
-        inline=False
-    )
+        # =========================
+        # CALCULATION
+        # =========================
+        result = calc(
+            route,
+            plane,
+            ctx.author.id
+        )
 
-    # =========================
-    # PER DAY
-    # =========================
-    embed.add_field(
-        name="📅 Per Day",
-        value=(
-            f"**Income:** ${result['income_day']:,}\n"
-            f"**Fuel:** ${result['fuel_day']:,}\n"
-            f"**CO2:** ${result['co2_day']:,}\n"
-            f"**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n"
-            f"**Profit:** ${result['profit_day']:,}\n"
-            f"**Flights:** {result['trips']}"
-        ),
-        inline=False
-    )
+        mode = result["mode"]
 
-    embed.set_footer(
-        text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT"
-    )
+        # =========================
+        # AIRPORT DISPLAY
+        # =========================
+        from_txt = airport_name(frm)
+        to_txt = airport_name(to)
 
-    # =========================
-    # EXPORT DATA
-    # =========================
-    report_data = {
+        if stop_airport:
 
-        "Route": f"{frm.upper()} -> {to.upper()}",
-        "Aircraft": plane["name"],
-        "Distance": f"{int(distance_total):,} km",
-        "Mode": mode.upper(),
+            stop_txt = airport_name(
+                stop_airport
+            )
 
-        "Trips/Day": result["trips"],
+            route_display = (
+                f"{from_txt}\n"
+                f"→ {stop_txt}\n"
+                f"→ {to_txt}"
+            )
 
-        "Economy Demand": route["y"],
-        "Business Demand": route["j"],
-        "First Demand": route["f"],
+        else:
 
-        "Economy Config": result["y"],
-        "Business Config": result["j"],
-        "First Config": result["f"],
+            route_display = (
+                f"{from_txt}\n"
+                f"→ {to_txt}"
+            )
 
-        "Economy Ticket": result["y_price"],
-        "Business Ticket": result["j_price"],
-        "First Ticket": result["f_price"],
+        # =========================
+        # EMBED
+        # =========================
+        embed = discord.Embed(
+            title=f"{plane['name']} • Route Analysis",
+            description=f"```{route_display}```",
+            color=0x2b2d31
+        )
 
-        "Income/Flight": result["income_trip"],
-        "Fuel/Flight": result["fuel"],
-        "CO2/Flight": result["co2"],
+        # =========================
+        # FLIGHT INFO
+        # =========================
+        embed.add_field(
+            name="✈ Flight Info",
+            value=(
+                f"**Distance:** "
+                f"{int(distance_total):,} km\n"
 
-        "Profit/Flight": result["profit_trip"],
-        "Profit/Day": result["profit_day"],
+                f"**Flight Time:** "
+                f"{format_time(result['time'])}\n"
 
-        "CI": f"{result['ci']}%"
-    }
-    capacity = plane["capacity"]
-  # =====================================================
-  # AIRCRAFT DRAWING
-  # =====================================================
-    aircraft_type = "medium"
+                f"**Trips/Day:** "
+                f"{result['trips']}\n"
 
-    if plane_range >= 10000:
-        aircraft_type = "long"
+                f"**Mode:** "
+                f"{mode.upper()}"
+            ),
+            inline=False
+        )
 
-    elif plane_range <= 4000:
-        aircraft_type = "short"
+        # =========================
+        # DEMAND
+        # =========================
+        embed.add_field(
+            name="📊 Demand",
+            value=(
+                f"**Economy:** "
+                f"{route['y']}\n"
 
-    image_buffer = draw_aircraft(
-        capacity=capacity,
-        aircraft_type=aircraft_type
-    )
+                f"**Business:** "
+                f"{route['j']}\n"
 
-    aircraft_file = discord.File(
-        image_buffer,
-        filename="aircraft.png"
-    )
+                f"**First:** "
+                f"{route['f']}"
+            ),
+            inline=True
+        )
 
-    embed.set_thumbnail(
-    url="attachment://aircraft.png"
-    )
+        # =========================
+        # CONFIG
+        # =========================
+        embed.add_field(
+            name="⚙ Seat Config",
+            value=(
+                f"**Economy:** "
+                f"{result['y']}\n"
 
-    # =========================
-    # SEND
-    # =========================
+                f"**Business:** "
+                f"{result['j']}\n"
 
-    await ctx.send(
-        embed=embed,
-        files=aircraft_file
-    )
+                f"**First:** "
+                f"{result['f']}"
+            ),
+            inline=True
+        )
+
+        # =========================
+        # TICKET
+        # =========================
+        embed.add_field(
+            name="🎟 Ticket Prices",
+            value=(
+                f"**Y:** "
+                f"${result['y_price']:,}\n"
+
+                f"**J:** "
+                f"${result['j_price']:,}\n"
+
+                f"**F:** "
+                f"${result['f_price']:,}"
+            ),
+            inline=True
+        )
+
+        # =========================
+        # PER FLIGHT
+        # =========================
+        embed.add_field(
+            name="💰 Per Flight",
+            value=(
+                f"**Income:** "
+                f"${result['income_trip']:,}\n"
+
+                f"**Fuel Cost:** "
+                f"${result['fuel']:,}\n"
+
+                f"**CO2 Cost:** "
+                f"${result['co2']:,}\n"
+
+                f"**Maintenance:** "
+                f"${result['acheck'] + result['repair']:,}\n\n"
+
+                f"**Profit:** "
+                f"${result['profit_trip']:,}\n"
+
+                f"**CI:** "
+                f"{result['ci']}%"
+            ),
+            inline=False
+        )
+
+        # =========================
+        # PER DAY
+        # =========================
+        embed.add_field(
+            name="📅 Daily Statistics",
+            value=(
+                f"**Daily Income:** "
+                f"${result['income_day']:,}\n"
+
+                f"**Daily Profit:** "
+                f"${result['profit_day']:,}\n"
+
+                f"**Daily Fuel:** "
+                f"${result['fuel_day']:,}\n"
+
+                f"**Daily CO2:** "
+                f"${result['co2_day']:,}"
+            ),
+            inline=False
+        )
+
+        # =========================
+        # STOPOVER NOTICE
+        # =========================
+        if stop_airport:
+
+            embed.add_field(
+                name="🛑 Stopover Required",
+                value=(
+                    f"Aircraft range exceeded.\n"
+                    f"Suggested stop:\n"
+                    f"**{stop_airport}**"
+                ),
+                inline=False
+            )
+
+        # =========================
+        # FOOTER
+        # =========================
+        embed.set_footer(
+            text="JARVIS • A AERO CROWN DYNASTY OFFICIAL BOT"
+        )
+
+        # =========================
+        # AIRCRAFT VISUAL
+        # =========================
+
+        img_path = draw_aircraft_card(
+        plane,
+        result,
+        route,
+        frm,
+        to
+        )
+
+        file = discord.File(
+        img_path,
+        filename="route.png"
+        )
+
+        embed.set_image(
+       url="attachment://route.png"
+        )
+
+       # =========================
+       # SEND
+       # =========================
+       await ctx.send(
+       embed=embed,
+       file=file
+       )
                
 # ========================
 # IMPORTS (SAFE MERGE)
