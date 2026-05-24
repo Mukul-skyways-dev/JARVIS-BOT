@@ -895,9 +895,23 @@ async def difficulty(ctx, mode=None):
 
     await ctx.send(f"✅ Difficulty set to **{mode.upper()}**")
 
-# =========================
-# AIRPORT HELPER (FIXED)
-# =========================
+# =========================================================
+# REQUIRED IMPORTS
+# =========================================================
+
+import tempfile
+
+from PIL import (
+    Image,
+    ImageDraw,
+    ImageFont,
+    ImageFilter
+)
+
+# =========================================================
+# AIRPORT HELPER
+# =========================================================
+
 def airport_name(iata):
 
     try:
@@ -934,14 +948,16 @@ def airport_name(iata):
             return f"{iata} — {city}, {country}"
 
     except Exception as e:
+
         print("airport_name error:", e)
 
     return iata
 
 
-# =========================
-# GET ROUTE (FIXED)
-# =========================
+# =========================================================
+# GET ROUTE
+# =========================================================
+
 def get_route(frm, to):
 
     cursor.execute("""
@@ -988,9 +1004,10 @@ def get_route(frm, to):
     }
 
 
-# =========================
-# GET PLANE (FIXED)
-# =========================
+# =========================================================
+# GET PLANE
+# =========================================================
+
 def get_plane(name):
 
     key = norm(name)
@@ -1010,22 +1027,10 @@ def get_plane(name):
 
     return None
 
-# =========================================================
-# REQUIRED IMPORTS
-# =========================================================
-
-import tempfile
-
-from PIL import (
-    Image,
-    ImageDraw,
-    ImageFont,
-    ImageFilter
-)
 
 # =========================================================
-# IMPROVED AIRCRAFT VISUAL SYSTEM V2
-# CLEAN + REALISTIC VERSION
+# AIRCRAFT VISUAL SYSTEM V3
+# CLEAN + STABLE VERSION
 # =========================================================
 
 def draw_aircraft_card(
@@ -1042,7 +1047,7 @@ def draw_aircraft_card(
     img = Image.new(
         "RGB",
         (W, H),
-        (7, 10, 18)
+        (8, 12, 20)
     )
 
     draw = ImageDraw.Draw(img)
@@ -1065,7 +1070,7 @@ def draw_aircraft_card(
     )
 
     gd.ellipse(
-        (950, 250, 1700, 950),
+        (1000, 250, 1700, 950),
         fill=(255, 80, 150, 50)
     )
 
@@ -1153,29 +1158,31 @@ def draw_aircraft_card(
     )
 
     # =====================================================
-    # AIRCRAFT SIZE
+    # AIRCRAFT VALUES
     # =====================================================
 
-    capacity = int(
-        float(plane["capacity"])
+    capacity = max(
+        int(float(plane["capacity"])),
+        100
     )
 
-    aircraft_range = int(
-        float(plane["range"])
+    aircraft_range = max(
+        int(float(plane["range"])),
+        1000
     )
 
     body_len = min(
         max(
             700,
-            700 + int(capacity * 0.12)
+            700 + int(capacity * 0.15)
         ),
-        1000
+        1050
     )
 
-    body_x = 260
-    body_y = 330
+    body_x = 250
+    body_y = 320
 
-    body_h = 110
+    body_h = 120
 
     # =====================================================
     # FUSELAGE
@@ -1188,7 +1195,7 @@ def draw_aircraft_card(
             body_x + body_len,
             body_y + body_h
         ),
-        radius=55,
+        radius=60,
         fill=(225, 232, 242)
     )
 
@@ -1197,17 +1204,17 @@ def draw_aircraft_card(
         [
             (
                 body_x + body_len,
-                body_y + 8
+                body_y + 10
             ),
 
             (
-                body_x + body_len + 110,
-                body_y + 55
+                body_x + body_len + 120,
+                body_y + 60
             ),
 
             (
                 body_x + body_len,
-                body_y + 102
+                body_y + 110
             )
         ],
         fill=(225, 232, 242)
@@ -1217,17 +1224,17 @@ def draw_aircraft_card(
     draw.polygon(
         [
             (
-                body_x + 35,
+                body_x + 50,
                 body_y
             ),
 
             (
                 body_x - 80,
-                body_y - 120
+                body_y - 130
             ),
 
             (
-                body_x + 70,
+                body_x + 90,
                 body_y
             )
         ],
@@ -1238,12 +1245,12 @@ def draw_aircraft_card(
     # WINGS
     # =====================================================
 
-    wing_y = body_y + 55
+    wing_y = body_y + 60
 
     wing_span = min(
         max(
-            220,
-            220 + int(aircraft_range / 70)
+            240,
+            240 + int(aircraft_range / 80)
         ),
         380
     )
@@ -1252,17 +1259,17 @@ def draw_aircraft_card(
     draw.polygon(
         [
             (
-                body_x + 420,
+                body_x + 470,
                 wing_y
             ),
 
             (
-                body_x + 140,
+                body_x + 170,
                 wing_y - wing_span
             ),
 
             (
-                body_x + 520,
+                body_x + 560,
                 wing_y
             )
         ],
@@ -1273,17 +1280,17 @@ def draw_aircraft_card(
     draw.polygon(
         [
             (
-                body_x + 420,
+                body_x + 470,
                 wing_y
             ),
 
             (
-                body_x + 140,
+                body_x + 170,
                 wing_y + wing_span
             ),
 
             (
-                body_x + 520,
+                body_x + 560,
                 wing_y
             )
         ],
@@ -1294,123 +1301,142 @@ def draw_aircraft_card(
     # ENGINES
     # =====================================================
 
-    eng_color = (100, 115, 135)
+    engine_color = (100, 120, 140)
 
-    # upper engine
+    # upper
     draw.ellipse(
         (
-            body_x + 330,
+            body_x + 360,
             wing_y - 160,
-            body_x + 390,
-            wing_y - 100
+            body_x + 430,
+            wing_y - 90
         ),
-        fill=eng_color
+        fill=engine_color
     )
 
-    # lower engine
+    # lower
     draw.ellipse(
         (
-            body_x + 330,
-            wing_y + 100,
-            body_x + 390,
+            body_x + 360,
+            wing_y + 90,
+            body_x + 430,
             wing_y + 160
         ),
-        fill=eng_color
+        fill=engine_color
     )
 
     # =====================================================
     # WINDOWS
     # =====================================================
 
-    win_y = body_y + 26
+    window_y = body_y + 28
 
-    for i in range(38):
+    total_windows = min(
+        max(
+            int(capacity / 12),
+            28
+        ),
+        48
+    )
 
-        wx = body_x + 60 + (i * 22)
+    spacing = int(
+        (body_len - 140) / total_windows
+    )
+
+    for i in range(total_windows):
+
+        wx = body_x + 70 + (i * spacing)
 
         draw.rounded_rectangle(
             (
                 wx,
-                win_y,
+                window_y,
                 wx + 12,
-                win_y + 12
+                window_y + 12
             ),
             radius=3,
             fill=(70, 190, 255)
         )
 
     # =====================================================
-    # CABIN ZONES
+    # CABIN CLASS BAR
     # =====================================================
 
-    y_seats = result["y"]
-    j_seats = result["j"]
-    f_seats = result["f"]
+    y_seats = max(result["y"], 0)
+    j_seats = max(result["j"], 0)
+    f_seats = max(result["f"], 0)
 
     total = max(
         y_seats + j_seats + f_seats,
         1
     )
 
-    cabin_x = body_x + 70
-    cabin_y = body_y + 52
+    cabin_x = body_x + 80
+    cabin_y = body_y + 68
 
-    cabin_w = body_len - 140
-    cabin_h = 28
+    cabin_w = body_len - 160
+    cabin_h = 26
 
-    # ratios
-    f_ratio = f_seats / total
-    j_ratio = j_seats / total
-    y_ratio = y_seats / total
+    f_w = int((f_seats / total) * cabin_w)
+    j_w = int((j_seats / total) * cabin_w)
+    y_w = cabin_w - f_w - j_w
 
-    f_w = int(cabin_w * f_ratio)
-    j_w = int(cabin_w * j_ratio)
-    y_w = int(cabin_w * y_ratio)
+    current_x = cabin_x
 
     # FIRST
-    draw.rounded_rectangle(
-        (
-            cabin_x,
-            cabin_y,
-            cabin_x + f_w,
-            cabin_y + cabin_h
-        ),
-        radius=12,
-        fill=(255, 80, 140)
-    )
+    if f_w > 0:
+
+        draw.rounded_rectangle(
+            (
+                current_x,
+                cabin_y,
+                current_x + f_w,
+                cabin_y + cabin_h
+            ),
+            radius=10,
+            fill=(255, 80, 140)
+        )
+
+        current_x += f_w + 4
 
     # BUSINESS
-    draw.rounded_rectangle(
-        (
-            cabin_x + f_w + 4,
-            cabin_y,
-            cabin_x + f_w + j_w,
-            cabin_y + cabin_h
-        ),
-        radius=12,
-        fill=(255, 190, 40)
-    )
+    if j_w > 0:
+
+        draw.rounded_rectangle(
+            (
+                current_x,
+                cabin_y,
+                current_x + j_w,
+                cabin_y + cabin_h
+            ),
+            radius=10,
+            fill=(255, 190, 40)
+        )
+
+        current_x += j_w + 4
 
     # ECONOMY
-    draw.rounded_rectangle(
-        (
-            cabin_x + f_w + j_w + 8,
-            cabin_y,
-            cabin_x + f_w + j_w + y_w,
-            cabin_y + cabin_h
-        ),
-        radius=12,
-        fill=(60, 200, 255)
-    )
+    if y_w > 0:
+
+        draw.rounded_rectangle(
+            (
+                current_x,
+                cabin_y,
+                current_x + y_w,
+                cabin_y + cabin_h
+            ),
+            radius=10,
+            fill=(60, 200, 255)
+        )
 
     # =====================================================
-    # LABELS
+    # AIRCRAFT NAME
     # =====================================================
 
     draw.text(
         (
-            body_x + 180,
-            body_y + 135
+            body_x + 220,
+            body_y + 150
         ),
         plane["name"],
         fill=(255, 255, 255),
@@ -1422,7 +1448,7 @@ def draw_aircraft_card(
     # =====================================================
 
     sx = 120
-    sy = 600
+    sy = 610
 
     stats = [
 
@@ -1456,32 +1482,21 @@ def draw_aircraft_card(
 
     legend = [
 
-        (
-            "First Class",
-            (255, 80, 140)
-        ),
-
-        (
-            "Business",
-            (255, 190, 40)
-        ),
-
-        (
-            "Economy",
-            (60, 200, 255)
-        )
+        ("First Class", (255, 80, 140)),
+        ("Business", (255, 190, 40)),
+        ("Economy", (60, 200, 255))
     ]
 
     for i, item in enumerate(legend):
 
-        yy = ly + i * 50
+        yy = ly + i * 52
 
         draw.rounded_rectangle(
             (
                 lx,
                 yy,
-                lx + 32,
-                yy + 32
+                lx + 34,
+                yy + 34
             ),
             radius=8,
             fill=item[1]
@@ -1489,8 +1504,8 @@ def draw_aircraft_card(
 
         draw.text(
             (
-                lx + 48,
-                yy + 2
+                lx + 50,
+                yy + 3
             ),
             item[0],
             fill=(255, 255, 255),
@@ -1513,6 +1528,11 @@ def draw_aircraft_card(
 
     return temp.name
 
+
+# =========================================================
+# ROUTE COMMAND
+# =========================================================
+
 @bot.command()
 async def route(ctx, frm, to, *, plane_name):
 
@@ -1528,9 +1548,10 @@ async def route(ctx, frm, to, *, plane_name):
     distance_total = float(route["distance"])
     plane_range = float(plane["range"])
 
-    # =========================
+    # =====================================================
     # STOPOVER SYSTEM
-    # =========================
+    # =====================================================
+
     stop_airport = None
 
     if distance_total > plane_range:
@@ -1549,16 +1570,22 @@ async def route(ctx, frm, to, *, plane_name):
         if row:
             stop_airport = row[0]
 
-    # =========================
+    # =====================================================
     # CALC ENGINE
-    # =========================
-    result = calc(route, plane, ctx.author.id)
+    # =====================================================
+
+    result = calc(
+        route,
+        plane,
+        ctx.author.id
+    )
 
     mode = result["mode"]
 
-    # =========================
+    # =====================================================
     # ROUTE DISPLAY
-    # =========================
+    # =====================================================
+
     from_txt = airport_name(frm)
     to_txt = airport_name(to)
 
@@ -1579,18 +1606,20 @@ async def route(ctx, frm, to, *, plane_name):
             f"→ {to_txt}"
         )
 
-    # =========================
+    # =====================================================
     # EMBED
-    # =========================
+    # =====================================================
+
     embed = discord.Embed(
         title=f"{plane['name']} • Route Analysis V3.0.1",
         description=f"```{route_display}```",
         color=0x2b2d31
     )
 
-    # =========================
+    # =====================================================
     # FLIGHT INFO
-    # =========================
+    # =====================================================
+
     embed.add_field(
         name="✈ Flight Info",
         value=(
@@ -1601,9 +1630,10 @@ async def route(ctx, frm, to, *, plane_name):
         inline=False
     )
 
-    # =========================
+    # =====================================================
     # DEMAND
-    # =========================
+    # =====================================================
+
     embed.add_field(
         name="📊 Demand",
         value=(
@@ -1614,9 +1644,10 @@ async def route(ctx, frm, to, *, plane_name):
         inline=True
     )
 
-    # =========================
+    # =====================================================
     # CONFIGURATION
-    # =========================
+    # =====================================================
+
     embed.add_field(
         name="⚙ Configuration",
         value=(
@@ -1627,9 +1658,10 @@ async def route(ctx, frm, to, *, plane_name):
         inline=True
     )
 
-    # =========================
+    # =====================================================
     # TICKET PRICING
-    # =========================
+    # =====================================================
+
     embed.add_field(
         name="🎟 Ticket Pricing",
         value=(
@@ -1640,9 +1672,10 @@ async def route(ctx, frm, to, *, plane_name):
         inline=True
     )
 
-    # =========================
+    # =====================================================
     # PER FLIGHT
-    # =========================
+    # =====================================================
+
     embed.add_field(
         name="💰 Per Flight",
         value=(
@@ -1656,9 +1689,10 @@ async def route(ctx, frm, to, *, plane_name):
         inline=False
     )
 
-    # =========================
+    # =====================================================
     # PER DAY
-    # =========================
+    # =====================================================
+
     embed.add_field(
         name="📅 Per Day",
         value=(
@@ -1676,9 +1710,10 @@ async def route(ctx, frm, to, *, plane_name):
         text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT"
     )
 
-    # =========================
+    # =====================================================
     # EXPORT DATA
-    # =========================
+    # =====================================================
+
     report_data = {
 
         "Route": f"{frm.upper()} -> {to.upper()}",
@@ -1710,36 +1745,36 @@ async def route(ctx, frm, to, *, plane_name):
         "CI": f"{result['ci']}%"
     }
 
-        # =========================
-        # AIRCRAFT VISUAL
-        # =========================
+    # =====================================================
+    # AIRCRAFT VISUAL
+    # =====================================================
 
-        img_path = draw_aircraft_card(
-            plane,
-            result,
-            route,
-            frm,
-            to
-        )
+    img_path = draw_aircraft_card(
+        plane,
+        result,
+        route,
+        frm,
+        to
+    )
 
-        file = discord.File(
-            img_path,
-            filename="route.png"
-        )
+    file = discord.File(
+        img_path,
+        filename="route.png"
+    )
 
-        embed.set_image(
-            url="attachment://route.png"
-        )
+    embed.set_image(
+        url="attachment://route.png"
+    )
 
-        # =========================
-        # SEND
-        # =========================
-        
-        await ctx.send(
-            embed=embed,
-            file=file,
-            view=ExportView(report_data)
-        )
+    # =====================================================
+    # SEND
+    # =====================================================
+
+    await ctx.send(
+        embed=embed,
+        file=file,
+        view=ExportView(report_data)
+    )
 
 # =========================
 # COMPARE VIEW V3
