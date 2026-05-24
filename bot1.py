@@ -3600,6 +3600,1292 @@ async def ask(ctx, *, question):
 
     except Exception as e:
         await msg.edit(content=f"❌ AI Error:\n```{e}```")
+
+# =========================================================
+# JARVIS ALLIANCE ANALYTICS SYSTEM V2
+# FINAL PRODUCTION VERSION
+# =========================================================
+
+# =========================================================
+# IMPORTS
+# =========================================================
+
+import os
+import sqlite3
+import random
+import string
+import statistics
+import datetime
+
+import discord
+from discord.ext import commands
+
+from discord.ui import (
+    View,
+    Button,
+    Modal,
+    TextInput
+)
+
+from PIL import (
+    Image,
+    ImageDraw,
+    ImageFont,
+    ImageFilter
+)
+
+import matplotlib.pyplot as plt
+
+# =========================================================
+# DATABASE
+# =========================================================
+
+conn = sqlite3.connect(
+    "new_am4.db"
+)
+
+conn.row_factory = sqlite3.Row
+
+cursor = conn.cursor()
+
+# =========================================================
+# TABLES
+# =========================================================
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS alliances (
+
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    alliance_code TEXT UNIQUE,
+    alliance_name TEXT UNIQUE,
+
+    initial_rank INTEGER,
+
+    created_by INTEGER,
+
+    created_at TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS alliance_entries (
+
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    alliance_code TEXT,
+
+    entry_date TEXT,
+
+    current_value REAL,
+
+    members_current INTEGER,
+    members_max INTEGER,
+
+    season_won INTEGER,
+
+    total_flights INTEGER,
+
+    current_rank INTEGER
+)
+""")
+
+conn.commit()
+
+# =========================================================
+# AUTH SYSTEM
+# =========================================================
+
+AUTHORIZED_USERS = [
+    # user ids
+]
+
+AUTHORIZED_ROLES = [
+    # role ids
+]
+
+# =========================================================
+# AUTH CHECK
+# =========================================================
+
+def is_authorized(member):
+
+    if member.id in AUTHORIZED_USERS:
+        return True
+
+    for role in member.roles:
+
+        if role.id in AUTHORIZED_ROLES:
+            return True
+
+    return False
+
+# =========================================================
+# GENERATE CODE
+# =========================================================
+
+def generate_code():
+
+    while True:
+
+        code = ''.join(
+
+            random.choices(
+                string.ascii_uppercase +
+                string.digits,
+                k=5
+            )
+        )
+
+        cursor.execute("""
+        SELECT alliance_code
+        FROM alliances
+        WHERE alliance_code = ?
+        """, (code,))
+
+        exists = cursor.fetchone()
+
+        if not exists:
+            return code
+
+# =========================================================
+# FETCH ALLIANCE
+# =========================================================
+
+def get_alliance(code):
+
+    cursor.execute("""
+    SELECT *
+    FROM alliances
+    WHERE alliance_code = ?
+    """, (code.upper(),))
+
+    return cursor.fetchone()
+
+# =========================================================
+# FETCH ENTRIES
+# =========================================================
+
+def get_entries(code):
+
+    cursor.execute("""
+    SELECT *
+    FROM alliance_entries
+    WHERE alliance_code = ?
+    ORDER BY entry_date ASC
+    """, (code.upper(),))
+
+    return cursor.fetchall()
+
+# =========================================================
+# GROWTH CALCULATION
+# =========================================================
+
+def calculate_growth(entries):
+
+    if len(entries) < 2:
+        return 0
+
+    growths = []
+
+    for i in range(1, len(entries)):
+
+        prev = entries[i - 1]["current_value"]
+        curr = entries[i]["current_value"]
+
+        if prev <= 0:
+            continue
+
+        growth = (
+            (curr - prev)
+            / prev
+        ) * 100
+
+        growths.append(growth)
+
+    if not growths:
+        return 0
+
+    return round(
+        statistics.mean(growths),
+        2
+    )
+
+# =========================================================
+# MEMBER EFFICIENCY
+# =========================================================
+
+def member_efficiency(entry):
+
+    current = entry["members_current"]
+    maximum = entry["members_max"]
+
+    if maximum <= 0:
+        return 0
+
+    return round(
+        (current / maximum) * 100,
+        2
+    )
+
+# =========================================================
+# MOMENTUM
+# =========================================================
+
+def get_momentum(growth):
+
+    if growth >= 5:
+        return "Very Strong"
+
+    elif growth >= 2:
+        return "Strong Positive"
+
+    elif growth >= 0:
+        return "Stable"
+
+    elif growth >= -2:
+        return "Weak"
+
+    return "Declining"
+
+# =========================================================
+# PREDICTION
+# =========================================================
+
+def get_prediction(
+    growth,
+    rank
+):
+
+    if growth >= 4 and rank <= 5:
+        return "Likely Top 3"
+
+    elif growth >= 2:
+        return "Rank Improvement Expected"
+
+    elif growth < 0:
+        return "Rank May Fall"
+
+    return "Stable Position Expected"
+
+# =========================================================
+# SUGGESTIONS
+# =========================================================
+
+def get_suggestions(growth):
+
+    data = []
+
+    if growth >= 3:
+
+        data.append(
+            "Growth trend stable"
+        )
+
+        data.append(
+            "Alliance activity increasing steadily"
+        )
+
+        data.append(
+            "Performance consistency strong"
+        )
+
+    elif growth >= 0:
+
+        data.append(
+            "Growth rate moderate"
+        )
+
+        data.append(
+            "Performance consistency acceptable"
+        )
+
+    else:
+
+        data.append(
+            "Growth declining recently"
+        )
+
+        data.append(
+            "Activity improvement recommended"
+        )
+
+    return data
+
+# =========================================================
+# RANK MOVEMENT
+# =========================================================
+
+def get_rank_movement(entries):
+
+    if len(entries) < 2:
+        return "▬ 0"
+
+    old = entries[-2]["current_rank"]
+    new = entries[-1]["current_rank"]
+
+    diff = old - new
+
+    if diff > 0:
+        return f"▲ {diff}"
+
+    elif diff < 0:
+        return f"▼ {abs(diff)}"
+
+    return "▬ 0"
+
+# =========================================================
+# BOT SCORE
+# =========================================================
+
+def calculate_bot_score(
+    entry,
+    growth
+):
+
+    efficiency = member_efficiency(entry)
+
+    season = entry["season_won"]
+
+    flights = entry["total_flights"] / 10000
+
+    score = (
+
+        growth * 0.35 +
+
+        efficiency * 0.20 +
+
+        season * 0.20 +
+
+        flights * 0.25
+    )
+
+    return round(score, 2)
+
+# =========================================================
+# GRAPH
+# =========================================================
+
+def create_graph(entries):
+
+    values = [
+        e["current_value"]
+        for e in entries[-5:]
+    ]
+
+    labels = [
+        f"D{i+1}"
+        for i in range(len(values))
+    ]
+
+    plt.figure(
+        figsize=(8, 4)
+    )
+
+    ax = plt.gca()
+
+    ax.set_facecolor(
+        "#1A1F2B"
+    )
+
+    plt.gcf().patch.set_facecolor(
+        "#111827"
+    )
+
+    plt.plot(
+        labels,
+        values,
+        linewidth=5,
+        marker='o',
+        color="#9333EA"
+    )
+
+    plt.grid(
+        alpha=0.15
+    )
+
+    plt.tight_layout()
+
+    path = "alliance_graph.png"
+
+    plt.savefig(
+        path,
+        dpi=200,
+        facecolor="#111827"
+    )
+
+    plt.close()
+
+    return path
+
+# =========================================================
+# DASHBOARD IMAGE
+# =========================================================
+
+def create_dashboard(
+    alliance,
+    latest,
+    growth,
+    movement,
+    momentum,
+    prediction,
+    suggestions,
+    graph_path,
+    score
+):
+
+    W = 1600
+    H = 950
+
+    img = Image.new(
+        "RGB",
+        (W, H),
+        (11, 15, 25)
+    )
+
+    draw = ImageDraw.Draw(img)
+
+    # =====================================================
+    # GLOW
+    # =====================================================
+
+    glow = Image.new(
+        "RGBA",
+        (W, H),
+        (0, 0, 0, 0)
+    )
+
+    gd = ImageDraw.Draw(glow)
+
+    gd.ellipse(
+        (-150, -150, 600, 600),
+        fill=(147, 51, 234, 60)
+    )
+
+    glow = glow.filter(
+        ImageFilter.GaussianBlur(120)
+    )
+
+    img.paste(
+        glow,
+        (0, 0),
+        glow
+    )
+
+    # =====================================================
+    # PANEL
+    # =====================================================
+
+    draw.rounded_rectangle(
+        (
+            60,
+            60,
+            1540,
+            890
+        ),
+        radius=35,
+        fill=(20, 26, 38)
+    )
+
+    # =====================================================
+    # FONT
+    # =====================================================
+
+    try:
+
+        title_font = ImageFont.truetype(
+            "arial.ttf",
+            46
+        )
+
+        text_font = ImageFont.truetype(
+            "arial.ttf",
+            28
+        )
+
+    except:
+
+        title_font = ImageFont.load_default()
+        text_font = ImageFont.load_default()
+
+    # =====================================================
+    # HEADER
+    # =====================================================
+
+    draw.text(
+        (100, 90),
+        alliance["alliance_name"],
+        fill=(255, 255, 255),
+        font=title_font
+    )
+
+    draw.text(
+        (100, 170),
+        f"Rank : #{latest['current_rank']} {movement}",
+        fill=(220, 220, 220),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 220),
+        f"Growth : {growth:+.2f}%",
+        fill=(180, 120, 255),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 270),
+        f"Members : {latest['members_current']}/{latest['members_max']}",
+        fill=(220, 220, 220),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 320),
+        f"Flights : {latest['total_flights']:,}",
+        fill=(220, 220, 220),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 370),
+        f"Season Wins : {latest['season_won']}",
+        fill=(220, 220, 220),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 470),
+        "Current Value",
+        fill=(160, 160, 160),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 520),
+        f"{latest['current_value']:,.2f}",
+        fill=(255, 255, 255),
+        font=title_font
+    )
+
+    draw.text(
+        (100, 620),
+        "Momentum",
+        fill=(160, 160, 160),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 660),
+        momentum,
+        fill=(255, 255, 255),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 740),
+        "Prediction",
+        fill=(160, 160, 160),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 780),
+        prediction,
+        fill=(255, 255, 255),
+        font=text_font
+    )
+
+    draw.text(
+        (100, 840),
+        f"Bot Score : {score}",
+        fill=(180, 120, 255),
+        font=text_font
+    )
+
+    # suggestions
+    sy = 620
+
+    for line in suggestions:
+
+        draw.text(
+            (980, sy),
+            line,
+            fill=(220, 220, 220),
+            font=text_font
+        )
+
+        sy += 50
+
+    # =====================================================
+    # GRAPH
+    # =====================================================
+
+    graph = Image.open(
+        graph_path
+    )
+
+    graph = graph.resize(
+        (620, 300)
+    )
+
+    img.paste(
+        graph,
+        (850, 250)
+    )
+
+    # =====================================================
+    # SAVE
+    # =====================================================
+
+    path = "dashboard.png"
+
+    img.save(path)
+
+    return path
+
+# =========================================================
+# REGISTER MODAL
+# =========================================================
+
+class RegisterAllianceModal(Modal):
+
+    def __init__(self):
+
+        super().__init__(
+            title="Register Alliance"
+        )
+
+        self.name = TextInput(
+            label="Alliance Name"
+        )
+
+        self.rank = TextInput(
+            label="Initial Rank"
+        )
+
+        self.add_item(self.name)
+        self.add_item(self.rank)
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        code = generate_code()
+
+        cursor.execute("""
+        INSERT INTO alliances (
+
+            alliance_code,
+            alliance_name,
+
+            initial_rank,
+
+            created_by,
+            created_at
+
+        )
+
+        VALUES (?, ?, ?, ?, ?)
+        """, (
+
+            code,
+            self.name.value,
+
+            int(self.rank.value),
+
+            interaction.user.id,
+
+            str(datetime.date.today())
+
+        ))
+
+        conn.commit()
+
+        embed = discord.Embed(
+            title="Alliance Registered",
+            color=0x9333EA
+        )
+
+        embed.add_field(
+            name="Alliance",
+            value=self.name.value
+        )
+
+        embed.add_field(
+            name="Code",
+            value=code
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+# =========================================================
+# DAILY ENTRY MODAL
+# =========================================================
+
+class DailyEntryModal(Modal):
+
+    def __init__(self):
+
+        super().__init__(
+            title="Daily Alliance Entry"
+        )
+
+        self.code = TextInput(
+            label="Alliance Code"
+        )
+
+        self.value = TextInput(
+            label="Current Value"
+        )
+
+        self.members = TextInput(
+            label="Members (43/60)"
+        )
+
+        self.season = TextInput(
+            label="Season Won"
+        )
+
+        self.flights = TextInput(
+            label="Total Flights"
+        )
+
+        self.rank = TextInput(
+            label="Rank"
+        )
+
+        self.add_item(self.code)
+        self.add_item(self.value)
+        self.add_item(self.members)
+        self.add_item(self.season)
+        self.add_item(self.flights)
+        self.add_item(self.rank)
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        code = self.code.value.upper()
+
+        alliance = get_alliance(code)
+
+        if not alliance:
+
+            return await interaction.response.send_message(
+                "Alliance not found",
+                ephemeral=True
+            )
+
+        today = str(
+            datetime.date.today()
+        )
+
+        cursor.execute("""
+        SELECT *
+        FROM alliance_entries
+        WHERE alliance_code = ?
+        AND entry_date = ?
+        """, (
+            code,
+            today
+        ))
+
+        exists = cursor.fetchone()
+
+        if exists:
+
+            return await interaction.response.send_message(
+                "Today's entry already exists",
+                ephemeral=True
+            )
+
+        current = int(
+            self.members.value.split("/")[0]
+        )
+
+        maximum = int(
+            self.members.value.split("/")[1]
+        )
+
+        cursor.execute("""
+        INSERT INTO alliance_entries (
+
+            alliance_code,
+            entry_date,
+
+            current_value,
+
+            members_current,
+            members_max,
+
+            season_won,
+
+            total_flights,
+
+            current_rank
+
+        )
+
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+
+            code,
+            today,
+
+            float(self.value.value),
+
+            current,
+            maximum,
+
+            int(self.season.value),
+
+            int(self.flights.value),
+
+            int(self.rank.value)
+
+        ))
+
+        conn.commit()
+
+        await interaction.response.send_message(
+            "Daily entry added",
+            ephemeral=True
+        )
+
+# =========================================================
+# MAIN VIEW
+# =========================================================
+
+class AllianceView(View):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+        label="Register Alliance",
+        style=discord.ButtonStyle.primary
+    )
+    async def register_btn(
+        self,
+        interaction,
+        button
+    ):
+
+        if not is_authorized(
+            interaction.user
+        ):
+
+            return await interaction.response.send_message(
+                "Unauthorized",
+                ephemeral=True
+            )
+
+        await interaction.response.send_modal(
+            RegisterAllianceModal()
+        )
+
+    @discord.ui.button(
+        label="Daily Entry",
+        style=discord.ButtonStyle.success
+    )
+    async def entry_btn(
+        self,
+        interaction,
+        button
+    ):
+
+        if not is_authorized(
+            interaction.user
+        ):
+
+            return await interaction.response.send_message(
+                "Unauthorized",
+                ephemeral=True
+            )
+
+        await interaction.response.send_modal(
+            DailyEntryModal()
+        )
+
+# =========================================================
+# MAIN COMMAND
+# =========================================================
+
+@bot.command()
+async def alliance(ctx):
+
+    embed = discord.Embed(
+        title="Alliance Analytics Control Center",
+        description=(
+            "Premium Alliance Analytics System"
+        ),
+        color=0x9333EA
+    )
+
+    embed.add_field(
+        name="Features",
+        value=(
+            "• Registration\n"
+            "• Daily Entries\n"
+            "• Global Rankings\n"
+            "• Analytics\n"
+            "• Dashboard\n"
+            "• Compare"
+        ),
+        inline=False
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=AllianceView()
+    )
+
+# =========================================================
+# DASHBOARD
+# =========================================================
+
+@bot.command()
+async def adashboard(
+    ctx,
+    code
+):
+
+    alliance = get_alliance(
+        code.upper()
+    )
+
+    if not alliance:
+
+        return await ctx.send(
+            "Alliance not found"
+        )
+
+    entries = get_entries(
+        code.upper()
+    )
+
+    if not entries:
+
+        return await ctx.send(
+            "No entries found"
+        )
+
+    latest = entries[-1]
+
+    growth = calculate_growth(
+        entries
+    )
+
+    momentum = get_momentum(
+        growth
+    )
+
+    prediction = get_prediction(
+        growth,
+        latest["current_rank"]
+    )
+
+    suggestions = get_suggestions(
+        growth
+    )
+
+    movement = get_rank_movement(
+        entries
+    )
+
+    score = calculate_bot_score(
+        latest,
+        growth
+    )
+
+    graph = create_graph(
+        entries
+    )
+
+    dashboard = create_dashboard(
+
+        alliance,
+        latest,
+
+        growth,
+        movement,
+
+        momentum,
+        prediction,
+
+        suggestions,
+
+        graph,
+
+        score
+    )
+
+    file = discord.File(
+        dashboard,
+        filename="dashboard.png"
+    )
+
+    embed = discord.Embed(
+        title=alliance["alliance_name"],
+        color=0x9333EA
+    )
+
+    embed.set_image(
+        url="attachment://dashboard.png"
+    )
+
+    await ctx.send(
+        embed=embed,
+        file=file
+    )
+
+# =========================================================
+# GLOBAL BOT RANKINGS
+# =========================================================
+
+@bot.command()
+async def arank(ctx):
+
+    cursor.execute("""
+    SELECT *
+    FROM alliance_entries
+    """)
+
+    rows = cursor.fetchall()
+
+    if not rows:
+
+        return await ctx.send(
+            "No alliance data"
+        )
+
+    rankings = []
+
+    processed = set()
+
+    for row in rows:
+
+        code = row["alliance_code"]
+
+        if code in processed:
+            continue
+
+        processed.add(code)
+
+        entries = get_entries(code)
+
+        latest = entries[-1]
+
+        growth = calculate_growth(
+            entries
+        )
+
+        score = calculate_bot_score(
+            latest,
+            growth
+        )
+
+        cursor.execute("""
+        SELECT alliance_name
+        FROM alliances
+        WHERE alliance_code = ?
+        """, (code,))
+
+        name = cursor.fetchone()
+
+        rankings.append({
+
+            "name": name["alliance_name"],
+            "score": score,
+            "growth": growth
+        })
+
+    rankings.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    embed = discord.Embed(
+        title="Global Alliance Rankings",
+        color=0x9333EA
+    )
+
+    text = ""
+
+    for i, item in enumerate(
+        rankings[:10],
+        start=1
+    ):
+
+        text += (
+            f"#{i} "
+            f"{item['name']}\n"
+            f"Growth : "
+            f"{item['growth']:+.2f}%\n\n"
+        )
+
+    embed.description = text
+
+    await ctx.send(embed=embed)
+
+# =========================================================
+# ALLIANCE COMPARE
+# =========================================================
+
+@bot.command()
+async def acompare(
+    ctx,
+    code1,
+    code2
+):
+
+    a1 = get_alliance(
+        code1.upper()
+    )
+
+    a2 = get_alliance(
+        code2.upper()
+    )
+
+    if not a1 or not a2:
+
+        return await ctx.send(
+            "Alliance not found"
+        )
+
+    e1 = get_entries(
+        code1.upper()
+    )
+
+    e2 = get_entries(
+        code2.upper()
+    )
+
+    l1 = e1[-1]
+    l2 = e2[-1]
+
+    g1 = calculate_growth(e1)
+    g2 = calculate_growth(e2)
+
+    embed = discord.Embed(
+        title="Alliance Comparison",
+        color=0x9333EA
+    )
+
+    embed.add_field(
+        name=a1["alliance_name"],
+        value=(
+
+            f"Rank : #{l1['current_rank']}\n"
+            f"Growth : {g1:+.2f}%\n"
+            f"Flights : {l1['total_flights']:,}\n"
+            f"Season Wins : {l1['season_won']}"
+        )
+    )
+
+    embed.add_field(
+        name=a2["alliance_name"],
+        value=(
+
+            f"Rank : #{l2['current_rank']}\n"
+            f"Growth : {g2:+.2f}%\n"
+            f"Flights : {l2['total_flights']:,}\n"
+            f"Season Wins : {l2['season_won']}"
+        )
+    )
+
+    await ctx.send(embed=embed)
+
+# =========================================================
+# HISTORY
+# =========================================================
+
+@bot.command()
+async def ahistory(
+    ctx,
+    code
+):
+
+    alliance = get_alliance(
+        code.upper()
+    )
+
+    if not alliance:
+
+        return await ctx.send(
+            "Alliance not found"
+        )
+
+    entries = get_entries(
+        code.upper()
+    )
+
+    embed = discord.Embed(
+        title=f"{alliance['alliance_name']} History",
+        color=0x9333EA
+    )
+
+    text = ""
+
+    for e in entries[-10:]:
+
+        text += (
+
+            f"{e['entry_date']}\n"
+
+            f"Value : "
+            f"{e['current_value']:,.2f}\n"
+
+            f"Rank : "
+            f"#{e['current_rank']}\n\n"
+        )
+
+    embed.description = text
+
+    await ctx.send(embed=embed)
+
+# =========================================================
+# DELETE ENTRY
+# =========================================================
+
+@bot.command()
+async def deleteentry(
+    ctx,
+    code,
+    entry_id: int
+):
+
+    if not is_authorized(
+        ctx.author
+    ):
+
+        return await ctx.send(
+            "Unauthorized"
+        )
+
+    cursor.execute("""
+    DELETE FROM alliance_entries
+    WHERE id = ?
+    AND alliance_code = ?
+    """, (
+        entry_id,
+        code.upper()
+    ))
+
+    conn.commit()
+
+    await ctx.send(
+        "Entry deleted"
+    )
     
 # =========================
 # KEEP ALIVE (ONLY ONCE)
