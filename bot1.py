@@ -4452,8 +4452,8 @@ async def alliance_menu(ctx):
 # SINGLE ALLIANCE DASHBOARD
 # =========================================================
 
-@bot.command()
-async def alliance(ctx, code):
+@bot.command(name="alliance_view")
+async def alliance_view(ctx, alliance_name):
 
     alliance_cursor.execute(
         """
