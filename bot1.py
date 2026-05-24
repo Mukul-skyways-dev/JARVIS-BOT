@@ -1822,17 +1822,6 @@ async def route(ctx, frm, to, *, plane_name):
             file=file
         )
 
-         
-               
-# ========================
-# IMPORTS (SAFE MERGE)
-# =========================
-import discord
-from discord.ui import View
-import matplotlib.pyplot as plt
-import numpy as np
-import io
-
 # =========================
 # COMPARE VIEW V3
 # =========================
