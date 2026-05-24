@@ -5316,7 +5316,7 @@ async def alliance(ctx, code):
 # =========================================================
 
 @bot.command()
-@commands.has_role(ALLOWED_ROLE)
+@commands.has_role(AUTHORIZED_ROLE)
 async def delete_entry(
     ctx,
     alliance_code,
@@ -6090,7 +6090,7 @@ async def alliance(
 # =========================================================
 
 @bot.command()
-@commands.has_role(ALLOWED_ROLE)
+@commands.has_role(AUTHORIZED_ROLE)
 async def delete_alliance_entry(
     ctx,
     alliance_name,
@@ -6981,7 +6981,7 @@ async def alliancehub(ctx):
     embed.set_footer(
         text=(
             "JARVIS • "
-            "Alliance Intelligence System"
+            "AERO CROWN DYNASTY OFFICIAL BOT"
         )
     )
 
@@ -7047,13 +7047,12 @@ async def latest_alliance(
     await ctx.send(
         embed=embed
     )
-
 # =========================================================
 # ALLIANCE CODE LOOKUP
 # =========================================================
 
 @bot.command()
-@commands.has_role(ALLOWED_ROLE)
+@commands.has_role(AUTHORIZED_ROLE)
 async def alliance_code(
     ctx,
     alliance_name
