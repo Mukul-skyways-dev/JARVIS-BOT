@@ -6489,11 +6489,7 @@ async def export_alliance(
             filename=f"{alliance_name}.csv"
         )
     )
-        try:
-        os.remove(temp.name)
-    except:
-        pass
-
+        
 # =========================================================
 # COMPARE VIEW
 # =========================================================
