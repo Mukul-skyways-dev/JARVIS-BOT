@@ -918,9 +918,11 @@ def airport_name(iata):
 
         iata = iata.upper()
 
-        # FROM SIDE
         cursor.execute("""
-        SELECT f_city, f_country
+        SELECT
+            f_city,
+            f_country,
+            f_name
         FROM routes
         WHERE f_iata = ?
         LIMIT 1
@@ -928,11 +930,13 @@ def airport_name(iata):
 
         row = cursor.fetchone()
 
-        # TO SIDE
         if not row:
 
             cursor.execute("""
-            SELECT t_city, t_country
+            SELECT
+                t_city,
+                t_country,
+                t_name
             FROM routes
             WHERE t_iata = ?
             LIMIT 1
@@ -944,8 +948,12 @@ def airport_name(iata):
 
             city = row[0]
             country = row[1]
+            airport = row[2]
 
-            return f"{iata} — {city}, {country}"
+            return (
+                f"{iata} • {airport}\n"
+                f"{city}, {country}"
+            )
 
     except Exception as e:
 
