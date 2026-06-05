@@ -1035,335 +1035,173 @@ def get_plane(name):
 
     return None
 
-# =========================================================
-# AIRCRAFT VISUAL SYSTEM V4
-# ULTRA REALISTIC + DYNAMIC AIRCRAFT ENGINE
-# =========================================================
+# =====================================================
+# REALISTIC AIRCRAFT ENGINE V5
+# SIDE PROFILE SYSTEM
+# =====================================================
 
-from PIL import (
-    Image,
-    ImageDraw,
-    ImageFont,
-    ImageFilter
+capacity = max(
+    int(float(plane["capacity"])),
+    100
 )
 
-import tempfile
-import math
+aircraft_range = max(
+    int(float(plane["range"])),
+    1000
+)
 
+# =====================================================
+# DYNAMIC SIZE
+# =====================================================
 
-def draw_aircraft_card(
-    plane,
-    result,
-    route,
-    frm,
-    to
-):
+body_len = min(
+    max(
+        780,
+        780 + int(capacity * 0.18)
+    ),
+    1180
+)
 
-    W = 1700
-    H = 950
+body_h = 115
 
-    img = Image.new(
-        "RGB",
-        (W, H),
-        (7, 10, 18)
-    )
+body_x = 240
+body_y = 320
 
-    draw = ImageDraw.Draw(img)
+# =====================================================
+# FUSELAGE
+# =====================================================
 
-    # =====================================================
-    # CINEMATIC BACKGROUND
-    # =====================================================
+fuselage_color = (228, 233, 242)
 
-    glow = Image.new(
-        "RGBA",
-        (W, H),
-        (0, 0, 0, 0)
-    )
+draw.rounded_rectangle(
+    (
+        body_x,
+        body_y,
+        body_x + body_len,
+        body_y + body_h
+    ),
+    radius=58,
+    fill=fuselage_color
+)
 
-    gd = ImageDraw.Draw(glow)
+# =====================================================
+# NOSE
+# =====================================================
 
-    gd.ellipse(
-        (-250, -120, 700, 700),
-        fill=(0, 170, 255, 70)
-    )
+draw.polygon(
+    [
 
-    gd.ellipse(
-        (1100, 250, 1800, 980),
-        fill=(255, 90, 170, 55)
-    )
-
-    glow = glow.filter(
-        ImageFilter.GaussianBlur(150)
-    )
-
-    img.paste(glow, (0, 0), glow)
-
-    # =====================================================
-    # MAIN GLASS PANEL
-    # =====================================================
-
-    panel = Image.new(
-        "RGBA",
-        (1550, 760),
-        (255, 255, 255, 18)
-    )
-
-    panel = panel.filter(
-        ImageFilter.GaussianBlur(3)
-    )
-
-    img.paste(panel, (75, 110), panel)
-
-    draw.rounded_rectangle(
         (
-            75,
-            110,
-            1625,
-            870
+            body_x + body_len - 10,
+            body_y + 5
         ),
-        radius=36,
-        outline=(255, 255, 255),
-        width=2
-    )
 
-    # =====================================================
-    # FONTS
-    # =====================================================
+        (
+            body_x + body_len + 150,
+            body_y + 58
+        ),
 
-    try:
-
-        title_font = ImageFont.truetype(
-            "arial.ttf",
-            44
+        (
+            body_x + body_len - 10,
+            body_y + 110
         )
 
-        text_font = ImageFont.truetype(
-            "arial.ttf",
-            28
+    ],
+    fill=fuselage_color
+)
+
+# cockpit
+draw.polygon(
+    [
+
+        (
+            body_x + body_len + 65,
+            body_y + 38
+        ),
+
+        (
+            body_x + body_len + 110,
+            body_y + 55
+        ),
+
+        (
+            body_x + body_len + 70,
+            body_y + 72
         )
 
-        small_font = ImageFont.truetype(
-            "arial.ttf",
-            22
+    ],
+    fill=(60, 180, 255)
+)
+
+# =====================================================
+# TAIL
+# =====================================================
+
+tail_x = body_x + 20
+
+draw.polygon(
+    [
+
+        (
+            tail_x + 80,
+            body_y + 10
+        ),
+
+        (
+            tail_x - 40,
+            body_y - 180
+        ),
+
+        (
+            tail_x + 150,
+            body_y + 15
         )
 
-    except:
+    ],
+    fill=(190, 200, 215)
+)
 
-        title_font = ImageFont.load_default()
-        text_font = ImageFont.load_default()
-        small_font = ImageFont.load_default()
-
-    # =====================================================
-    # HEADER
-    # =====================================================
-
-    from_name = airport_name(frm)
-    to_name = airport_name(to)
-
-    draw.text(
-        (120, 45),
-        "JARVIS • Dynamic Aviation Visual System",
-        fill=(255, 255, 255),
-        font=title_font
-    )
-
-    draw.text(
-        (120, 95),
-        f"{from_name}  →  {to_name}",
-        fill=(90, 220, 255),
-        font=text_font
-    )
-
-    # =====================================================
-    # AIRCRAFT SIZE ENGINE
-    # =====================================================
-
-    capacity = max(
-        int(float(plane["capacity"])),
-        100
-    )
-
-    aircraft_range = max(
-        int(float(plane["range"])),
-        1000
-    )
-
-    # DYNAMIC SIZE
-    body_len = min(
-        max(
-            760,
-            760 + int(capacity * 0.22)
-        ),
-        1180
-    )
-
-    body_x = 240
-    body_y = 320
-
-    body_h = 120
-
-    # =====================================================
-    # FUSELAGE
-    # =====================================================
-
-    draw.rounded_rectangle(
-        (
-            body_x,
-            body_y,
-            body_x + body_len,
-            body_y + body_h
-        ),
-        radius=60,
-        fill=(230, 236, 244)
-    )
-
-    # =====================================================
-    # NOSE
-    # =====================================================
-
-    nose = [
+# tail wing
+draw.polygon(
+    [
 
         (
-            body_x + body_len,
-            body_y + 6
-        ),
-
-        (
-            body_x + body_len + 145,
+            tail_x + 60,
             body_y + 60
         ),
 
         (
-            body_x + body_len,
-            body_y + 114
+            tail_x - 100,
+            body_y + 10
+        ),
+
+        (
+            tail_x + 130,
+            body_y + 78
         )
 
-    ]
+    ],
+    fill=(180, 195, 210)
+)
 
-    draw.polygon(
-        nose,
-        fill=(230, 236, 244)
-    )
+# =====================================================
+# MAIN WINGS
+# =====================================================
 
-    # cockpit glass
-    draw.polygon(
-        [
+wing_center_x = body_x + int(body_len * 0.48)
+wing_center_y = body_y + 58
 
-            (
-                body_x + body_len + 60,
-                body_y + 38
-            ),
+wing_span = min(
+    max(
+        240,
+        240 + int(aircraft_range / 90)
+    ),
+    360
+)
 
-            (
-                body_x + body_len + 100,
-                body_y + 52
-            ),
-
-            (
-                body_x + body_len + 65,
-                body_y + 68
-            )
-
-        ],
-        fill=(60, 170, 255)
-    )
-
-    # =====================================================
-    # TAIL SYSTEM
-    # =====================================================
-
-    tail_color = (195, 205, 220)
-
-    # vertical stabilizer
-    draw.polygon(
-        [
-
-            (
-                body_x + 40,
-                body_y + 15
-            ),
-
-            (
-                body_x - 80,
-                body_y - 150
-            ),
-
-            (
-                body_x + 110,
-                body_y + 20
-            )
-
-        ],
-        fill=tail_color
-    )
-
-    # horizontal stabilizer upper
-    draw.polygon(
-        [
-
-            (
-                body_x + 40,
-                body_y + 55
-            ),
-
-            (
-                body_x - 120,
-                body_y - 10
-            ),
-
-            (
-                body_x + 100,
-                body_y + 70
-            )
-
-        ],
-        fill=(175, 188, 205)
-    )
-
-    # horizontal stabilizer lower
-    draw.polygon(
-        [
-
-            (
-                body_x + 40,
-                body_y + 65
-            ),
-
-            (
-                body_x - 120,
-                body_y + 130
-            ),
-
-            (
-                body_x + 100,
-                body_y + 52
-            )
-
-        ],
-        fill=(175, 188, 205)
-    )
-
-    # =====================================================
-    # WINGS (FIXED BOTH SIDES)
-    # =====================================================
-
-    wing_center_x = body_x + int(body_len * 0.48)
-    wing_center_y = body_y + 60
-
-    wing_span = min(
-        max(
-            300,
-            300 + int(aircraft_range / 70)
-        ),
-        520
-    )
-
-    wing_forward = 280
-
-    wing_color = (180, 195, 215)
-
-    # upper wing
-    upper_wing = [
+# TOP WING
+draw.polygon(
+    [
 
         (
             wing_center_x,
@@ -1371,24 +1209,22 @@ def draw_aircraft_card(
         ),
 
         (
-            wing_center_x - wing_forward,
+            wing_center_x - 260,
             wing_center_y - wing_span
         ),
 
         (
-            wing_center_x + 150,
-            wing_center_y
+            wing_center_x + 80,
+            wing_center_y - 10
         )
 
-    ]
+    ],
+    fill=(195, 205, 220)
+)
 
-    draw.polygon(
-        upper_wing,
-        fill=wing_color
-    )
-
-    # lower wing
-    lower_wing = [
+# BOTTOM WING
+draw.polygon(
+    [
 
         (
             wing_center_x,
@@ -1396,306 +1232,175 @@ def draw_aircraft_card(
         ),
 
         (
-            wing_center_x - wing_forward,
+            wing_center_x - 260,
             wing_center_y + wing_span
         ),
 
         (
-            wing_center_x + 150,
-            wing_center_y
+            wing_center_x + 80,
+            wing_center_y + 10
         )
 
-    ]
+    ],
+    fill=(195, 205, 220)
+)
 
-    draw.polygon(
-        lower_wing,
-        fill=wing_color
-    )
+# =====================================================
+# ENGINES
+# =====================================================
 
-    # =====================================================
-    # ENGINES
-    # =====================================================
+engine_color = (95, 110, 130)
 
-    engine_color = (105, 118, 135)
+engine_count = 4 if capacity > 420 else 2
 
-    # dynamic engine count
-    engine_count = 4 if capacity > 450 else 2
+if engine_count == 2:
 
-    if engine_count == 2:
-
-        # upper
-        draw.ellipse(
-            (
-                wing_center_x - 90,
-                wing_center_y - 180,
-                wing_center_x - 10,
-                wing_center_y - 100
-            ),
-            fill=engine_color
-        )
-
-        # lower
-        draw.ellipse(
-            (
-                wing_center_x - 90,
-                wing_center_y + 100,
-                wing_center_x - 10,
-                wing_center_y + 180
-            ),
-            fill=engine_color
-        )
-
-    else:
-
-        # upper left
-        draw.ellipse(
-            (
-                wing_center_x - 170,
-                wing_center_y - 210,
-                wing_center_x - 95,
-                wing_center_y - 135
-            ),
-            fill=engine_color
-        )
-
-        # upper right
-        draw.ellipse(
-            (
-                wing_center_x - 20,
-                wing_center_y - 160,
-                wing_center_x + 55,
-                wing_center_y - 85
-            ),
-            fill=engine_color
-        )
-
-        # lower left
-        draw.ellipse(
-            (
-                wing_center_x - 170,
-                wing_center_y + 135,
-                wing_center_x - 95,
-                wing_center_y + 210
-            ),
-            fill=engine_color
-        )
-
-        # lower right
-        draw.ellipse(
-            (
-                wing_center_x - 20,
-                wing_center_y + 85,
-                wing_center_x + 55,
-                wing_center_y + 160
-            ),
-            fill=engine_color
-        )
-
-    # =====================================================
-    # WINDOWS
-    # =====================================================
-
-    total_windows = min(
-        max(
-            int(capacity / 10),
-            28
-        ),
-        62
-    )
-
-    spacing = int(
-        (body_len - 160) / total_windows
-    )
-
-    window_y = body_y + 28
-
-    for i in range(total_windows):
-
-        wx = body_x + 75 + (i * spacing)
-
-        draw.rounded_rectangle(
-            (
-                wx,
-                window_y,
-                wx + 14,
-                window_y + 12
-            ),
-            radius=3,
-            fill=(70, 190, 255)
-        )
-
-    # =====================================================
-    # DYNAMIC CABIN CONFIG BAR
-    # =====================================================
-
-    y_seats = max(result["y"], 0)
-    j_seats = max(result["j"], 0)
-    f_seats = max(result["f"], 0)
-
-    total = max(
-        y_seats + j_seats + f_seats,
-        1
-    )
-
-    cabin_x = body_x + 90
-    cabin_y = body_y + 72
-
-    cabin_w = body_len - 180
-    cabin_h = 24
-
-    f_w = int((f_seats / total) * cabin_w)
-    j_w = int((j_seats / total) * cabin_w)
-    y_w = cabin_w - f_w - j_w
-
-    current_x = cabin_x
-
-    # FIRST
-    if f_w > 0:
-
-        draw.rounded_rectangle(
-            (
-                current_x,
-                cabin_y,
-                current_x + f_w,
-                cabin_y + cabin_h
-            ),
-            radius=8,
-            fill=(255, 80, 140)
-        )
-
-        current_x += f_w + 3
-
-    # BUSINESS
-    if j_w > 0:
-
-        draw.rounded_rectangle(
-            (
-                current_x,
-                cabin_y,
-                current_x + j_w,
-                cabin_y + cabin_h
-            ),
-            radius=8,
-            fill=(255, 190, 40)
-        )
-
-        current_x += j_w + 3
-
-    # ECONOMY
-    if y_w > 0:
-
-        draw.rounded_rectangle(
-            (
-                current_x,
-                cabin_y,
-                current_x + y_w,
-                cabin_y + cabin_h
-            ),
-            radius=8,
-            fill=(60, 200, 255)
-        )
-
-    # =====================================================
-    # AIRCRAFT NAME
-    # =====================================================
-
-    draw.text(
+    draw.ellipse(
         (
-            body_x + 240,
-            body_y + 165
+            wing_center_x - 70,
+            wing_center_y - 120,
+            wing_center_x + 10,
+            wing_center_y - 45
         ),
-        plane["name"],
-        fill=(255, 255, 255),
-        font=text_font
+        fill=engine_color
     )
 
-    # =====================================================
-    # STATS
-    # =====================================================
-
-    sx = 120
-    sy = 640
-
-    stats = [
-
-        f"Distance        : {int(route['distance']):,} km",
-        f"Trips / Day     : {result['trips']}",
-        f"Flight Time     : {format_time(result['time'])}",
-        f"Daily Profit    : ${result['profit_day']:,}",
-        f"Fuel / Day      : ${result['fuel_day']:,}",
-        f"CO2 / Day       : ${result['co2_day']:,}",
-        f"Confidence Index: {result['ci']}%"
-
-    ]
-
-    for i, line in enumerate(stats):
-
-        draw.text(
-            (
-                sx,
-                sy + i * 38
-            ),
-            line,
-            fill=(255, 255, 255),
-            font=text_font
-        )
-
-    # =====================================================
-    # CABIN LEGEND
-    # =====================================================
-
-    lx = 1180
-    ly = 650
-
-    legend = [
-
-        ("First Class", (255, 80, 140)),
-        ("Business", (255, 190, 40)),
-        ("Economy", (60, 200, 255))
-
-    ]
-
-    for i, item in enumerate(legend):
-
-        yy = ly + i * 58
-
-        draw.rounded_rectangle(
-            (
-                lx,
-                yy,
-                lx + 38,
-                yy + 38
-            ),
-            radius=8,
-            fill=item[1]
-        )
-
-        draw.text(
-            (
-                lx + 55,
-                yy + 5
-            ),
-            item[0],
-            fill=(255, 255, 255),
-            font=small_font
-        )
-
-    # =====================================================
-    # SAVE
-    # =====================================================
-
-    temp = tempfile.NamedTemporaryFile(
-        suffix=".png",
-        delete=False
+    draw.ellipse(
+        (
+            wing_center_x - 70,
+            wing_center_y + 45,
+            wing_center_x + 10,
+            wing_center_y + 120
+        ),
+        fill=engine_color
     )
 
-    img.save(
-        temp.name,
-        quality=95
+else:
+
+    offsets = [-150, -30]
+
+    for off in offsets:
+
+        draw.ellipse(
+            (
+                wing_center_x + off,
+                wing_center_y - 150,
+                wing_center_x + off + 75,
+                wing_center_y - 80
+            ),
+            fill=engine_color
+        )
+
+        draw.ellipse(
+            (
+                wing_center_x + off,
+                wing_center_y + 80,
+                wing_center_x + off + 75,
+                wing_center_y + 150
+            ),
+            fill=engine_color
+        )
+
+# =====================================================
+# WINDOWS
+# =====================================================
+
+window_count = min(
+    max(
+        int(capacity / 11),
+        30
+    ),
+    65
+)
+
+spacing = int(
+    (body_len - 170) / window_count
+)
+
+window_y = body_y + 26
+
+for i in range(window_count):
+
+    wx = body_x + 80 + (i * spacing)
+
+    draw.rounded_rectangle(
+        (
+            wx,
+            window_y,
+            wx + 14,
+            window_y + 12
+        ),
+        radius=3,
+        fill=(70, 190, 255)
     )
 
-    return temp.name
+# =====================================================
+# CABIN CONFIG BAR
+# =====================================================
 
+y_seats = max(result["y"], 0)
+j_seats = max(result["j"], 0)
+f_seats = max(result["f"], 0)
+
+total = max(
+    y_seats + j_seats + f_seats,
+    1
+)
+
+cabin_x = body_x + 100
+cabin_y = body_y + 70
+
+cabin_w = body_len - 200
+cabin_h = 24
+
+f_w = int((f_seats / total) * cabin_w)
+j_w = int((j_seats / total) * cabin_w)
+y_w = cabin_w - f_w - j_w
+
+cx = cabin_x
+
+if f_w > 0:
+
+    draw.rounded_rectangle(
+        (
+            cx,
+            cabin_y,
+            cx + f_w,
+            cabin_y + cabin_h
+        ),
+        radius=8,
+        fill=(255, 80, 140)
+    )
+
+    cx += f_w + 4
+
+if j_w > 0:
+
+    draw.rounded_rectangle(
+        (
+            cx,
+            cabin_y,
+            cx + j_w,
+            cabin_y + cabin_h
+        ),
+        radius=8,
+        fill=(255, 190, 40)
+    )
+
+    cx += j_w + 4
+
+if y_w > 0:
+
+    draw.rounded_rectangle(
+        (
+            cx,
+            cabin_y,
+            cx + y_w,
+            cabin_y + cabin_h
+        ),
+        radius=8,
+        fill=(60, 200, 255)
+    )
 
 # =========================================================
 # ROUTE COMMAND
