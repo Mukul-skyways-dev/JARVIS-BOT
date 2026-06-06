@@ -1036,9 +1036,8 @@ def get_plane(name):
     return None
 
 # =========================================================
-# AIRCRAFT VISUAL SYSTEM V7 - OPTIMIZED
-# PURE FUSELAGE DESIGN • NO WINGS • NO ENGINE
-# REALISTIC AIRCRAFT SHAPE • MEMORY EFFICIENT
+# AIRCRAFT VISUAL SYSTEM V8 - COMPLETE REDESIGN
+# REALISTIC FUSELAGE • SMOOTH CURVES • PROFESSIONAL LOOK
 # =========================================================
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -1048,278 +1047,374 @@ import math
 def draw_aircraft_card(plane, result, route, frm, to):
     
     # =====================================================
-    # CANVAS (Smaller size for memory efficiency)
+    # CANVAS
     # =====================================================
-    W = 1200  # Reduced from 1600
-    H = 800   # Reduced from 900
+    W = 1400
+    H = 850
     
-    # Create image with optimized mode
-    img = Image.new("RGB", (W, H), (8, 12, 20))
+    img = Image.new("RGB", (W, H), (10, 15, 25))
     draw = ImageDraw.Draw(img)
     
     # =====================================================
-    # SIMPLIFIED BACKGROUND (Less memory)
+    # BACKGROUND - Premium Dark Theme
     # =====================================================
-    # Single glow instead of multiple
-    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    gd.ellipse((W//4, H//4, W//4*3, H//4*3), fill=(0, 100, 200, 40))
-    glow = glow.filter(ImageFilter.GaussianBlur(80))
-    img.paste(glow, (0, 0), glow)
+    # Gradient background effect
+    for i in range(H):
+        ratio = i / H
+        color = (10 + int(5 * ratio), 15 + int(10 * ratio), 25 + int(20 * ratio))
+        draw.line([(0, i), (W, i)], fill=color, width=1)
+    
+    # Glow effects
+    glow1 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd1 = ImageDraw.Draw(glow1)
+    gd1.ellipse((100, 100, 500, 500), fill=(0, 150, 255, 40))
+    glow1 = glow1.filter(ImageFilter.GaussianBlur(100))
+    img.paste(glow1, (0, 0), glow1)
     
     # =====================================================
-    # SIMPLIFIED GLASS PANEL (Less blur = faster)
+    # GLASS CARD PANEL
     # =====================================================
-    panel = Image.new("RGBA", (W-100, H-100), (255, 255, 255, 15))
-    panel = panel.filter(ImageFilter.GaussianBlur(1))
+    panel = Image.new("RGBA", (W - 100, H - 100), (30, 35, 50, 180))
+    panel = panel.filter(ImageFilter.GaussianBlur(2))
     img.paste(panel, (50, 50), panel)
-    draw.rounded_rectangle((50, 50, W-50, H-50), radius=30, outline=(255, 255, 255, 100), width=2)
+    draw.rounded_rectangle((50, 50, W - 50, H - 50), radius=25, outline=(100, 150, 255, 150), width=2)
     
     # =====================================================
-    # FONTS (Try to load, fallback to default)
+    # FONTS
     # =====================================================
     try:
-        title_font = ImageFont.truetype("arial.ttf", 32)
-        text_font = ImageFont.truetype("arial.ttf", 24)
+        title_font = ImageFont.truetype("arial.ttf", 36)
+        header_font = ImageFont.truetype("arial.ttf", 28)
+        text_font = ImageFont.truetype("arial.ttf", 22)
         small_font = ImageFont.truetype("arial.ttf", 18)
     except:
         title_font = ImageFont.load_default()
+        header_font = ImageFont.load_default()
         text_font = ImageFont.load_default()
         small_font = ImageFont.load_default()
     
     # =====================================================
-    # HEADER
+    # HEADER SECTION
     # =====================================================
-    from_airport = airport_name(frm)  # Assuming this function exists
+    from_airport = airport_name(frm)
     to_airport = airport_name(to)
     
-    draw.text((80, 40), "JARVIS • AVIATION VISUAL SYSTEM", fill=(255, 255, 255), font=title_font)
-    draw.text((80, 85), from_airport, fill=(80, 210, 255), font=text_font)
-    draw.text((80, 120), "▼", fill=(255, 255, 255), font=text_font)
-    draw.text((80, 150), to_airport, fill=(80, 210, 255), font=text_font)
+    draw.text((80, 70), "JARVIS AVIATION VISUAL SYSTEM", fill=(150, 200, 255), font=title_font)
+    draw.line((80, 115, 500, 115), fill=(150, 200, 255, 100), width=1)
+    
+    # Route display
+    draw.text((80, 140), from_airport, fill=(100, 180, 255), font=header_font)
+    draw.text((80, 180), "▼", fill=(255, 255, 255), font=text_font)
+    draw.text((80, 215), to_airport, fill=(100, 180, 255), font=header_font)
     
     # =====================================================
-    # REALISTIC FUSELAGE SIZE (Dynamic based on capacity)
+    # AIRCRAFT FUSELAGE - COMPLETELY REDESIGNED
     # =====================================================
     capacity = max(int(float(plane["capacity"])), 100)
-    aircraft_range = max(int(float(plane["range"])), 1000)
     
-    # Realistic proportions (longer and sleeker)
-    body_len = min(max(500, 500 + int(capacity * 0.15)), 800)
-    body_h = min(max(70, 70 + int(capacity * 0.008)), 110)
+    # Smooth proportional sizing
+    fuselage_length = min(max(550, 550 + int(capacity * 0.12)), 780)
+    fuselage_height = min(max(75, 75 + int(capacity * 0.006)), 105)
     
-    # Position (centered in the middle-right)
-    body_x = 300
-    body_y = 280
+    # Position (centered beautifully)
+    fuselage_x = 250
+    fuselage_y = 310
     
     # =====================================================
-    # DROP SHADOW (Optimized)
+    # DROP SHADOW
     # =====================================================
     shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
-    sd.rounded_rectangle((body_x, body_y + 15, body_x + body_len, body_y + body_h + 15), 
-                         radius=body_h//2, fill=(0, 0, 0, 80))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(20))
+    sd.rounded_rectangle(
+        (fuselage_x + 10, fuselage_y + 20, fuselage_x + fuselage_length + 10, fuselage_y + fuselage_height + 20),
+        radius=fuselage_height // 2 + 5,
+        fill=(0, 0, 0, 100)
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(25))
     img.paste(shadow, (0, 0), shadow)
     
     # =====================================================
-    # MAIN FUSELAGE (Realistic aircraft shape)
+    # MAIN FUSELAGE BODY (SMOOTH CURVED)
     # =====================================================
-    # Fuselage body
-    draw.rounded_rectangle((body_x, body_y, body_x + body_len, body_y + body_h), 
-                           radius=body_h//2, fill=(230, 235, 245))
+    draw.rounded_rectangle(
+        (fuselage_x, fuselage_y, fuselage_x + fuselage_length, fuselage_y + fuselage_height),
+        radius=fuselage_height // 2,
+        fill=(220, 225, 240)
+    )
     
-    # =====================================================
-    # NOSE CONE (Pointed realistic nose)
-    # =====================================================
-    nose_x = body_x + body_len - 60
-    draw.polygon([
-        (nose_x, body_y + 8),
-        (nose_x + 100, body_y + body_h // 2),
-        (nose_x, body_y + body_h - 8)
-    ], fill=(230, 235, 245))
-    
-    # Cockpit windows (realistic)
-    draw.polygon([
-        (nose_x + 25, body_y + 18),
-        (nose_x + 70, body_y + body_h // 2 - 8),
-        (nose_x + 70, body_y + body_h // 2 + 8),
-        (nose_x + 25, body_y + body_h - 18)
-    ], fill=(80, 180, 255))
-    
-    # Cockpit reflection
-    draw.polygon([
-        (nose_x + 30, body_y + 22),
-        (nose_x + 55, body_y + body_h // 2 - 5),
-        (nose_x + 55, body_y + body_h // 2 - 2),
-        (nose_x + 30, body_y + 28)
-    ], fill=(180, 230, 255, 150))
-    
-    # =====================================================
-    # TAIL SECTION (Sleek tail cone)
-    # =====================================================
-    tail_x = body_x - 45
-    draw.polygon([
-        (tail_x + 10, body_y + 15),
-        (tail_x, body_y + body_h // 2),
-        (tail_x + 10, body_y + body_h - 15),
-        (tail_x + 50, body_y + body_h - 8),
-        (tail_x + 50, body_y + 8)
-    ], fill=(200, 210, 225))
-    
-    # =====================================================
-    # FUSELAGE HIGHLIGHT (3D effect)
-    # =====================================================
-    draw.rounded_rectangle((body_x + 40, body_y + 10, body_x + body_len - 100, body_y + 18), 
-                           radius=5, fill=(255, 255, 255, 180))
+    # Fuselage metallic highlight
+    highlight_y1 = fuselage_y + 8
+    highlight_y2 = fuselage_y + 18
+    draw.rounded_rectangle(
+        (fuselage_x + 30, highlight_y1, fuselage_x + fuselage_length - 30, highlight_y2),
+        radius=5,
+        fill=(255, 255, 255, 200)
+    )
     
     # Lower highlight
-    draw.rounded_rectangle((body_x + 40, body_y + body_h - 15, body_x + body_len - 100, body_y + body_h - 8), 
-                           radius=3, fill=(255, 255, 255, 100))
+    low_y1 = fuselage_y + fuselage_height - 18
+    low_y2 = fuselage_y + fuselage_height - 8
+    draw.rounded_rectangle(
+        (fuselage_x + 30, low_y1, fuselage_x + fuselage_length - 30, low_y2),
+        radius=5,
+        fill=(255, 255, 255, 120)
+    )
     
     # =====================================================
-    # WINDOW SYSTEM (Realistic spacing)
+    # NOSE SECTION (ELEGANT CURVE)
     # =====================================================
-    total_windows = min(max(int(capacity / 12), 20), 50)
-    spacing = int((body_len - 160) / total_windows)
-    win_y = body_y + 22
-    win_h = 16
+    nose_radius = fuselage_height // 2
+    nose_start = fuselage_x + fuselage_length - 40
     
-    for i in range(total_windows):
-        wx = body_x + 60 + (i * spacing)
+    # Nose cone
+    draw.pieslice(
+        (nose_start - 80, fuselage_y - 10, nose_start + 30, fuselage_y + fuselage_height + 10),
+        start=270, end=450,
+        fill=(210, 215, 230)
+    )
+    
+    # Nose tip (darker)
+    draw.pieslice(
+        (nose_start - 50, fuselage_y, nose_start + 20, fuselage_y + fuselage_height),
+        start=280, end=440,
+        fill=(190, 195, 210)
+    )
+    
+    # Cockpit windows (modern design)
+    cockpit_w = 50
+    cockpit_h = 28
+    cockpit_x = fuselage_x + fuselage_length - 65
+    cockpit_y = fuselage_y + (fuselage_height // 2) - 14
+    
+    draw.rounded_rectangle(
+        (cockpit_x, cockpit_y, cockpit_x + cockpit_w, cockpit_y + cockpit_h),
+        radius=10,
+        fill=(80, 150, 230)
+    )
+    
+    # Cockpit reflection
+    draw.rounded_rectangle(
+        (cockpit_x + 5, cockpit_y + 3, cockpit_x + cockpit_w - 5, cockpit_y + 12),
+        radius=3,
+        fill=(150, 200, 255, 180)
+    )
+    
+    # =====================================================
+    # TAIL SECTION (SWEPT BACK)
+    # =====================================================
+    tail_x = fuselage_x - 35
+    tail_y = fuselage_y - 15
+    
+    # Vertical stabilizer
+    draw.polygon([
+        (tail_x + 20, fuselage_y + 10),
+        (tail_x, fuselage_y + fuselage_height // 2),
+        (tail_x + 15, fuselage_y + fuselage_height // 2 + 5),
+        (tail_x + 45, fuselage_y + 15)
+    ], fill=(200, 205, 220))
+    
+    # Tail cone
+    draw.polygon([
+        (tail_x + 5, fuselage_y + fuselage_height // 2 - 5),
+        (tail_x - 15, fuselage_y + fuselage_height // 2),
+        (tail_x + 5, fuselage_y + fuselage_height // 2 + 5)
+    ], fill=(180, 185, 200))
+    
+    # =====================================================
+    # PASSENGER WINDOWS (PERFECT SPACING)
+    # =====================================================
+    window_count = min(max(int(capacity / 10), 18), 42)
+    window_spacing = (fuselage_length - 180) // window_count
+    window_y = fuselage_y + 22
+    window_h = 16
+    
+    for i in range(window_count):
+        window_x = fuselage_x + 70 + (i * window_spacing)
         
         # Window frame
-        draw.rounded_rectangle((wx, win_y, wx + 12, win_y + win_h), radius=3, fill=(60, 65, 75))
-        # Window glass
-        draw.rounded_rectangle((wx + 2, win_y + 2, wx + 10, win_y + win_h - 2), radius=2, fill=(100, 180, 255))
+        draw.rounded_rectangle(
+            (window_x, window_y, window_x + 14, window_y + window_h),
+            radius=4,
+            fill=(50, 55, 65)
+        )
         
-        # Passenger window reflection (every few windows)
-        if i % 3 == 0:
-            draw.rectangle((wx + 3, win_y + 3, wx + 9, win_y + 8), fill=(180, 220, 255, 120))
+        # Window glass
+        draw.rounded_rectangle(
+            (window_x + 2, window_y + 2, window_x + 12, window_y + window_h - 2),
+            radius=3,
+            fill=(70, 150, 220)
+        )
+        
+        # Window glow
+        if i % 2 == 0:
+            draw.rectangle(
+                (window_x + 3, window_y + 3, window_x + 11, window_y + 10),
+                fill=(120, 200, 255, 100)
+            )
     
     # =====================================================
-    # CABIN DOOR (Realistic)
+    # CABIN DOOR
     # =====================================================
-    door_x = body_x + body_len - 180
-    draw.rounded_rectangle((door_x, body_y + 12, door_x + 25, body_y + body_h - 12), 
-                           radius=8, fill=(180, 190, 205))
-    draw.rounded_rectangle((door_x + 3, body_y + 15, door_x + 22, body_y + body_h - 15), 
-                           radius=6, fill=(160, 170, 185))
+    door_x = fuselage_x + fuselage_length - 200
+    door_w = 30
+    door_h = fuselage_height - 20
+    
+    draw.rounded_rectangle(
+        (door_x, fuselage_y + 10, door_x + door_w, fuselage_y + door_h + 10),
+        radius=8,
+        fill=(190, 195, 210)
+    )
+    
+    # Door outline
+    draw.rounded_rectangle(
+        (door_x + 3, fuselage_y + 13, door_x + door_w - 3, fuselage_y + door_h + 7),
+        radius=6,
+        outline=(100, 105, 120),
+        width=1
+    )
     
     # Door windows
-    draw.rounded_rectangle((door_x + 5, body_y + 18, door_x + 20, body_y + 30), radius=3, fill=(80, 160, 255))
+    draw.rounded_rectangle(
+        (door_x + 5, fuselage_y + 15, door_x + 25, fuselage_y + 30),
+        radius=4,
+        fill=(70, 150, 220)
+    )
     
     # =====================================================
-    # SEAT CONFIGURATION (Dynamic - same as your code)
+    # AIRCRAFT TITLE
+    # =====================================================
+    draw.text(
+        (fuselage_x + 120, fuselage_y + fuselage_height - 35),
+        plane["name"],
+        fill=(30, 35, 45),
+        font=header_font
+    )
+    
+    # Registration
+    reg = plane.get("registration", "VT-JARVIS")
+    draw.text(
+        (tail_x + 10, fuselage_y + fuselage_height - 28),
+        reg,
+        fill=(80, 85, 100),
+        font=small_font
+    )
+    
+    # =====================================================
+    # SEAT CONFIGURATION BAR
     # =====================================================
     y_seats = max(result["y"], 0)
     j_seats = max(result["j"], 0)
     f_seats = max(result["f"], 0)
-    total = max(y_seats + j_seats + f_seats, 1)
+    total_seats = max(y_seats + j_seats + f_seats, 1)
     
-    cabin_x = body_x + 80
-    cabin_y = body_y + body_h - 45
-    cabin_w = body_len - 180
-    cabin_h = 18
+    bar_x = fuselage_x + 80
+    bar_y = fuselage_y - 35
+    bar_w = fuselage_length - 160
+    bar_h = 20
     
-    f_w = int((f_seats / total) * cabin_w)
-    j_w = int((j_seats / total) * cabin_w)
-    y_w = cabin_w - f_w - j_w
+    # Background bar
+    draw.rounded_rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), radius=8, fill=(40, 45, 60))
     
-    current_x = cabin_x
+    f_w = int((f_seats / total_seats) * bar_w)
+    j_w = int((j_seats / total_seats) * bar_w)
+    y_w = bar_w - f_w - j_w
     
-    # First Class (Premium red)
+    current_x = bar_x
+    
     if f_w > 0:
-        draw.rounded_rectangle((current_x, cabin_y, current_x + f_w, cabin_y + cabin_h), radius=6, fill=(220, 60, 120))
-        current_x += f_w + 2
-    
-    # Business (Gold)
+        draw.rounded_rectangle((current_x, bar_y, current_x + f_w, bar_y + bar_h), radius=6, fill=(220, 60, 100))
+        current_x += f_w
     if j_w > 0:
-        draw.rounded_rectangle((current_x, cabin_y, current_x + j_w, cabin_y + cabin_h), radius=6, fill=(255, 180, 40))
-        current_x += j_w + 2
-    
-    # Economy (Blue)
+        draw.rounded_rectangle((current_x, bar_y, current_x + j_w, bar_y + bar_h), radius=6, fill=(255, 180, 40))
+        current_x += j_w
     if y_w > 0:
-        draw.rounded_rectangle((current_x, cabin_y, current_x + y_w, cabin_y + cabin_h), radius=6, fill=(50, 180, 255))
+        draw.rounded_rectangle((current_x, bar_y, current_x + y_w, bar_y + bar_h), radius=6, fill=(50, 180, 255))
     
     # =====================================================
-    # AIRCRAFT NAME ON FUSELAGE
-    # =====================================================
-    # Name on the fuselage
-    name_x = body_x + 150
-    name_y = body_y + body_h - 32
-    draw.text((name_x, name_y), plane["name"], fill=(40, 45, 55), font=text_font)
-    
-    # Registration on tail
-    reg = plane.get("registration", "VT-ACD")
-    draw.text((tail_x + 10, body_y + body_h - 25), reg, fill=(80, 85, 95), font=small_font)
-    
-    # =====================================================
-    # STATS PANEL (Left side - Optimized layout)
+    # STATS PANEL (LEFT)
     # =====================================================
     sx = 80
-    sy = 500
+    sy = 460
+    
+    # Section header
+    draw.text((sx, sy), "FLIGHT DATA", fill=(150, 200, 255), font=text_font)
+    draw.line((sx, sy + 30, sx + 250, sy + 30), fill=(150, 200, 255, 80), width=1)
     
     stats = [
-        f"✈️ Distance        : {int(route['distance']):,} km",
-        f"🔄 Trips / Day     : {result['trips']}",
-        f"⏱️ Flight Time     : {format_time(result['time'])}",
-        f"💰 Daily Profit    : ${result['profit_day']:,}",
-        f"⛽ Fuel / Day      : ${result['fuel_day']:,}",
-        f"🌱 CO2 / Day       : ${result['co2_day']:,}",
-        f"📊 Confidence Index: {result['ci']}%"
+        f"✈️ Distance      : {int(route['distance']):,} km",
+        f"🔄 Trips/Day     : {result['trips']}",
+        f"⏱️ Flight Time   : {format_time(result['time'])}",
+        f"💰 Daily Profit  : ${result['profit_day']:,}",
+        f"⛽ Fuel Cost     : ${result['fuel_day']:,}",
+        f"🌱 CO2 Cost      : ${result['co2_day']:,}"
     ]
     
-    for i, line in enumerate(stats):
-        draw.text((sx, sy + i * 32), line, fill=(220, 220, 220), font=small_font)
+    for i, stat in enumerate(stats):
+        draw.text((sx + 10, sy + 45 + i * 32), stat, fill=(200, 210, 220), font=small_font)
     
     # =====================================================
-    # SEAT LEGEND (Right side)
+    # RIGHT PANEL - SEAT LEGEND & CI
     # =====================================================
-    lx = 920
-    ly = 520
+    rx = 980
+    ry = 460
+    
+    draw.text((rx, ry), "CABIN CONFIGURATION", fill=(150, 200, 255), font=text_font)
+    draw.line((rx, ry + 30, rx + 280, ry + 30), fill=(150, 200, 255, 80), width=1)
     
     legend = [
-        ("💺 First Class", (220, 60, 120)),
-        ("💼 Business", (255, 180, 40)),
-        ("🛄 Economy", (50, 180, 255))
+        ("First Class", (220, 60, 100), f"{f_seats} seats"),
+        ("Business", (255, 180, 40), f"{j_seats} seats"),
+        ("Economy", (50, 180, 255), f"{y_seats} seats")
     ]
     
-    for i, item in enumerate(legend):
-        yy = ly + i * 45
-        draw.rounded_rectangle((lx, yy, lx + 28, yy + 28), radius=6, fill=item[1])
-        draw.text((lx + 40, yy + 4), item[0], fill=(220, 220, 220), font=small_font)
+    for i, (name, color, count) in enumerate(legend):
+        yy = ry + 45 + i * 50
+        draw.rounded_rectangle((rx + 10, yy, rx + 45, yy + 30), radius=6, fill=color)
+        draw.text((rx + 60, yy + 5), name, fill=(200, 210, 220), font=small_font)
+        draw.text((rx + 60, yy + 25), count, fill=(150, 160, 170), font=small_font)
     
     # =====================================================
-    # PERFORMANCE INDICATOR
+    # CONFIDENCE INDEX METER
     # =====================================================
     ci = result['ci']
-    ci_color = (50, 200, 80) if ci > 85 else (255, 180, 40) if ci > 70 else (220, 60, 60)
+    meter_y = ry + 220
     
-    draw.rounded_rectangle((lx, ly + 150, lx + 150, ly + 180), radius=10, fill=ci_color + (30,))
-    draw.text((lx + 15, ly + 156), f"PERFORMANCE: {ci}%", fill=(255, 255, 255), font=small_font)
+    draw.text((rx, meter_y), "PERFORMANCE METER", fill=(150, 200, 255), font=text_font)
+    
+    # Meter background
+    draw.rounded_rectangle((rx + 10, meter_y + 35, rx + 280, meter_y + 55), radius=8, fill=(40, 45, 60))
+    
+    # Meter fill
+    meter_w = int(270 * (ci / 100))
+    if ci > 85:
+        meter_color = (50, 200, 80)
+    elif ci > 70:
+        meter_color = (255, 180, 40)
+    else:
+        meter_color = (220, 60, 60)
+    
+    draw.rounded_rectangle((rx + 10, meter_y + 35, rx + 10 + meter_w, meter_y + 55), radius=6, fill=meter_color)
+    
+    # CI percentage
+    draw.text((rx + 120, meter_y + 65), f"{ci}%", fill=(255, 255, 255), font=text_font)
     
     # =====================================================
     # FOOTER
     # =====================================================
-    draw.text((W//2 - 100, H - 35), "AERO CROWN DYNASTY • JARVIS SYSTEMS", fill=(100, 100, 120), font=small_font)
+    footer_y = H - 50
+    draw.text((W // 2 - 150, footer_y), "AERO CROWN DYNASTY • JARVIS INTELLIGENCE", fill=(80, 85, 110), font=small_font)
+    draw.text((W // 2 - 100, footer_y + 25), "Powered by Advanced Aviation Analytics", fill=(60, 65, 90), font=small_font)
     
     # =====================================================
-    # SAVE WITH OPTIMIZATION
+    # SAVE & RETURN
     # =====================================================
     temp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    
-    # Save with optimization flags
     img.save(temp.name, format='PNG', optimize=True, compress_level=6)
-    
-    # Clear image from memory
     img.close()
-    del img
-    del draw
     
     return temp.name
 
-# Helper function for time formatting (keep as is)
+
 def format_time(minutes):
     hours = minutes // 60
     mins = minutes % 60
@@ -1327,16 +1422,30 @@ def format_time(minutes):
         return f"{hours}h {mins}m"
     return f"{mins}m"
 
-# Airport name function (your existing function)
+
 def airport_name(code):
-    # Your airport mapping here
     airports = {
         "JFK": "New York (JFK)",
-        "LHR": "London Heathrow",
-        "DXB": "Dubai International",
-        # Add more as needed
+        "LHR": "London Heathrow (LHR)",
+        "DXB": "Dubai International (DXB)",
+        "CDG": "Paris Charles de Gaulle",
+        "FRA": "Frankfurt am Main",
+        "SIN": "Singapore Changi",
+        "HND": "Tokyo Haneda",
+        "LAX": "Los Angeles International",
+        "ORD": "Chicago O'Hare",
+        "DFW": "Dallas/Fort Worth",
+        "DEN": "Denver International",
+        "DEL": "Delhi Indira Gandhi",
+        "BOM": "Mumbai Chhatrapati Shivaji",
+        "BLR": "Bangalore Kempegowda",
+        "HYD": "Hyderabad Rajiv Gandhi"
     }
-    return airports.get(code.upper(), code)
+    return airports.get(code.upper(), code.upper())
+
+def calculate_range(capacity):
+    # Simplified range calculation
+    return int(5000 + (capacity * 5))
     
 # =========================================================
 # ROUTE COMMAND
