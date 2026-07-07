@@ -85,6 +85,33 @@ def download_db():
 # MUST run BEFORE sqlite connect
 download_db()
 
+# =========================================================
+# FUELS DATABASE DOWNLOAD
+# =========================================================
+
+FUELS_DB_URL = "https://github.com/Mukul-skyways-dev/JARVIS-BOT/releases/download/Dv1/fuels.db"
+FUELS_DB_FILE = "fuels.db"
+
+def download_fuels_db():
+    print("🔄 Checking fuels database...")
+    
+    try:
+        print("⬇ Downloading fuels database from GitHub Release...")
+        
+        response = requests.get(FUELS_DB_URL, timeout=30)
+        response.raise_for_status()
+        
+        with open(FUELS_DB_FILE, "wb") as f:
+            f.write(response.content)
+        
+        print("✅ Fuels database downloaded successfully")
+        
+    except Exception as e:
+        print("❌ Fuels DB download failed:", e)
+
+# Call this before SQLite connection
+download_fuels_db()
+
 # =========================
 # SQLITE CONNECTION
 # =========================
@@ -98,6 +125,13 @@ cursor = conn.cursor()
 conn_dyn = sqlite3.connect("new_am4.db", check_same_thread=False)
 conn_dyn.row_factory = sqlite3.Row
 cursor_dyn = conn_dyn.cursor()
+
+# =========================================================
+# DATABASE CONNECTION FOR FUELS
+# =========================================================
+fuels_db = sqlite3.connect("fuels.db", check_same_thread=False)
+fuels_db.row_factory = sqlite3.Row
+fuels_cursor = fuels_db.cursor()
 
 # =========================
 # DIFFICULTY SYSTEM
@@ -2868,7 +2902,405 @@ async def on_message(message):
         ]
         await message.channel.send(random.choice(replies))
 
-    await bot.process_commands(message)  
+    await bot.process_commands(message)
+
+# =========================================================
+# FUEL HELPER FUNCTIONS
+# =========================================================
+
+def get_am4_market_time():
+    # REAL current timestamp
+    real_ts = int(time.time())
+
+    # IST mapping ONLY for database lookup
+    ist_ts = real_ts + (5.5 * 3600)
+
+    market_slot_ts = (int(ist_ts) // 1800) * 1800
+
+    dt = datetime.datetime.fromtimestamp(
+        market_slot_ts,
+        datetime.timezone.utc
+    )
+
+    # DB slot values
+    day_num = dt.day
+    time_str = dt.strftime("%H:%M")
+
+    # RETURN REAL UTC TIMESTAMP
+    return day_num, time_str, real_ts
+    
+def analyze_market(fuel, co2):
+    f_stat = "🟢 BUY" if fuel < 900 else ("🟡 NEED" if fuel <= 1100 else "🔴 NO")
+    c_stat = "🟢 BUY" if co2 < 100 else ("🟡 URG" if co2 <= 120 else "🔴 NO")
+    return f_stat, c_stat
+
+def get_market_session(fuel_price, co2_price):
+    if fuel_price < 800 and co2_price < 90:
+        return "🚀 SUPER SALE", 0xff0000
+    elif fuel_price < 900 and co2_price < 100:
+        return "🟢 BUYING WINDOW", 0x00ff00
+    elif fuel_price < 950 and co2_price < 110:
+        return "📊 GOOD OPPORTUNITY", 0x88ff88
+    elif fuel_price <= 1100 and co2_price <= 120:
+        return "⚠️ AVERAGE MARKET", 0xffaa00
+    else:
+        return "⏸️ NEUTRAL MARKET", 0x88aaff
+
+def calculate_price_trend(price_type, day_num, time_str):
+    try:
+        h, m = map(int, time_str.split(':'))
+        current_minutes = h * 60 + m
+        trends = []
+        for i in range(1, 4):
+            prev_minutes = current_minutes - (i * 30)
+            if prev_minutes < 0:
+                prev_day = day_num - 1
+                if prev_day < 1:
+                    prev_day = 7
+                prev_minutes += 24 * 60
+            else:
+                prev_day = day_num
+            prev_h = prev_minutes // 60
+            prev_m = prev_minutes % 60
+            prev_time = f"{prev_h:02d}:{prev_m:02d}"
+            fuels_cursor.execute(f"SELECT {price_type} FROM Day{prev_day} WHERE TimeUTC = ?", (prev_time,))
+            row = fuels_cursor.fetchone()
+            if row:
+                trends.append(row[0])
+        if len(trends) >= 2:
+            if trends[0] < trends[1]:
+                return "falling"
+            elif trends[0] > trends[1]:
+                return "rising"
+        return "stable"
+    except:
+        return "stable"
+
+def get_trading_suggestion(fuel_price, co2_price, fuel_trend, co2_trend):
+    suggestions = []
+    
+    if fuel_price < 850:
+        suggestions.append("⛽ 🔥 BUY NOW - historically low")
+    elif fuel_price < 950:
+        suggestions.append("⛽ ✅ GOOD PRICE - consider buying")
+    elif fuel_price <= 1100:
+        suggestions.append("⛽ ⚠️ MODERATE - buy only if urgent")
+    else:
+        suggestions.append("⛽ ❌ TOO EXPENSIVE - avoid buying")
+    
+    if co2_price < 95:
+        suggestions.append("🌱 🔥 EXCELLENT - stock up now!")
+    elif co2_price < 110:
+        suggestions.append("🌱 ✅ DECENT PRICE - good to buy")
+    else:
+        suggestions.append("🌱 ⚠️ HIGH PRICE - wait for drop")
+    
+    if fuel_price < 900 and co2_price < 100:
+        suggestions.append("\n🎯 STRATEGY: Aggressive buying")
+    elif fuel_price > 1200 or co2_price > 130:
+        suggestions.append("\n🛡️ STRATEGY: Hold resources")
+    else:
+        suggestions.append("\n⚖️ STRATEGY: Balanced approach")
+    
+    return "\n".join(suggestions)
+
+# =========================================================
+# FUEL COMMAND
+# =========================================================
+
+@bot.command(name="fuel")
+async def fuel_check(ctx):
+    """⛽ Check current AM4 fuel and CO2 prices"""
+    day_num, time_str, unix_ts = get_am4_market_time()
+    fuels_cursor.execute(f"SELECT FuelPrice, CO2Price FROM Day{day_num} WHERE TimeUTC = ?", (time_str,))
+    row = fuels_cursor.fetchone()
+    
+    if row:
+        fuel_price = row["FuelPrice"]
+        co2_price = row["CO2Price"]
+        
+        fuel_trend = calculate_price_trend("FuelPrice", day_num, time_str)
+        co2_trend = calculate_price_trend("CO2Price", day_num, time_str)
+        session_msg, session_color = get_market_session(fuel_price, co2_price)
+        f_s, c_s = analyze_market(fuel_price, co2_price)
+        
+        embed = discord.Embed(title="⚡ AM4 FUEL Market Dashboard", description=f"### {session_msg}", color=session_color)
+        
+        # Discord native timestamp - automatic user local time!
+        utc_real = datetime.datetime.now(
+            datetime.timezone.utc
+        ).strftime("%H:%M UTC")
+        
+        embed.add_field(
+            name="🕐 Time Synchronization",
+            value=(
+                f"🌍 **UTC Time:** `{utc_real}`\n\n"
+                f"🖥️ **Your Local Time:** <t:{unix_ts}:F>"
+            ),
+            inline=False
+        )
+        
+        fuel_emoji = "📉" if fuel_trend == "falling" else "📈" if fuel_trend == "rising" else "➡️"
+        co2_emoji = "📉" if co2_trend == "falling" else "📈" if co2_trend == "rising" else "➡️"
+        
+        embed.add_field(
+            name="⛽ FUEL ANALYSIS",
+            value=f"```yaml\n💰 Price: ${fuel_price}\n{fuel_emoji} Trend: {fuel_trend.upper()}\n🎯 Status: {f_s}\n💡 Best Buy: < $900```",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🌱 CO2 ANALYSIS",
+            value=f"```yaml\n💰 Price: ${co2_price}\n{co2_emoji} Trend: {co2_trend.upper()}\n🎯 Status: {c_s}\n💡 Best Buy: < $100```",
+            inline=True
+        )
+        
+        fuel_score = max(0, 100 - ((fuel_price - 700) / 10)) if fuel_price > 700 else 100
+        co2_score = max(0, 100 - ((co2_price - 80) / 5)) if co2_price > 80 else 100
+        total_score = (fuel_score + co2_score) / 2
+        score_bar = "█" * int(total_score / 10) + "░" * (10 - int(total_score / 10))
+        
+        embed.add_field(
+            name="📊 MARKET HEALTH",
+            value=f"```yaml\n{score_bar} {total_score:.1f}%\nRating: {'EXCELLENT' if total_score > 80 else 'GOOD' if total_score > 60 else 'AVERAGE'}```",
+            inline=False
+        )
+        
+        suggestions = get_trading_suggestion(fuel_price, co2_price, fuel_trend, co2_trend)
+        embed.add_field(name="💡 SMART SUGGESTIONS", value=f"```yaml\n{suggestions}```", inline=False)
+        embed.set_footer(text="AM4 Market • Updates every 30 mins")
+        
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send("❌ No market data available for current time slot!")
+
+# =========================================================
+# PREDICT COMMAND
+# =========================================================
+
+@bot.command(name="predict")
+async def predict_market(ctx):
+    """🔮 Predict fuel and CO2 prices for next 12 hours"""
+    
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+    # IST FOR DB SLOT MATCH
+    ist_now = now_utc + datetime.timedelta(hours=5, minutes=30)
+
+    minute_slot = 30 if ist_now.minute >= 30 else 0
+
+    current_slot = ist_now.replace(
+        minute=minute_slot,
+        second=0,
+        microsecond=0
+    )
+
+    rows = []
+
+    best_fuel_price = float("inf")
+    best_fuel_slot = None
+
+    best_co2_price = float("inf")
+    best_co2_slot = None
+
+    for i in range(24):
+
+        future_slot = current_slot + datetime.timedelta(minutes=(i * 30))
+
+        target_day = future_slot.day
+        db_time = future_slot.strftime("%H:%M")
+
+        try:
+
+            fuels_cursor.execute(
+                f"SELECT FuelPrice, CO2Price FROM Day{target_day} WHERE TimeUTC = ?",
+                (db_time,)
+            )
+
+            row = fuels_cursor.fetchone()
+
+        except:
+            row = None
+
+        if row:
+
+            fuel_price = row["FuelPrice"]
+            co2_price = row["CO2Price"]
+
+            # ACTION SYSTEM
+            if fuel_price < 900 and co2_price < 100:
+                action = "🟢 BUY"
+
+            elif fuel_price <= 1100:
+                action = "🟡 WAIT"
+
+            else:
+                action = "🔴 AVOID"
+
+            # UTC TIME
+            utc_slot = future_slot - datetime.timedelta(hours=5, minutes=30)
+            # FORCE IST TZ
+            ist_timezone = datetime.timezone(
+                datetime.timedelta(hours=5, minutes=30)
+            )
+            
+            future_slot_ist = future_slot.replace(
+                tzinfo=ist_timezone
+            )
+            
+            rows.append({
+            
+                "utc": utc_slot.strftime("%H:%M"),
+            
+                "local": int(future_slot_ist.timestamp()),
+            
+                "fuel": fuel_price,
+                "co2": co2_price,
+                "action": action
+            
+            })
+
+            # BEST FUEL
+            if fuel_price < best_fuel_price:
+
+                best_fuel_price = fuel_price
+                best_fuel_slot = int(future_slot_ist.timestamp())
+            
+            if co2_price < best_co2_price:
+            
+                best_co2_price = co2_price
+                best_co2_slot = int(future_slot_ist.timestamp())
+
+    if not rows:
+        return await ctx.send("❌ No market data available!")
+
+    embeds = []
+
+    items_per_page = 8
+
+    total_pages = (
+        (len(rows) - 1) // items_per_page
+    ) + 1
+
+    utc_display = now_utc.strftime(
+        "%A, %B %d, %Y %I:%M %p UTC"
+    )
+
+    for page_start in range(0, len(rows), items_per_page):
+
+        page_rows = rows[page_start:page_start + items_per_page]
+
+        embed = discord.Embed(
+
+            title=f"🔮 Market Outlook • Page {(page_start // items_per_page) + 1}/{total_pages}",
+
+            description=(
+                f"🕐 **UTC Current:** {utc_display}\n"
+                f"📊 **12-Hour Fuel & CO2 Forecast**\n\n"
+                f"━━━━━━━━━━━━━━━━━━"
+            ),
+
+            color=0x9b59b6
+
+        )
+
+        prediction_text = ""
+
+        for r in page_rows:
+
+            prediction_text += (
+                f"⏰ <t:{r['local']}:t>\n"
+                f"⛽ Fuel: **${r['fuel']}**\n"
+                f"🌱 CO2: **${r['co2']}**\n"
+                f"{r['action']}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+            )
+
+        embed.add_field(
+
+            name="📈 Prediction Matrix",
+
+            value=prediction_text,
+
+            inline=False
+
+        )
+
+        # BEST WINDOWS ONLY FIRST PAGE
+        if page_start == 0:
+
+            best_text = (
+                f"⛽ **Best Fuel:** `${best_fuel_price}`\n"
+                f"🕒 <t:{best_fuel_slot}:F>\n\n"
+
+                f"🌱 **Best CO2:** `${best_co2_price}`\n"
+                f"🕒 <t:{best_co2_slot}:F>"
+            )
+
+            embed.add_field(
+
+                name="🎯 Best Trading Windows",
+
+                value=best_text,
+
+                inline=False
+
+            )
+
+        embed.set_footer(
+            text="🟢 Buy • 🟡 Wait • 🔴 Avoid • Updates every 30 mins"
+        )
+
+        embeds.append(embed)
+
+    # ====================================
+    # LONG LASTING VIEW
+    # ====================================
+
+    class PredictView(View):
+
+        def __init__(self, embeds):
+
+            super().__init__(timeout=43200)  # 12 HOURS
+
+            self.embeds = embeds
+            self.page = 0
+
+        async def update_message(self, interaction):
+
+            await interaction.response.edit_message(
+                embed=self.embeds[self.page],
+                view=self
+            )
+
+        @discord.ui.button(
+            label="◀ Previous",
+            style=discord.ButtonStyle.secondary
+        )
+        async def prev_btn(self, interaction, button):
+
+            if self.page > 0:
+                self.page -= 1
+
+            await self.update_message(interaction)
+
+        @discord.ui.button(
+            label="Next ▶",
+            style=discord.ButtonStyle.primary
+        )
+        async def next_btn(self, interaction, button):
+
+            if self.page < len(self.embeds) - 1:
+                self.page += 1
+
+            await self.update_message(interaction)
+
+    view = PredictView(embeds)
+
+    await ctx.send(
+        embed=embeds[0],
+        view=view
+    )
 # =========================
 # KEEP ALIVE (ONLY ONCE)
 # =========================
