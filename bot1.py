@@ -24,10 +24,23 @@ import pytz
 from export_view import ExportView
 
 # =========================
-# FLASK REMOVED (Memory Fix)
+# FLASK + PORT BINDING (Render Web Service Fix)
 # =========================
-# from flask import Flask - REMOVED
-# from threading import Thread - REMOVED
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "JARVIS Bot is Alive! 🚀"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 from datetime import datetime, timedelta
 import asyncio
@@ -35,7 +48,6 @@ import time
 from PIL import Image, ImageDraw
 import tempfile
 from contextlib import contextmanager
-import datetime
 
 # =========================
 # BOT CONFIG
@@ -528,14 +540,25 @@ with get_db() as conn:
 
 COOLDOWN = 3
 
+# =========================
+# FIX: add_usage function (TypeError fix)
+# =========================
 def add_usage(user):
     now = time.time()
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (str(user.id),))
+        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
         row = cursor.fetchone()
-        if row and now - row[0] < COOLDOWN:
-            return
+        
+        # FIX: Check and convert properly
+        if row:
+            try:
+                last_used = float(row[0])  # Convert to float
+                if now - last_used < COOLDOWN:
+                    return
+            except (ValueError, TypeError):
+                pass  # If conversion fails, proceed with update
+        
         cursor.execute("""
         INSERT INTO users (user_id, username, points, last_used)
         VALUES (?, ?, 1, ?)
@@ -687,10 +710,7 @@ def draw_aircraft_card(plane, result, route, frm, to):
     img = Image.new("RGB", (W, H), (10, 15, 25))
     draw = ImageDraw.Draw(img)
     
-    # Simple background - no gradient (memory efficient)
     draw.rectangle((0, 0, W, H), fill=(10, 15, 25))
-    
-    # Glass card panel
     draw.rounded_rectangle((50, 50, W - 50, H - 50), radius=20, outline=(100, 150, 255, 100), width=1)
     
     try:
@@ -704,7 +724,6 @@ def draw_aircraft_card(plane, result, route, frm, to):
         text_font = ImageFont.load_default()
         small_font = ImageFont.load_default()
     
-    # Header
     from_airport = airport_name(frm)
     to_airport = airport_name(to)
     draw.text((80, 70), "JARVIS AVIATION VISUAL SYSTEM", fill=(150, 200, 255), font=title_font)
@@ -712,21 +731,18 @@ def draw_aircraft_card(plane, result, route, frm, to):
     draw.text((80, 155), "▼", fill=(255, 255, 255), font=text_font)
     draw.text((80, 185), to_airport, fill=(100, 180, 255), font=header_font)
     
-    # Aircraft fuselage (simplified)
     capacity = max(int(float(plane["capacity"])), 100)
     fuselage_length = min(max(450, 450 + int(capacity * 0.1)), 650)
     fuselage_height = min(max(60, 60 + int(capacity * 0.005)), 85)
     fuselage_x = 200
     fuselage_y = 270
     
-    # Main fuselage
     draw.rounded_rectangle(
         (fuselage_x, fuselage_y, fuselage_x + fuselage_length, fuselage_y + fuselage_height),
         radius=fuselage_height // 2,
         fill=(220, 225, 240)
     )
     
-    # Cockpit windows
     cockpit_x = fuselage_x + fuselage_length - 55
     cockpit_y = fuselage_y + (fuselage_height // 2) - 12
     draw.rounded_rectangle(
@@ -735,7 +751,6 @@ def draw_aircraft_card(plane, result, route, frm, to):
         fill=(80, 150, 230)
     )
     
-    # Windows (simplified)
     window_count = min(max(int(capacity / 15), 12), 30)
     window_spacing = (fuselage_length - 160) // window_count
     for i in range(window_count):
@@ -746,7 +761,6 @@ def draw_aircraft_card(plane, result, route, frm, to):
             fill=(70, 150, 220)
         )
     
-    # Aircraft title
     draw.text(
         (fuselage_x + 100, fuselage_y + fuselage_height - 25),
         plane["name"],
@@ -754,7 +768,6 @@ def draw_aircraft_card(plane, result, route, frm, to):
         font=header_font
     )
     
-    # Seat config bar
     y_seats = max(result["y"], 0)
     j_seats = max(result["j"], 0)
     f_seats = max(result["f"], 0)
@@ -781,7 +794,6 @@ def draw_aircraft_card(plane, result, route, frm, to):
     if y_w > 0:
         draw.rounded_rectangle((current_x, bar_y, current_x + y_w, bar_y + bar_h), radius=4, fill=(50, 180, 255))
     
-    # Stats panel
     sx = 80
     sy = 400
     draw.text((sx, sy), "FLIGHT DATA", fill=(150, 200, 255), font=text_font)
@@ -796,7 +808,6 @@ def draw_aircraft_card(plane, result, route, frm, to):
     for i, stat in enumerate(stats):
         draw.text((sx + 10, sy + 30 + i * 28), stat, fill=(200, 210, 220), font=small_font)
     
-    # Right panel
     rx = 700
     ry = 400
     draw.text((rx, ry), "CABIN CONFIGURATION", fill=(150, 200, 255), font=text_font)
@@ -811,7 +822,6 @@ def draw_aircraft_card(plane, result, route, frm, to):
         draw.text((rx + 55, yy + 3), name, fill=(200, 210, 220), font=small_font)
         draw.text((rx + 55, yy + 20), count, fill=(150, 160, 170), font=small_font)
     
-    # CI Meter
     ci = result['ci']
     meter_y = ry + 170
     draw.text((rx, meter_y), "PERFORMANCE METER", fill=(150, 200, 255), font=text_font)
@@ -826,7 +836,6 @@ def draw_aircraft_card(plane, result, route, frm, to):
     draw.rounded_rectangle((rx + 10, meter_y + 30, rx + 10 + meter_w, meter_y + 48), radius=4, fill=meter_color)
     draw.text((rx + 80, meter_y + 55), f"{ci}%", fill=(255, 255, 255), font=text_font)
     
-    # Footer
     footer_y = H - 40
     draw.text((W // 2 - 120, footer_y), "AERO CROWN DYNASTY • JARVIS INTELLIGENCE", fill=(80, 85, 110), font=small_font)
     
@@ -1364,14 +1373,28 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # =========================================================
-# FUEL COMMANDS
+# FUEL COMMANDS - FIXED WITH FALLBACK
 # =========================================================
+
+# FIX: Alternative function using pytz
+def get_am4_market_time_v2():
+    real_ts = int(time.time())
+    ist_ts = real_ts + (5.5 * 3600)
+    market_slot_ts = (int(ist_ts) // 1800) * 1800
+    utc = pytz.UTC
+    dt = datetime.fromtimestamp(market_slot_ts, utc)
+    return dt.day, dt.strftime("%H:%M"), real_ts
+
+# FIX: Main function with fallback
 def get_am4_market_time():
     real_ts = int(time.time())
     ist_ts = real_ts + (5.5 * 3600)
     market_slot_ts = (int(ist_ts) // 1800) * 1800
-    dt = datetime.fromtimestamp(market_slot_ts, datetime.timezone.utc)
-    return dt.day, dt.strftime("%H:%M"), real_ts
+    try:
+        dt = datetime.fromtimestamp(market_slot_ts, datetime.timezone.utc)
+        return dt.day, dt.strftime("%H:%M"), real_ts
+    except AttributeError:
+        return get_am4_market_time_v2()
 
 def analyze_market(fuel, co2):
     f_stat = "🟢 BUY" if fuel < 900 else ("🟡 NEED" if fuel <= 1100 else "🔴 NO")
@@ -1448,7 +1471,11 @@ def get_trading_suggestion(fuel_price, co2_price, fuel_trend, co2_trend):
 
 @bot.command(name="fuel")
 async def fuel_check(ctx):
-    day_num, time_str, unix_ts = get_am4_market_time()
+    try:
+        day_num, time_str, unix_ts = get_am4_market_time()
+    except:
+        day_num, time_str, unix_ts = get_am4_market_time_v2()
+    
     with get_fuels_db() as conn:
         cursor = conn.cursor()
         cursor.execute(f"SELECT FuelPrice, CO2Price FROM Day{day_num} WHERE TimeUTC = ?", (time_str,))
@@ -1483,7 +1510,11 @@ async def fuel_check(ctx):
 
 @bot.command(name="predict")
 async def predict_market(ctx):
-    now_utc = datetime.now(datetime.timezone.utc)
+    try:
+        now_utc = datetime.now(datetime.timezone.utc)
+    except AttributeError:
+        now_utc = datetime.now(pytz.UTC)
+    
     ist_now = now_utc + timedelta(hours=5, minutes=30)
     minute_slot = 30 if ist_now.minute >= 30 else 0
     current_slot = ist_now.replace(minute=minute_slot, second=0, microsecond=0)
@@ -1567,10 +1598,11 @@ async def predict_market(ctx):
     await ctx.send(embed=embeds[0], view=view)
 
 # =========================
-# RUN BOT (NO FLASK)
+# RUN BOT WITH PORT BINDING (Render Web Service Fix)
 # =========================
 if __name__ == "__main__":
     if not TOKEN:
         print("ERROR: TOKEN environment variable missing.")
     else:
+        keep_alive()  # Flask server for port binding
         bot.run(TOKEN)
