@@ -4,15 +4,9 @@ from discord.ext import commands
 from discord.ui import Modal, TextInput, View, Button
 
 # =========================
-# MATPLOTLIB OPTIMIZE (Memory Fix)
+# MATPLOTLIB REMOVED - USING PIL ONLY (Memory Fix)
 # =========================
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-plt.rcParams['figure.dpi'] = 80
-plt.rcParams['savefig.dpi'] = 80
-plt.rcParams['figure.figsize'] = (6, 3)
-import numpy as np
+import math
 import io
 
 import sqlite3
@@ -24,7 +18,7 @@ import pytz
 from export_view import ExportView
 
 # =========================
-# FLASK - RENDER PORT BINDING (ADD THIS)
+# FLASK - RENDER PORT BINDING
 # =========================
 from flask import Flask
 from threading import Thread
@@ -48,7 +42,7 @@ def keep_alive():
 from datetime import datetime, timedelta
 import asyncio
 import time
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import tempfile
 from contextlib import contextmanager
 
@@ -113,7 +107,7 @@ def download_fuels_db():
 download_fuels_db()
 
 # =========================================================
-# DATABASE CONNECTIONS WITH CONTEXT MANAGER (Memory Fix)
+# DATABASE CONNECTIONS WITH CONTEXT MANAGER
 # =========================================================
 
 @contextmanager
@@ -547,10 +541,15 @@ def add_usage(user):
     now = time.time()
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (str(user.id),))
+        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
         row = cursor.fetchone()
-        if row and now - row[0] < COOLDOWN:
-            return
+        if row:
+            try:
+                last_used = float(row[0])
+                if now - last_used < COOLDOWN:
+                    return
+            except:
+                pass
         cursor.execute("""
         INSERT INTO users (user_id, username, points, last_used)
         VALUES (?, ?, 1, ?)
@@ -596,23 +595,39 @@ class LeaderboardView(View):
         embed.set_footer(text=f"Page {self.page + 1} • Live Tracking • AERO CROWN DYNASTY")
         return embed
 
+    # =========================
+    # GRAPH - PIL VERSION (No matplotlib)
+    # =========================
     def build_graph(self):
         top = self.data[:10]
         names = [x[0][:8] for x in top]
         values = [x[1] for x in top]
-        plt.figure(figsize=(6, 3))
-        plt.style.use("dark_background")
-        plt.gca().set_facecolor("#0b1a40")
-        plt.gcf().patch.set_facecolor("#0b1a40")
-        bars = plt.bar(names, values, color="#00e5ff")
-        for bar in bars:
-            bar.set_alpha(0.9)
-        plt.xticks(rotation=40)
-        plt.title("LIVE BOT USAGE RANKING", color="white")
+        
+        W, H = 500, 250
+        img = Image.new('RGB', (W, H), color=(11, 26, 64))
+        draw = ImageDraw.Draw(img)
+        
+        try:
+            font = ImageFont.truetype("arial.ttf", 10)
+        except:
+            font = ImageFont.load_default()
+        
+        max_val = max(values) if values else 1
+        bar_width = max(15, (W - 80) // max(1, len(names)))
+        
+        for i, (name, val) in enumerate(zip(names, values)):
+            x = 40 + i * (bar_width + 5)
+            bar_height = int((val / max_val) * 150)
+            y = H - 40 - bar_height
+            draw.rectangle((x, y, x + bar_width, H - 40), fill=(0, 229, 255))
+            draw.text((x, H - 30), name[:4], fill=(200, 200, 200), font=font)
+            draw.text((x, y - 15), str(val), fill=(150, 200, 255), font=font)
+        
+        draw.text((10, 10), "LIVE BOT USAGE RANKING", fill=(255, 255, 255), font=font)
+        
         buf = io.BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight", dpi=80)
+        img.save(buf, format='PNG', optimize=True)
         buf.seek(0)
-        plt.close()
         return buf
 
     @discord.ui.button(label="⬅ Prev", style=discord.ButtonStyle.secondary)
@@ -934,7 +949,7 @@ async def route(ctx, frm, to, *, plane_name):
     await ctx.send(embed=embed, file=file, view=ExportView(report_data))
 
 # =========================
-# COMPARE VIEW
+# COMPARE VIEW - WITH PIL GRAPHS
 # =========================
 class CompareView(View):
     def __init__(self, p1, p2, r1, r2):
@@ -966,73 +981,126 @@ class CompareView(View):
         embed.set_footer(text=f"Page 1/3 • Winner: {winner}")
         return embed
 
+    # =========================
+    # GRAPH - PIL VERSION (No matplotlib)
+    # =========================
     def make_graph(self):
         labels = ["Income", "Profit", "Fuel", "CO2", "Trips"]
-        p1_vals = [self.r1["income_day"], self.r1["profit_day"], self.r1["fuel_day"], self.r1["co2_day"], self.r1["trips"] * 100000]
-        p2_vals = [self.r2["income_day"], self.r2["profit_day"], self.r2["fuel_day"], self.r2["co2_day"], self.r2["trips"] * 100000]
+        p1_vals = [self.r1["income_day"], self.r1["profit_day"], self.r1["fuel_day"], self.r1["co2_day"], self.r1["trips"]]
+        p2_vals = [self.r2["income_day"], self.r2["profit_day"], self.r2["fuel_day"], self.r2["co2_day"], self.r2["trips"]]
+        
         max_val = max(max(p1_vals), max(p2_vals))
         if max_val == 0: max_val = 1
-        p1n = [v / max_val for v in p1_vals]
-        p2n = [v / max_val for v in p2_vals]
-        x = np.arange(len(labels))
         
-        fig, ax = plt.subplots(figsize=(8, 4))
-        fig.patch.set_facecolor("#1f1f1f")
-        ax.set_facecolor("#2b2d31")
+        W, H = 500, 300
+        img = Image.new('RGB', (W, H), color=(20, 20, 30))
+        draw = ImageDraw.Draw(img)
         
-        ax.plot(x, p1n, marker='o', linewidth=2.5, label=self.p1["name"])
-        ax.plot(x, p2n, marker='s', linewidth=2.5, linestyle='--', label=self.p2["name"])
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels)
-        ax.grid(alpha=0.18, linestyle=':')
-        ax.legend()
-        for spine in ax.spines.values():
-            spine.set_color("#555555")
-        ax.tick_params(colors="white")
+        try:
+            font = ImageFont.truetype("arial.ttf", 10)
+        except:
+            font = ImageFont.load_default()
+        
+        x_start, y_start = 60, 250
+        x_step = (W - 100) // max(1, len(labels) - 1)
+        
+        # Plane 1
+        points1 = []
+        for i, val in enumerate(p1_vals):
+            x = x_start + i * x_step
+            y = y_start - int((val / max_val) * 180)
+            points1.append((x, y))
+            draw.ellipse((x-3, y-3, x+3, y+3), fill=(0, 200, 255))
+        
+        # Plane 2
+        points2 = []
+        for i, val in enumerate(p2_vals):
+            x = x_start + i * x_step
+            y = y_start - int((val / max_val) * 180)
+            points2.append((x, y))
+            draw.ellipse((x-3, y-3, x+3, y+3), fill=(255, 200, 0))
+        
+        # Draw lines
+        if len(points1) > 1:
+            for i in range(len(points1) - 1):
+                draw.line([points1[i], points1[i+1]], fill=(0, 200, 255), width=2)
+                draw.line([points2[i], points2[i+1]], fill=(255, 200, 0), width=2)
+        
+        # Labels
+        for i, label in enumerate(labels):
+            x = x_start + i * x_step
+            draw.text((x-10, y_start + 10), label, fill=(200, 200, 200), font=font)
+        
+        # Legend
+        draw.text((10, 10), f"● {self.p1['name']}", fill=(0, 200, 255), font=font)
+        draw.text((10, 25), f"● {self.p2['name']}", fill=(255, 200, 0), font=font)
         
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', dpi=80)
+        img.save(buf, format='PNG', optimize=True)
         buf.seek(0)
-        plt.close()
         return buf
 
+    # =========================
+    # RADAR - PIL VERSION (No matplotlib)
+    # =========================
     def make_radar(self):
         labels = ["Income", "Profit", "Efficiency", "Speed", "Trips"]
-        def safe(a, b):
-            m = max(a, b)
-            return (a / m if m else 0), (b / m if m else 0)
+        p1_vals = [self.r1["income_day"], self.r1["profit_day"], (self.r1["profit_day"]/self.r1["income_day"])*100 if self.r1["income_day"] else 0, self.p1["speed"], self.r1["trips"]]
+        p2_vals = [self.r2["income_day"], self.r2["profit_day"], (self.r2["profit_day"]/self.r2["income_day"])*100 if self.r2["income_day"] else 0, self.p2["speed"], self.r2["trips"]]
         
-        i1, i2 = safe(self.r1["income_day"], self.r2["income_day"])
-        p1v, p2v = safe(self.r1["profit_day"], self.r2["profit_day"])
-        s1, s2 = safe(self.p1["speed"], self.p2["speed"])
-        t1, t2 = safe(self.r1["trips"], self.r2["trips"])
-        e1 = (i1 + p1v) / 2
-        e2 = (i2 + p2v) / 2
-        v1 = [i1, p1v, e1, s1, t1]
-        v2 = [i2, p2v, e2, s2, t2]
+        max_val = max(max(p1_vals), max(p2_vals))
+        if max_val == 0: max_val = 1
         
-        angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
-        v1 += v1[:1]
-        v2 += v2[:1]
-        angles += angles[:1]
+        W, H = 400, 350
+        img = Image.new('RGB', (W, H), color=(20, 20, 30))
+        draw = ImageDraw.Draw(img)
         
-        fig = plt.figure(figsize=(5, 5))
-        ax = plt.subplot(111, polar=True)
-        fig.patch.set_facecolor("#1f1f1f")
-        ax.set_facecolor("#2b2d31")
-        ax.plot(angles, v1, linewidth=2.5, label=self.p1["name"])
-        ax.plot(angles, v2, linewidth=2.5, linestyle='--', label=self.p2["name"])
-        ax.fill(angles, v1, alpha=0.12)
-        ax.fill(angles, v2, alpha=0.12)
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(labels, color="white")
-        ax.grid(alpha=0.2)
-        plt.legend()
+        try:
+            font = ImageFont.truetype("arial.ttf", 10)
+        except:
+            font = ImageFont.load_default()
+        
+        cx, cy = W//2, H//2
+        radius = 120
+        angles = [i * 72 for i in range(5)]
+        
+        # Draw pentagon
+        points = []
+        for angle in angles:
+            rad = math.radians(angle - 90)
+            x = cx + radius * math.cos(rad)
+            y = cy + radius * math.sin(rad)
+            points.append((x, y))
+        draw.polygon(points, outline=(100, 100, 150), width=1)
+        
+        # Draw data
+        def draw_data(vals, color):
+            pts = []
+            for i, val in enumerate(vals):
+                rad = math.radians(angles[i] - 90)
+                r = (val / max_val) * radius
+                x = cx + r * math.cos(rad)
+                y = cy + r * math.sin(rad)
+                pts.append((x, y))
+            draw.polygon(pts, outline=color, width=2)
+        
+        draw_data(p1_vals, (0, 200, 255))
+        draw_data(p2_vals, (255, 200, 0))
+        
+        # Labels
+        for i, label in enumerate(labels):
+            rad = math.radians(angles[i] - 90)
+            x = cx + (radius + 20) * math.cos(rad)
+            y = cy + (radius + 20) * math.sin(rad)
+            draw.text((x-15, y-5), label[:4], fill=(200, 200, 200), font=font)
+        
+        # Legend
+        draw.text((10, 10), f"● {self.p1['name']}", fill=(0, 200, 255), font=font)
+        draw.text((10, 25), f"● {self.p2['name']}", fill=(255, 200, 0), font=font)
         
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', dpi=80)
+        img.save(buf, format='PNG', optimize=True)
         buf.seek(0)
-        plt.close()
         return buf
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
@@ -1340,6 +1408,15 @@ async def best_long(ctx, airport, *, plane_name):
     await ctx.send(embed=embed)
 
 # =========================
+# AIRPORT COMMAND
+# =========================
+@bot.command()
+async def airport(ctx, code):
+    name = airport_name(code)
+    embed = discord.Embed(title=f"🛫 Airport", description=name, color=0x2ecc71)
+    await ctx.send(embed=embed)
+
+# =========================
 # WELCOME + CHAT
 # =========================
 @bot.event
@@ -1377,6 +1454,216 @@ async def on_message(message):
         replies = [f"{message.author.mention} I'm not fully sure, but I can try helping. Can you rephrase?", f"{message.author.mention} 🤔 I need a bit more context.", f"{message.author.mention} I don't have a direct match for that, but I'm listening."]
         await message.channel.send(random.choice(replies))
     await bot.process_commands(message)
+
+# =========================================================
+# FUEL COMMANDS
+# =========================================================
+def get_am4_market_time():
+    real_ts = int(time.time())
+    ist_ts = real_ts + (5.5 * 3600)
+    market_slot_ts = (int(ist_ts) // 1800) * 1800
+    try:
+        dt = datetime.fromtimestamp(market_slot_ts, datetime.timezone.utc)
+    except:
+        dt = datetime.fromtimestamp(market_slot_ts, pytz.UTC)
+    return dt.day, dt.strftime("%H:%M"), real_ts
+
+def analyze_market(fuel, co2):
+    f_stat = "🟢 BUY" if fuel < 900 else ("🟡 NEED" if fuel <= 1100 else "🔴 NO")
+    c_stat = "🟢 BUY" if co2 < 100 else ("🟡 URG" if co2 <= 120 else "🔴 NO")
+    return f_stat, c_stat
+
+def get_market_session(fuel_price, co2_price):
+    if fuel_price < 800 and co2_price < 90:
+        return "🚀 SUPER SALE", 0xff0000
+    elif fuel_price < 900 and co2_price < 100:
+        return "🟢 BUYING WINDOW", 0x00ff00
+    elif fuel_price < 950 and co2_price < 110:
+        return "📊 GOOD OPPORTUNITY", 0x88ff88
+    elif fuel_price <= 1100 and co2_price <= 120:
+        return "⚠️ AVERAGE MARKET", 0xffaa00
+    else:
+        return "⏸️ NEUTRAL MARKET", 0x88aaff
+
+def calculate_price_trend(price_type, day_num, time_str):
+    try:
+        h, m = map(int, time_str.split(':'))
+        current_minutes = h * 60 + m
+        trends = []
+        with get_fuels_db() as conn:
+            cursor = conn.cursor()
+            for i in range(1, 4):
+                prev_minutes = current_minutes - (i * 30)
+                if prev_minutes < 0:
+                    prev_day = day_num - 1
+                    if prev_day < 1:
+                        prev_day = 7
+                    prev_minutes += 24 * 60
+                else:
+                    prev_day = day_num
+                prev_h = prev_minutes // 60
+                prev_m = prev_minutes % 60
+                prev_time = f"{prev_h:02d}:{prev_m:02d}"
+                cursor.execute(f"SELECT {price_type} FROM Day{prev_day} WHERE TimeUTC = ?", (prev_time,))
+                row = cursor.fetchone()
+                if row:
+                    trends.append(row[0])
+        if len(trends) >= 2:
+            if trends[0] < trends[1]:
+                return "falling"
+            elif trends[0] > trends[1]:
+                return "rising"
+        return "stable"
+    except:
+        return "stable"
+
+def get_trading_suggestion(fuel_price, co2_price, fuel_trend, co2_trend):
+    suggestions = []
+    if fuel_price < 850:
+        suggestions.append("⛽ 🔥 BUY NOW - historically low")
+    elif fuel_price < 950:
+        suggestions.append("⛽ ✅ GOOD PRICE - consider buying")
+    elif fuel_price <= 1100:
+        suggestions.append("⛽ ⚠️ MODERATE - buy only if urgent")
+    else:
+        suggestions.append("⛽ ❌ TOO EXPENSIVE - avoid buying")
+    if co2_price < 95:
+        suggestions.append("🌱 🔥 EXCELLENT - stock up now!")
+    elif co2_price < 110:
+        suggestions.append("🌱 ✅ DECENT PRICE - good to buy")
+    else:
+        suggestions.append("🌱 ⚠️ HIGH PRICE - wait for drop")
+    if fuel_price < 900 and co2_price < 100:
+        suggestions.append("\n🎯 STRATEGY: Aggressive buying")
+    elif fuel_price > 1200 or co2_price > 130:
+        suggestions.append("\n🛡️ STRATEGY: Hold resources")
+    else:
+        suggestions.append("\n⚖️ STRATEGY: Balanced approach")
+    return "\n".join(suggestions)
+
+@bot.command(name="fuel")
+async def fuel_check(ctx):
+    day_num, time_str, unix_ts = get_am4_market_time()
+    with get_fuels_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT FuelPrice, CO2Price FROM Day{day_num} WHERE TimeUTC = ?", (time_str,))
+        row = cursor.fetchone()
+    
+    if row:
+        fuel_price = row["FuelPrice"]
+        co2_price = row["CO2Price"]
+        fuel_trend = calculate_price_trend("FuelPrice", day_num, time_str)
+        co2_trend = calculate_price_trend("CO2Price", day_num, time_str)
+        session_msg, session_color = get_market_session(fuel_price, co2_price)
+        f_s, c_s = analyze_market(fuel_price, co2_price)
+        
+        embed = discord.Embed(title="⚡ AM4 FUEL Market Dashboard", description=f"### {session_msg}", color=session_color)
+        utc_real = datetime.now(datetime.timezone.utc).strftime("%H:%M UTC")
+        embed.add_field(name="🕐 Time Synchronization", value=f"🌍 **UTC Time:** `{utc_real}`\n\n🖥️ **Your Local Time:** <t:{unix_ts}:F>", inline=False)
+        fuel_emoji = "📉" if fuel_trend == "falling" else "📈" if fuel_trend == "rising" else "➡️"
+        co2_emoji = "📉" if co2_trend == "falling" else "📈" if co2_trend == "rising" else "➡️"
+        embed.add_field(name="⛽ FUEL ANALYSIS", value=f"```yaml\n💰 Price: ${fuel_price}\n{fuel_emoji} Trend: {fuel_trend.upper()}\n🎯 Status: {f_s}\n💡 Best Buy: < $900```", inline=True)
+        embed.add_field(name="🌱 CO2 ANALYSIS", value=f"```yaml\n💰 Price: ${co2_price}\n{co2_emoji} Trend: {co2_trend.upper()}\n🎯 Status: {c_s}\n💡 Best Buy: < $100```", inline=True)
+        fuel_score = max(0, 100 - ((fuel_price - 700) / 10)) if fuel_price > 700 else 100
+        co2_score = max(0, 100 - ((co2_price - 80) / 5)) if co2_price > 80 else 100
+        total_score = (fuel_score + co2_score) / 2
+        score_bar = "█" * int(total_score / 10) + "░" * (10 - int(total_score / 10))
+        embed.add_field(name="📊 MARKET HEALTH", value=f"```yaml\n{score_bar} {total_score:.1f}%\nRating: {'EXCELLENT' if total_score > 80 else 'GOOD' if total_score > 60 else 'AVERAGE'}```", inline=False)
+        suggestions = get_trading_suggestion(fuel_price, co2_price, fuel_trend, co2_trend)
+        embed.add_field(name="💡 SMART SUGGESTIONS", value=f"```yaml\n{suggestions}```", inline=False)
+        embed.set_footer(text="AM4 Market • Updates every 30 mins")
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send("❌ No market data available for current time slot!")
+
+@bot.command(name="predict")
+async def predict_market(ctx):
+    try:
+        now_utc = datetime.now(datetime.timezone.utc)
+    except:
+        now_utc = datetime.now(pytz.UTC)
+    
+    ist_now = now_utc + timedelta(hours=5, minutes=30)
+    minute_slot = 30 if ist_now.minute >= 30 else 0
+    current_slot = ist_now.replace(minute=minute_slot, second=0, microsecond=0)
+    rows = []
+    best_fuel_price = float("inf")
+    best_fuel_slot = None
+    best_co2_price = float("inf")
+    best_co2_slot = None
+
+    for i in range(24):
+        future_slot = current_slot + timedelta(minutes=(i * 30))
+        target_day = future_slot.day
+        db_time = future_slot.strftime("%H:%M")
+        try:
+            with get_fuels_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"SELECT FuelPrice, CO2Price FROM Day{target_day} WHERE TimeUTC = ?", (db_time,))
+                row = cursor.fetchone()
+        except:
+            row = None
+        if row:
+            fuel_price = row["FuelPrice"]
+            co2_price = row["CO2Price"]
+            if fuel_price < 900 and co2_price < 100:
+                action = "🟢 BUY"
+            elif fuel_price <= 1100:
+                action = "🟡 WAIT"
+            else:
+                action = "🔴 AVOID"
+            utc_slot = future_slot - timedelta(hours=5, minutes=30)
+            ist_timezone = datetime.timezone(timedelta(hours=5, minutes=30))
+            future_slot_ist = future_slot.replace(tzinfo=ist_timezone)
+            rows.append({"utc": utc_slot.strftime("%H:%M"), "local": int(future_slot_ist.timestamp()), "fuel": fuel_price, "co2": co2_price, "action": action})
+            if fuel_price < best_fuel_price:
+                best_fuel_price = fuel_price
+                best_fuel_slot = int(future_slot_ist.timestamp())
+            if co2_price < best_co2_price:
+                best_co2_price = co2_price
+                best_co2_slot = int(future_slot_ist.timestamp())
+
+    if not rows:
+        return await ctx.send("❌ No market data available!")
+
+    embeds = []
+    items_per_page = 8
+    total_pages = ((len(rows) - 1) // items_per_page) + 1
+    utc_display = now_utc.strftime("%A, %B %d, %Y %I:%M %p UTC")
+
+    for page_start in range(0, len(rows), items_per_page):
+        page_rows = rows[page_start:page_start + items_per_page]
+        embed = discord.Embed(title=f"🔮 Market Outlook • Page {(page_start // items_per_page) + 1}/{total_pages}", description=f"🕐 **UTC Current:** {utc_display}\n📊 **12-Hour Fuel & CO2 Forecast**\n\n━━━━━━━━━━━━━━━━━━", color=0x9b59b6)
+        prediction_text = ""
+        for r in page_rows:
+            prediction_text += f"⏰ <t:{r['local']}:t>\n⛽ Fuel: **${r['fuel']}**\n🌱 CO2: **${r['co2']}**\n{r['action']}\n━━━━━━━━━━━━━━━━━━\n"
+        embed.add_field(name="📈 Prediction Matrix", value=prediction_text, inline=False)
+        if page_start == 0:
+            best_text = f"⛽ **Best Fuel:** `${best_fuel_price}`\n🕒 <t:{best_fuel_slot}:F>\n\n🌱 **Best CO2:** `${best_co2_price}`\n🕒 <t:{best_co2_slot}:F>"
+            embed.add_field(name="🎯 Best Trading Windows", value=best_text, inline=False)
+        embed.set_footer(text="🟢 Buy • 🟡 Wait • 🔴 Avoid • Updates every 30 mins")
+        embeds.append(embed)
+
+    class PredictView(View):
+        def __init__(self, embeds):
+            super().__init__(timeout=43200)
+            self.embeds = embeds
+            self.page = 0
+        async def update_message(self, interaction):
+            await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
+        @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.secondary)
+        async def prev_btn(self, interaction, button):
+            if self.page > 0:
+                self.page -= 1
+            await self.update_message(interaction)
+        @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+        async def next_btn(self, interaction, button):
+            if self.page < len(self.embeds) - 1:
+                self.page += 1
+            await self.update_message(interaction)
+
+    view = PredictView(embeds)
+    await ctx.send(embed=embeds[0], view=view)
 
 # =========================
 # RUN BOT (WITH PORT BINDING)
