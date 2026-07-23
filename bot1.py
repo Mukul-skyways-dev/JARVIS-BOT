@@ -24,10 +24,26 @@ import pytz
 from export_view import ExportView
 
 # =========================
-# FLASK REMOVED (Memory Fix)
+# FLASK - RENDER PORT BINDING (ADD THIS)
 # =========================
-# from flask import Flask - REMOVED
-# from threading import Thread - REMOVED
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "JARVIS Bot is Alive! ✅"
+
+def run():
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🚀 Flask server running on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+def keep_alive():
+    t = Thread(target=run, daemon=True)
+    t.start()
+    print("✅ Flask thread started")
 
 from datetime import datetime, timedelta
 import asyncio
@@ -1363,10 +1379,11 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # =========================
-# RUN BOT (NO FLASK)
+# RUN BOT (WITH PORT BINDING)
 # =========================
 if __name__ == "__main__":
     if not TOKEN:
         print("ERROR: TOKEN environment variable missing.")
     else:
-        bot.run(TOKEN)
+        keep_alive()  # Flask server start (Render port binding)
+        bot.run(TOKEN)  # Discord bot start
