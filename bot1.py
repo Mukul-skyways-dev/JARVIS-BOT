@@ -1,12 +1,20 @@
 import discord
 import random 
 from discord.ext import commands
+from discord import app_commands
 from discord.ui import Modal, TextInput, View, Button
+from typing import Literal
 
 # =========================
-# MATPLOTLIB REMOVED - USING PIL ONLY (Memory Fix)
+# MATPLOTLIB OPTIMIZE (Memory Fix)
 # =========================
-import math
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+plt.rcParams['figure.dpi'] = 80
+plt.rcParams['savefig.dpi'] = 80
+plt.rcParams['figure.figsize'] = (6, 3)
+import numpy as np
 import io
 
 import sqlite3
@@ -18,32 +26,15 @@ import pytz
 from export_view import ExportView
 
 # =========================
-# FLASK - RENDER PORT BINDING
+# FLASK REMOVED (Memory Fix)
 # =========================
-from flask import Flask
-from threading import Thread
-
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "JARVIS Bot is Alive! ✅"
-
-def run():
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Flask server running on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-def keep_alive():
-    t = Thread(target=run, daemon=True)
-    t.start()
-    print("✅ Flask thread started")
+# from flask import Flask - REMOVED
+# from threading import Thread - REMOVED
 
 from datetime import datetime, timedelta
 import asyncio
 import time
 from PIL import Image, ImageDraw, ImageFont
-import tempfile
 from contextlib import contextmanager
 
 # =========================
@@ -62,7 +53,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, max_messages=None)
 
 # =========================
 # DATABASE AUTO DOWNLOAD
@@ -75,39 +66,21 @@ def download_db():
     print("🔄 Checking database...")
     print("⬇ Downloading database from GitHub Release...")
     try:
-        response = requests.get(DB_URL, timeout=30)
-        response.raise_for_status()
-        with open(DB_FILE, "wb") as f:
-            f.write(response.content)
+        with requests.get(DB_URL, timeout=30, stream=True) as response:
+            response.raise_for_status()
+            with open(DB_FILE, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        f.write(chunk)
         print("✅ Database downloaded successfully")
     except Exception as e:
         print("❌ DB download failed:", e)
 
 download_db()
 
-# =========================================================
-# FUELS DATABASE DOWNLOAD
-# =========================================================
-
-FUELS_DB_URL = "https://github.com/Mukul-skyways-dev/JARVIS-BOT/releases/download/Dv1/fuels.db"
-FUELS_DB_FILE = "fuels.db"
-
-def download_fuels_db():
-    print("🔄 Checking fuels database...")
-    try:
-        print("⬇ Downloading fuels database from GitHub Release...")
-        response = requests.get(FUELS_DB_URL, timeout=30)
-        response.raise_for_status()
-        with open(FUELS_DB_FILE, "wb") as f:
-            f.write(response.content)
-        print("✅ Fuels database downloaded successfully")
-    except Exception as e:
-        print("❌ Fuels DB download failed:", e)
-
-download_fuels_db()
 
 # =========================================================
-# DATABASE CONNECTIONS WITH CONTEXT MANAGER
+# DATABASE CONNECTIONS WITH CONTEXT MANAGER (Memory Fix)
 # =========================================================
 
 @contextmanager
@@ -120,17 +93,25 @@ def get_db():
         conn.close()
 
 @contextmanager
-def get_fuels_db():
-    conn = sqlite3.connect(FUELS_DB_FILE, timeout=10)
+def get_dyn_db():
+    conn = sqlite3.connect("new_am4.db", timeout=10)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
     finally:
         conn.close()
 
+# =========================================================
+# STATIC DATA (aircraft + airports) — separate, stable file.
+# NOT auto-downloaded/overwritten like am4_data.db is — this one
+# is committed directly to the repo and only changes when you
+# manually re-migrate and re-upload a new version.
+# =========================================================
+STATIC_DB_FILE = "static_data.db"
+
 @contextmanager
-def get_dyn_db():
-    conn = sqlite3.connect("new_am4.db", timeout=10)
+def get_static_db():
+    conn = sqlite3.connect(STATIC_DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -291,7 +272,7 @@ SYSTEM : ONLINE
 # =========================
 # MENU COMMAND
 # =========================
-@bot.command()
+@bot.hybrid_command(description="Show the JARVIS command menu")
 async def menu(ctx):
     embed = discord.Embed(
         title="JARVIS AVIATION COMMAND",
@@ -396,32 +377,101 @@ def get_route(frm, to):
             "cargo": to_int(row[8])
         }
 
+_PLANES_CACHE = None
+
 def get_all_planes():
-    with get_db() as conn:
+    global _PLANES_CACHE
+    if _PLANES_CACHE is not None:
+        return _PLANES_CACHE
+    with get_static_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT model, variant, capacity, range, speed, fuel_efficiency, cost FROM aircraft")
+        cursor.execute("""
+            SELECT name, shortname, speed, fuel, co2, cost, capacity, range, check_cost
+            FROM aircraft
+            WHERE priority = 0
+        """)
         planes = []
         for r in cursor.fetchall():
             planes.append({
-                "name": f"{r[0]} {r[1]}",
-                "capacity": to_int(r[2]),
-                "range": to_float(r[3]),
-                "speed": to_float(r[4]),
-                "fuel": to_float(r[5]),
-                "cost": to_int(r[6])
+                "name": r[0],
+                "shortname": r[1],
+                "speed": to_float(r[2]),
+                "fuel": to_float(r[3]),
+                "co2": to_float(r[4]),
+                "cost": to_int(r[5]),
+                "capacity": to_int(r[6]),
+                "range": to_float(r[7]),
+                "check_cost": to_int(r[8])
             })
+        _PLANES_CACHE = planes
         return planes
 
 def get_plane(name):
     key = norm(name)
     for p in get_all_planes():
-        if key in norm(p["name"]):
+        if key in norm(p["name"]) or key in norm(p["shortname"]):
             return p
     return None
 
+# =========================================================
+# AUTOCOMPLETE — live suggestions for airport/aircraft params
+# =========================================================
+async def aircraft_autocomplete(interaction: discord.Interaction, current: str):
+    current_norm = norm(current) if current else ""
+    matches = []
+    for p in get_all_planes():
+        if not current_norm or current_norm in norm(p["name"]) or current_norm in norm(p["shortname"]):
+            label = f"{p['name']} ({p['shortname']})"
+            matches.append(app_commands.Choice(name=label[:100], value=p["shortname"]))
+        if len(matches) >= 25:
+            break
+    return matches
+
+async def airport_autocomplete(interaction: discord.Interaction, current: str):
+    current_norm = (current or "").strip().lower()
+    matches = []
+    try:
+        with get_static_db() as conn:
+            cursor = conn.cursor()
+            if current_norm:
+                cursor.execute("""
+                    SELECT iata, name, fullname, country FROM airports
+                    WHERE LOWER(iata) LIKE ? OR LOWER(name) LIKE ? OR LOWER(fullname) LIKE ?
+                    ORDER BY market DESC
+                    LIMIT 25
+                """, (f"%{current_norm}%", f"%{current_norm}%", f"%{current_norm}%"))
+            else:
+                cursor.execute("SELECT iata, name, fullname, country FROM airports ORDER BY market DESC LIMIT 25")
+            for row in cursor.fetchall():
+                label = f"{row['iata']} — {row['name']}, {row['country']}"
+                matches.append(app_commands.Choice(name=label[:100], value=row["iata"]))
+    except Exception as e:
+        print("airport_autocomplete error:", e)
+    return matches
+
 # =========================
-# CALC ENGINE V3
+# CALC ENGINE V4 — real formulas, verified against official reference data
 # =========================
+# Everything below was checked against a real am4help bot screenshot
+# (DEL->BOM, A380-800, both easy & realism) unless flagged otherwise.
+#
+# CONFIRMED (exact or near-exact match):
+#   - trips/day  = ceil(total_demand / capacity)
+#   - seat config = weighted capacity (Y=1, J=2, F=3 units), filled in
+#                   order F, J, Y using floor(demand_class / trips),
+#                   capped by remaining weighted capacity
+#   - ticket price = autoprice x optimal multiplier (Y x1.10, J x1.08, F x1.06)
+#   - fuel cost   = distance x aircraft fuel stat (mode-independent)
+#   - repair cost = 0.0000075 x aircraft cost (expected wear, mode-independent)
+#   - A-check realism = exactly 2x A-check easy
+#
+# APPROXIMATED (flagged — refine later with more reference samples):
+#   - CO2 cost: real formula needs actual loaded pax (a live, random,
+#     per-flight game value); we approximate load == configured seats,
+#     which holds for any route where demand keeps the flight full.
+#   - A-check absolute cost: we only have ONE confirmed reference ratio
+#     (check_cost -> per-trip amount), not the real check-interval
+#     formula, so acheck_k below is empirical, not derived.
 def calc(route, plane, user_id, mods=None):
     mode = get_user_mode(user_id)
     dist = float(route["distance"])
@@ -429,69 +479,79 @@ def calc(route, plane, user_id, mods=None):
     if mods and "speed" in mods:
         speed *= 1.1
     time = dist / speed if speed else 1
-    trips = max(1, int(24 / time))
+
     y = int(route["y"])
     j = int(route["j"])
     f = int(route["f"])
-    total = y + j + f
-    cap = int(plane["capacity"])
-    
+    cap = int(plane["capacity"])  # weighted capacity units (Y=1, J=2, F=3)
+    total_demand = y + j + f
+
+    # ---- Trips/day: ceil(demand / capacity), capped by technical max ----
+    demand_trips = max(1, -(-total_demand // cap)) if cap else 1
+    technical_max = max(1, int(24 / time)) if time else 1
+    trips = min(demand_trips, technical_max)
+
+    # ---- Best seat configuration: F -> J -> Y, weighted capacity ----
+    remaining = cap
+    f_c = min(f // trips if trips else 0, remaining // 3)
+    remaining -= f_c * 3
+    j_c = min(j // trips if trips else 0, remaining // 2)
+    remaining -= j_c * 2
+    y_c = min(y // trips if trips else 0, remaining // 1)
+
+    # ---- Ticket pricing: autoprice x optimal multiplier ----
     if mode == "easy":
-        lf = 1.0
-        y_price = (0.4 * dist) + 170
-        j_price = (0.8 * dist) + 560
-        f_price = (1.2 * dist) + 1200
-        fuel_mult = 4
-        co2_mult = 1.8
-        acheck = 20000
-        repair = 15000
+        y_auto = (0.4 * dist) + 170
+        j_auto = (0.8 * dist) + 560
+        f_auto = (1.2 * dist) + 1200
+        acheck_k = 0.004444  # empirical — see note above
         cargo_mul = 0.5
     else:
-        lf = 0.85
-        y_price = (0.3 * dist) + 150
-        j_price = (0.6 * dist) + 500
-        f_price = (0.9 * dist) + 1000
-        fuel_mult = 5.5
-        co2_mult = 2.5
-        acheck = 40000
-        repair = 25000
+        y_auto = (0.3 * dist) + 150
+        j_auto = (0.6 * dist) + 500
+        f_auto = (0.9 * dist) + 1000
+        acheck_k = 0.008889  # empirical — see note above
         cargo_mul = 0.35
-    
-    if total > 0:
-        y_ratio = y / total
-        j_ratio = j / total
-        f_ratio = f / total
-        y_c = int(cap * y_ratio * lf)
-        j_c = int(cap * j_ratio * lf)
-        used = y_c + j_c
-        f_c = max(0, cap - used)
-    else:
-        y_c = j_c = f_c = 0
-    
+
+    y_price = y_auto * 1.10
+    j_price = j_auto * 1.08
+    f_price = f_auto * 1.06
+
     income_trip = (y_c * y_price) + (j_c * j_price) + (f_c * f_price)
     cargo = float(route.get("cargo", 0))
     cargo_income = cargo * cargo_mul
     income_trip += cargo_income
-    
-    fuel = dist * float(plane["fuel"]) * fuel_mult
-    co2 = dist * co2_mult
-    if mods:
-        if "fuel" in mods:
-            fuel *= 0.9
-        if "co2" in mods:
-            co2 *= 0.9
+
+    # ---- Fuel & CO2 (mode-independent — confirmed) ----
+    fuel = dist * float(plane["fuel"])
+    if mods and "fuel" in mods:
+        fuel *= 0.9
+
+    # CO2 weight approximation: load == configured seats (see note above)
+    co2_weighted = (2 * y_c) + (3 * j_c) + (4 * f_c)
+    co2 = dist * float(plane["co2"]) * co2_weighted
+    if mods and "co2" in mods:
+        co2 *= 0.9
+
     fuel_lb = fuel * 2.2
     co2_q = co2 * 1.1
-    
+
+    # ---- Repair (confirmed) & A-check (approximated) ----
+    aircraft_cost = float(plane.get("cost", 0))
+    repair = 0.0000075 * aircraft_cost
+
+    check_cost = float(plane.get("check_cost", 0))
+    acheck = check_cost * acheck_k
+
     total_cost = fuel + co2 + acheck + repair
     profit_trip = income_trip - total_cost
     ci = int((profit_trip / income_trip) * 100) if income_trip else 0
-    
+
     income_day = income_trip * trips
     fuel_day = fuel * trips
     co2_day = co2 * trips
     profit_day = profit_trip * trips
-    
+
     return {
         "mode": mode,
         "distance": int(dist),
@@ -541,15 +601,10 @@ def add_usage(user):
     now = time.time()
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
+        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (str(user.id),))
         row = cursor.fetchone()
-        if row:
-            try:
-                last_used = float(row[0])
-                if now - last_used < COOLDOWN:
-                    return
-            except:
-                pass
+        if row and now - row[0] < COOLDOWN:
+            return
         cursor.execute("""
         INSERT INTO users (user_id, username, points, last_used)
         VALUES (?, ?, 1, ?)
@@ -595,39 +650,23 @@ class LeaderboardView(View):
         embed.set_footer(text=f"Page {self.page + 1} • Live Tracking • AERO CROWN DYNASTY")
         return embed
 
-    # =========================
-    # GRAPH - PIL VERSION (No matplotlib)
-    # =========================
     def build_graph(self):
         top = self.data[:10]
         names = [x[0][:8] for x in top]
         values = [x[1] for x in top]
-        
-        W, H = 500, 250
-        img = Image.new('RGB', (W, H), color=(11, 26, 64))
-        draw = ImageDraw.Draw(img)
-        
-        try:
-            font = ImageFont.truetype("arial.ttf", 10)
-        except:
-            font = ImageFont.load_default()
-        
-        max_val = max(values) if values else 1
-        bar_width = max(15, (W - 80) // max(1, len(names)))
-        
-        for i, (name, val) in enumerate(zip(names, values)):
-            x = 40 + i * (bar_width + 5)
-            bar_height = int((val / max_val) * 150)
-            y = H - 40 - bar_height
-            draw.rectangle((x, y, x + bar_width, H - 40), fill=(0, 229, 255))
-            draw.text((x, H - 30), name[:4], fill=(200, 200, 200), font=font)
-            draw.text((x, y - 15), str(val), fill=(150, 200, 255), font=font)
-        
-        draw.text((10, 10), "LIVE BOT USAGE RANKING", fill=(255, 255, 255), font=font)
-        
+        plt.figure(figsize=(6, 3))
+        plt.style.use("dark_background")
+        plt.gca().set_facecolor("#0b1a40")
+        plt.gcf().patch.set_facecolor("#0b1a40")
+        bars = plt.bar(names, values, color="#00e5ff")
+        for bar in bars:
+            bar.set_alpha(0.9)
+        plt.xticks(rotation=40)
+        plt.title("LIVE BOT USAGE RANKING", color="white")
         buf = io.BytesIO()
-        img.save(buf, format='PNG', optimize=True)
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=80)
         buf.seek(0)
+        plt.close()
         return buf
 
     @discord.ui.button(label="⬅ Prev", style=discord.ButtonStyle.secondary)
@@ -667,15 +706,15 @@ class LeaderboardView(View):
 async def on_command(ctx):
     add_usage(ctx.author)
 
-@bot.command()
+@bot.hybrid_command(description="Show the JARVIS usage leaderboard")
 async def leaderboard(ctx):
     view = LeaderboardView()
     if not view.data:
         return await ctx.send("❌ No usage data yet")
     await ctx.send(embed=view.build_embed(), view=view)
 
-@bot.command()
-async def difficulty(ctx, mode=None):
+@bot.hybrid_command(description="View or set your calculation difficulty (easy / realism)")
+async def difficulty(ctx, mode: Literal["easy", "realism"] = None):
     if not mode:
         current = get_user_mode(ctx.author.id)
         return await ctx.send(f"⚙ Your difficulty: **{current.upper()}**")
@@ -689,8 +728,20 @@ async def difficulty(ctx, mode=None):
 # AIRPORT HELPER
 # =========================================================
 def airport_name(iata):
+    iata = iata.upper()
     try:
-        iata = iata.upper()
+        with get_static_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, country, fullname FROM airports WHERE iata = ? LIMIT 1", (iata,))
+            row = cursor.fetchone()
+            if row:
+                city, country, full_name = row[0], row[1], row[2]
+                return f"{iata} • {full_name}\n{city}, {country}"
+    except Exception as e:
+        print("airport_name (static_data.db) error:", e)
+
+    # Fallback to the routes table if the airport isn't in static_data.db yet
+    try:
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT f_city, f_country, f_name FROM routes WHERE f_iata = ? LIMIT 1", (iata,))
@@ -699,17 +750,192 @@ def airport_name(iata):
                 cursor.execute("SELECT t_city, t_country, t_name FROM routes WHERE t_iata = ? LIMIT 1", (iata,))
                 row = cursor.fetchone()
             if row:
-                city = row[0]
-                country = row[1]
-                airport = row[2]
+                city, country, airport = row[0], row[1], row[2]
                 return f"{iata} • {airport}\n{city}, {country}"
     except Exception as e:
-        print("airport_name error:", e)
+        print("airport_name (routes fallback) error:", e)
     return iata
+
+# =========================================================
+# CITY NAME ALIASES + !airport / !aircraft LOOKUP COMMANDS
+# =========================================================
+CITY_ALIASES = {
+    "bombay": "mumbai",
+    "calcutta": "kolkata",
+    "madras": "chennai",
+    "bangalore": "bengaluru",
+    "peking": "beijing",
+    "canton": "guangzhou",
+    "saigon": "ho chi minh city",
+    "rangoon": "yangon",
+    "constantinople": "istanbul",
+    "leningrad": "saint petersburg",
+    "new amsterdam": "amsterdam",
+}
+
+def resolve_city_alias(query):
+    key = query.strip().lower()
+    return CITY_ALIASES.get(key, key)
+
+@bot.hybrid_command(description="Look up an airport by IATA/ICAO code or city name (old names work too)")
+@app_commands.describe(query="e.g. BOM, or 'bombay', or 'mumbai'")
+@app_commands.autocomplete(query=airport_autocomplete)
+async def airport(ctx, *, query: str):
+    raw = query.strip()
+    code_upper = raw.upper()
+    city_query = resolve_city_alias(raw)
+
+    with get_static_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM airports WHERE iata = ? OR icao = ? LIMIT 1", (code_upper, code_upper))
+        row = cursor.fetchone()
+        rows = [row] if row else []
+
+        if not rows:
+            cursor.execute("""
+                SELECT * FROM airports
+                WHERE LOWER(name) LIKE ? OR LOWER(fullname) LIKE ?
+                ORDER BY market DESC
+                LIMIT 5
+            """, (f"%{city_query}%", f"%{city_query}%"))
+            rows = cursor.fetchall()
+
+    if not rows:
+        return await ctx.send(f"❌ No airport found matching **{query}**")
+
+    if len(rows) > 1:
+        options = "\n".join(f"• `{r['iata']}` — {r['fullname']}, {r['name']}" for r in rows)
+        embed = discord.Embed(
+            title=f"🔎 Multiple airports match \"{query}\"",
+            description=options + "\n\nTry the exact IATA code for a direct match.",
+            color=0xffaa00
+        )
+        return await ctx.send(embed=embed)
+
+    a = rows[0]
+    embed = discord.Embed(title=f"🛫 {a['iata']} • {a['fullname']}", color=0x2ecc71)
+    embed.add_field(name="📍 Location", value=f"{a['name']}, {a['country']}", inline=True)
+    embed.add_field(name="🛬 ICAO", value=a['icao'] or "N/A", inline=True)
+    embed.add_field(name="🛤️ Runway", value=f"{a['rwy']:,} ft" if a['rwy'] else "N/A", inline=True)
+    embed.add_field(name="💰 Hub Cost", value=f"${a['hub_cost']:,}" if a['hub_cost'] else "N/A", inline=True)
+    embed.add_field(name="📊 Market Size", value=str(a['market']) if a['market'] else "N/A", inline=True)
+    embed.add_field(name="🧭 Runway Heading", value=a['rwy_codes'] or "N/A", inline=True)
+    embed.set_footer(text="JARVIS • Airport Database System")
+
+    if a['rwy'] and a['rwy_codes']:
+        img_buf = draw_runway_image(a)
+        file = discord.File(img_buf, filename="runway.png")
+        embed.set_image(url="attachment://runway.png")
+        await ctx.send(embed=embed, file=file)
+    else:
+        await ctx.send(embed=embed)
+
+@bot.hybrid_command(description="Full spec card for an aircraft")
+@app_commands.describe(name="e.g. a380, or b744")
+@app_commands.autocomplete(name=aircraft_autocomplete)
+async def aircraft(ctx, *, name: str):
+    plane = get_plane(name)
+    if not plane:
+        return await ctx.send(f"❌ No aircraft found matching **{name}**")
+
+    embed = discord.Embed(title=f"✈️ {plane['name']} ({plane['shortname']})", color=0x3498db)
+    embed.add_field(name="👥 Capacity", value=f"{plane['capacity']:,} units", inline=True)
+    embed.add_field(name="🛫 Range", value=f"{plane['range']:,.0f} km", inline=True)
+    embed.add_field(name="⚡ Speed", value=f"{plane['speed']:,.1f} km/h", inline=True)
+    embed.add_field(name="⛽ Fuel Consumption", value=f"{plane['fuel']:,.2f}", inline=True)
+    embed.add_field(name="🌱 CO2 Consumption", value=f"{plane['co2']:,.3f}", inline=True)
+    embed.add_field(name="💰 Cost", value=f"${plane['cost']:,}", inline=True)
+    embed.add_field(name="🔧 A-Check Cost (reference)", value=f"${plane['check_cost']:,}", inline=True)
+    embed.set_footer(text="JARVIS • Aircraft Database System")
+    await ctx.send(embed=embed)
 
 # =========================================================
 # AIRCRAFT VISUAL SYSTEM (Memory Optimized)
 # =========================================================
+def draw_runway_image(airport_row):
+    """Top-down runway diagram from the airport's rwy (length, ft) and
+    rwy_codes (heading pair, e.g. '06/24'). Our data model stores one
+    runway per airport row, so this draws exactly one strip — if an
+    airport genuinely has multiple physical runways, only the one on
+    record here will show."""
+    W, H = 640, 640
+    img = Image.new("RGB", (W, H), (10, 15, 25))
+    draw = ImageDraw.Draw(img)
+
+    rwy_length_ft = airport_row["rwy"] or 0
+    rwy_codes = (airport_row["rwy_codes"] or "").strip()
+    iata = airport_row["iata"]
+    city = airport_row["name"]
+    fullname = airport_row["fullname"]
+
+    try:
+        title_font = ImageFont.truetype("arial.ttf", 24)
+        label_font = ImageFont.truetype("arial.ttf", 18)
+        small_font = ImageFont.truetype("arial.ttf", 13)
+        rwy_num_font = ImageFont.truetype("arial.ttf", 30)
+    except:
+        title_font = ImageFont.load_default()
+        label_font = ImageFont.load_default()
+        small_font = ImageFont.load_default()
+        rwy_num_font = ImageFont.load_default()
+
+    draw.text((28, 22), f"{iata} • {fullname}", fill=(150, 200, 255), font=title_font)
+    draw.text((28, 54), f"{city}", fill=(150, 160, 170), font=small_font)
+
+    try:
+        end1_str, end2_str = rwy_codes.split("/")
+        heading1 = int(end1_str) * 10
+    except:
+        end1_str, end2_str = "??", "??"
+        heading1 = 0
+
+    # Draw the strip horizontally on its own transparent layer, then
+    # rotate the whole layer to the runway's real heading.
+    strip_w, strip_h = 400, 44
+    layer = Image.new("RGBA", (strip_w + 140, strip_h + 140), (0, 0, 0, 0))
+    ldraw = ImageDraw.Draw(layer)
+    lx = (layer.width - strip_w) // 2
+    ly = (layer.height - strip_h) // 2
+
+    ldraw.rectangle((lx, ly, lx + strip_w, ly + strip_h), fill=(45, 48, 55))
+    ldraw.rectangle((lx, ly, lx + strip_w, ly + 3), fill=(230, 230, 230))
+    ldraw.rectangle((lx, ly + strip_h - 3, lx + strip_w, ly + strip_h), fill=(230, 230, 230))
+
+    dash_w, gap = 16, 10
+    cx = lx
+    cy = ly + strip_h // 2 - 2
+    while cx < lx + strip_w:
+        ldraw.rectangle((cx, cy, min(cx + dash_w, lx + strip_w), cy + 4), fill=(255, 255, 255))
+        cx += dash_w + gap
+
+    for side_x in (lx + 12, lx + strip_w - 18):
+        for i in range(4):
+            by = ly + 6 + i * 9
+            ldraw.rectangle((side_x, by, side_x + 6, by + 6), fill=(255, 255, 255))
+
+    ldraw.text((lx + 14, ly + strip_h + 6), end1_str.zfill(2), fill=(255, 255, 255), font=rwy_num_font)
+    ldraw.text((lx + strip_w - 44, ly - 38), end2_str.zfill(2), fill=(255, 255, 255), font=rwy_num_font)
+
+    rotated = layer.rotate(-heading1, resample=Image.BICUBIC, expand=True)
+    paste_x = (W - rotated.width) // 2
+    paste_y = (H - rotated.height) // 2 + 30
+    img.paste(rotated, (paste_x, paste_y), rotated)
+
+    # Compass indicator (approximate — cosmetic, not survey-grade)
+    draw.line((W - 55, 60, W - 55, 32), fill=(150, 200, 255), width=2)
+    draw.polygon([(W - 61, 40), (W - 49, 40), (W - 55, 28)], fill=(150, 200, 255))
+    draw.text((W - 62, 62), "N", fill=(150, 200, 255), font=small_font)
+
+    length_m = int(rwy_length_ft * 0.3048) if rwy_length_ft else 0
+    length_text = f"Length: {rwy_length_ft:,} ft ({length_m:,} m)" if rwy_length_ft else "Length: N/A"
+    draw.text((28, H - 54), length_text, fill=(200, 210, 220), font=label_font)
+    draw.text((28, H - 28), f"Runway {end1_str}/{end2_str}", fill=(150, 160, 170), font=small_font)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    buf.seek(0)
+    return buf
+
 def draw_aircraft_card(plane, result, route, frm, to):
     W = 1200
     H = 700
@@ -860,10 +1086,11 @@ def draw_aircraft_card(plane, result, route, frm, to):
     footer_y = H - 40
     draw.text((W // 2 - 120, footer_y), "AERO CROWN DYNASTY • JARVIS INTELLIGENCE", fill=(80, 85, 110), font=small_font)
     
-    temp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    img.save(temp.name, format='PNG', optimize=True, compress_level=6)
+    temp = io.BytesIO()
+    img.save(temp, format='PNG', optimize=True, compress_level=6)
     img.close()
-    return temp.name
+    temp.seek(0)
+    return temp
 
 def format_time(minutes):
     hours = minutes // 60
@@ -875,8 +1102,42 @@ def format_time(minutes):
 # =========================================================
 # ROUTE COMMAND
 # =========================================================
-@bot.command()
-async def route(ctx, frm, to, *, plane_name):
+def get_top_alternative_routes(origin, plane, user_id, exclude_dest=None, limit=3):
+    """Top profitable routes from `origin` with `plane`, excluding the
+    current destination — used for the 'Related Routes' summary."""
+    origin = origin.upper()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes WHERE f_iata = ? LIMIT 300", (origin,))
+        routes = cursor.fetchall()
+
+    results = []
+    for r in routes:
+        try:
+            dest, dist, y, j, f = r
+            if exclude_dest and dest.upper() == exclude_dest.upper():
+                continue
+            distance = float(dist)
+            if distance > float(plane["range"]):
+                continue
+            y, j, f = int(y), int(j), int(f)
+            if y + j + f == 0:
+                continue
+            route_dict = {"distance": distance, "y": y, "j": j, "f": f, "cargo": 0}
+            result = calc(route_dict, plane, user_id)
+            if result["profit_day"] <= 0:
+                continue
+            results.append((dest, result["profit_day"]))
+        except:
+            continue
+
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results[:limit]
+
+@bot.hybrid_command(description="Full route analysis — profit, demand, seat config, pricing")
+@app_commands.describe(frm="Origin airport", to="Destination airport", plane_name="Aircraft")
+@app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete, plane_name=aircraft_autocomplete)
+async def route(ctx, frm: str, to: str, *, plane_name: str):
     route = get_route(frm, to)
     plane = get_plane(plane_name)
     if not route:
@@ -918,6 +1179,12 @@ async def route(ctx, frm, to, *, plane_name):
     embed.add_field(name="🎟 Ticket Pricing", value=f"**Y:** ${result['y_price']:,}\n**J:** ${result['j_price']:,}\n**F:** ${result['f_price']:,}", inline=True)
     embed.add_field(name="💰 Per Flight", value=f"**Income:** ${result['income_trip']:,}\n**Fuel:** ${result['fuel']:,}\n**CO2:** ${result['co2']:,}\n**Maint:** ${result['acheck'] + result['repair']:,}\n\n**Profit:** ${result['profit_trip']:,}\n**CI:** {result['ci']}%", inline=False)
     embed.add_field(name="📅 Per Day", value=f"**Income:** ${result['income_day']:,}\n**Fuel:** ${result['fuel_day']:,}\n**CO2:** ${result['co2_day']:,}\n**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n**Profit:** ${result['profit_day']:,}\n**Flights:** {result['trips']}", inline=False)
+
+    alternatives = get_top_alternative_routes(frm, plane, ctx.author.id, exclude_dest=to, limit=3)
+    if alternatives:
+        alt_text = "\n".join(f"• {frm.upper()} → **{d}** ({airport_city_country(d)}) — ${p:,}/day" for d, p in alternatives)
+        embed.add_field(name="🔗 Related Routes from " + frm.upper(), value=alt_text, inline=False)
+
     embed.set_footer(text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT")
     
     report_data = {
@@ -943,13 +1210,13 @@ async def route(ctx, frm, to, *, plane_name):
         "CI": f"{result['ci']}%"
     }
     
-    img_path = draw_aircraft_card(plane, result, route, frm, to)
-    file = discord.File(img_path, filename="route.png")
+    img_buf = draw_aircraft_card(plane, result, route, frm, to)
+    file = discord.File(img_buf, filename="route.png")
     embed.set_image(url="attachment://route.png")
     await ctx.send(embed=embed, file=file, view=ExportView(report_data))
 
 # =========================
-# COMPARE VIEW - WITH PIL GRAPHS
+# COMPARE VIEW
 # =========================
 class CompareView(View):
     def __init__(self, p1, p2, r1, r2):
@@ -981,126 +1248,73 @@ class CompareView(View):
         embed.set_footer(text=f"Page 1/3 • Winner: {winner}")
         return embed
 
-    # =========================
-    # GRAPH - PIL VERSION (No matplotlib)
-    # =========================
     def make_graph(self):
         labels = ["Income", "Profit", "Fuel", "CO2", "Trips"]
-        p1_vals = [self.r1["income_day"], self.r1["profit_day"], self.r1["fuel_day"], self.r1["co2_day"], self.r1["trips"]]
-        p2_vals = [self.r2["income_day"], self.r2["profit_day"], self.r2["fuel_day"], self.r2["co2_day"], self.r2["trips"]]
-        
+        p1_vals = [self.r1["income_day"], self.r1["profit_day"], self.r1["fuel_day"], self.r1["co2_day"], self.r1["trips"] * 100000]
+        p2_vals = [self.r2["income_day"], self.r2["profit_day"], self.r2["fuel_day"], self.r2["co2_day"], self.r2["trips"] * 100000]
         max_val = max(max(p1_vals), max(p2_vals))
         if max_val == 0: max_val = 1
+        p1n = [v / max_val for v in p1_vals]
+        p2n = [v / max_val for v in p2_vals]
+        x = np.arange(len(labels))
         
-        W, H = 500, 300
-        img = Image.new('RGB', (W, H), color=(20, 20, 30))
-        draw = ImageDraw.Draw(img)
+        fig, ax = plt.subplots(figsize=(8, 4))
+        fig.patch.set_facecolor("#1f1f1f")
+        ax.set_facecolor("#2b2d31")
         
-        try:
-            font = ImageFont.truetype("arial.ttf", 10)
-        except:
-            font = ImageFont.load_default()
-        
-        x_start, y_start = 60, 250
-        x_step = (W - 100) // max(1, len(labels) - 1)
-        
-        # Plane 1
-        points1 = []
-        for i, val in enumerate(p1_vals):
-            x = x_start + i * x_step
-            y = y_start - int((val / max_val) * 180)
-            points1.append((x, y))
-            draw.ellipse((x-3, y-3, x+3, y+3), fill=(0, 200, 255))
-        
-        # Plane 2
-        points2 = []
-        for i, val in enumerate(p2_vals):
-            x = x_start + i * x_step
-            y = y_start - int((val / max_val) * 180)
-            points2.append((x, y))
-            draw.ellipse((x-3, y-3, x+3, y+3), fill=(255, 200, 0))
-        
-        # Draw lines
-        if len(points1) > 1:
-            for i in range(len(points1) - 1):
-                draw.line([points1[i], points1[i+1]], fill=(0, 200, 255), width=2)
-                draw.line([points2[i], points2[i+1]], fill=(255, 200, 0), width=2)
-        
-        # Labels
-        for i, label in enumerate(labels):
-            x = x_start + i * x_step
-            draw.text((x-10, y_start + 10), label, fill=(200, 200, 200), font=font)
-        
-        # Legend
-        draw.text((10, 10), f"● {self.p1['name']}", fill=(0, 200, 255), font=font)
-        draw.text((10, 25), f"● {self.p2['name']}", fill=(255, 200, 0), font=font)
+        ax.plot(x, p1n, marker='o', linewidth=2.5, label=self.p1["name"])
+        ax.plot(x, p2n, marker='s', linewidth=2.5, linestyle='--', label=self.p2["name"])
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.grid(alpha=0.18, linestyle=':')
+        ax.legend()
+        for spine in ax.spines.values():
+            spine.set_color("#555555")
+        ax.tick_params(colors="white")
         
         buf = io.BytesIO()
-        img.save(buf, format='PNG', optimize=True)
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=80)
         buf.seek(0)
+        plt.close()
         return buf
 
-    # =========================
-    # RADAR - PIL VERSION (No matplotlib)
-    # =========================
     def make_radar(self):
         labels = ["Income", "Profit", "Efficiency", "Speed", "Trips"]
-        p1_vals = [self.r1["income_day"], self.r1["profit_day"], (self.r1["profit_day"]/self.r1["income_day"])*100 if self.r1["income_day"] else 0, self.p1["speed"], self.r1["trips"]]
-        p2_vals = [self.r2["income_day"], self.r2["profit_day"], (self.r2["profit_day"]/self.r2["income_day"])*100 if self.r2["income_day"] else 0, self.p2["speed"], self.r2["trips"]]
+        def safe(a, b):
+            m = max(a, b)
+            return (a / m if m else 0), (b / m if m else 0)
         
-        max_val = max(max(p1_vals), max(p2_vals))
-        if max_val == 0: max_val = 1
+        i1, i2 = safe(self.r1["income_day"], self.r2["income_day"])
+        p1v, p2v = safe(self.r1["profit_day"], self.r2["profit_day"])
+        s1, s2 = safe(self.p1["speed"], self.p2["speed"])
+        t1, t2 = safe(self.r1["trips"], self.r2["trips"])
+        e1 = (i1 + p1v) / 2
+        e2 = (i2 + p2v) / 2
+        v1 = [i1, p1v, e1, s1, t1]
+        v2 = [i2, p2v, e2, s2, t2]
         
-        W, H = 400, 350
-        img = Image.new('RGB', (W, H), color=(20, 20, 30))
-        draw = ImageDraw.Draw(img)
+        angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
+        v1 += v1[:1]
+        v2 += v2[:1]
+        angles += angles[:1]
         
-        try:
-            font = ImageFont.truetype("arial.ttf", 10)
-        except:
-            font = ImageFont.load_default()
-        
-        cx, cy = W//2, H//2
-        radius = 120
-        angles = [i * 72 for i in range(5)]
-        
-        # Draw pentagon
-        points = []
-        for angle in angles:
-            rad = math.radians(angle - 90)
-            x = cx + radius * math.cos(rad)
-            y = cy + radius * math.sin(rad)
-            points.append((x, y))
-        draw.polygon(points, outline=(100, 100, 150), width=1)
-        
-        # Draw data
-        def draw_data(vals, color):
-            pts = []
-            for i, val in enumerate(vals):
-                rad = math.radians(angles[i] - 90)
-                r = (val / max_val) * radius
-                x = cx + r * math.cos(rad)
-                y = cy + r * math.sin(rad)
-                pts.append((x, y))
-            draw.polygon(pts, outline=color, width=2)
-        
-        draw_data(p1_vals, (0, 200, 255))
-        draw_data(p2_vals, (255, 200, 0))
-        
-        # Labels
-        for i, label in enumerate(labels):
-            rad = math.radians(angles[i] - 90)
-            x = cx + (radius + 20) * math.cos(rad)
-            y = cy + (radius + 20) * math.sin(rad)
-            draw.text((x-15, y-5), label[:4], fill=(200, 200, 200), font=font)
-        
-        # Legend
-        draw.text((10, 10), f"● {self.p1['name']}", fill=(0, 200, 255), font=font)
-        draw.text((10, 25), f"● {self.p2['name']}", fill=(255, 200, 0), font=font)
+        fig = plt.figure(figsize=(5, 5))
+        ax = plt.subplot(111, polar=True)
+        fig.patch.set_facecolor("#1f1f1f")
+        ax.set_facecolor("#2b2d31")
+        ax.plot(angles, v1, linewidth=2.5, label=self.p1["name"])
+        ax.plot(angles, v2, linewidth=2.5, linestyle='--', label=self.p2["name"])
+        ax.fill(angles, v1, alpha=0.12)
+        ax.fill(angles, v2, alpha=0.12)
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, color="white")
+        ax.grid(alpha=0.2)
+        plt.legend()
         
         buf = io.BytesIO()
-        img.save(buf, format='PNG', optimize=True)
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=80)
         buf.seek(0)
+        plt.close()
         return buf
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
@@ -1129,8 +1343,8 @@ class CompareView(View):
             embed.set_image(url="attachment://radar.png")
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
-@bot.command()
-async def compare(ctx, *, planes_input):
+@bot.hybrid_command(description="Compare two aircraft head-to-head (e.g. 'A320 vs B737')")
+async def compare(ctx, *, planes_input: str):
     try:
         p1_name, p2_name = planes_input.lower().split(" vs ")
     except:
@@ -1164,8 +1378,10 @@ async def compare(ctx, *, planes_input):
 # =========================
 # BEST PLANE
 # =========================
-@bot.command()
-async def best(ctx, frm, to):
+@bot.hybrid_command(description="Best aircraft for a specific route")
+@app_commands.describe(frm="Origin airport", to="Destination airport")
+@app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
+async def best(ctx, frm: str, to: str):
     route = get_route(frm, to)
     if not route:
         return await ctx.send("Route not found")
@@ -1209,22 +1425,32 @@ async def best(ctx, frm, to):
 # =========================
 # BEST ROUTE COMMANDS
 # =========================
-@bot.command(name="best_r", aliases=["bestr", "top"])
-async def best_r(ctx, airport, *, plane_name):
+def airport_city_country(iata):
+    """Compact 'City, Country' form for use in lists (vs. airport_name()'s
+    multi-line form, which is meant for single-route headline display)."""
+    full = airport_name(iata)
+    if "\n" in full:
+        return full.split("\n", 1)[1]
+    return iata
+
+@bot.hybrid_command(name="best_r", aliases=["bestr", "top"], description="Top 5 most profitable routes from an airport")
+@app_commands.describe(airport="Origin airport", plane_name="Aircraft")
+@app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
+async def best_r(ctx, airport: str, *, plane_name: str):
     airport = airport.upper()
     plane = get_plane(plane_name)
     if not plane:
-        return await ctx.send("Plane not found")
+        return await ctx.send("❌ Plane not found")
     mode = get_user_mode(ctx.author.id)
-    
+
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes WHERE f_iata = ? LIMIT 300", (airport,))
         routes = cursor.fetchall()
-    
+
     if not routes:
-        return await ctx.send("No routes found")
-    
+        return await ctx.send(f"❌ No routes found from **{airport}**")
+
     results = []
     for r in routes:
         try:
@@ -1233,67 +1459,48 @@ async def best_r(ctx, airport, *, plane_name):
             if distance > float(plane["range"]):
                 continue
             y, j, f = int(y), int(j), int(f)
-            total_demand = y + j + f
-            if total_demand == 0:
+            if y + j + f == 0:
                 continue
-            cap = int(plane["capacity"])
-            
-            if mode == "easy":
-                lf = 1.0
-                y_price = (0.4 * distance) + 170
-                j_price = (0.8 * distance) + 560
-                f_price = (1.2 * distance) + 1200
-                fuel_mult = 4
-                co2_mult = 1.8
-                acheck = 20000
-                repair = 15000
-            else:
-                lf = 0.85
-                y_price = (0.3 * distance) + 150
-                j_price = (0.6 * distance) + 500
-                f_price = (0.9 * distance) + 1000
-                fuel_mult = 5.5
-                co2_mult = 2.5
-                acheck = 40000
-                repair = 25000
-            
-            y_ratio = y / total_demand
-            j_ratio = j / total_demand
-            f_ratio = f / total_demand
-            y_seats = int(cap * y_ratio * lf)
-            j_seats = int(cap * j_ratio * lf)
-            f_seats = cap - y_seats - j_seats
-            income = (y_seats * y_price) + (j_seats * j_price) + (f_seats * f_price)
-            fuel = distance * float(plane["fuel"]) * fuel_mult
-            co2 = distance * co2_mult
-            profit = income - fuel - co2 - acheck - repair
-            flight_time = distance / float(plane["speed"])
-            flights_day = max(1, int(24 / flight_time))
-            if flights_day > 18:
+
+            # Uses the same calc() engine as !route — one formula,
+            # everywhere, so this can't drift out of sync again.
+            route_dict = {"distance": distance, "y": y, "j": j, "f": f, "cargo": 0}
+            result = calc(route_dict, plane, ctx.author.id)
+            if result["profit_day"] <= 0:
                 continue
-            daily_profit = int(profit * flights_day)
-            ci = int((profit / income) * 100) if income else 0
-            results.append((dest, int(distance), daily_profit, flights_day, ci))
+
+            results.append((dest, int(distance), result["profit_day"], result["trips"], result["ci"]))
         except:
             continue
-    
+
     if not results:
-        return await ctx.send("No profitable routes found")
+        return await ctx.send(
+            f"❌ No profitable routes found from **{airport}** with **{plane['name']}** "
+            f"within its {int(plane['range']):,} km range.\n"
+            f"Try a different aircraft, or check `!difficulty` — realism has higher costs than easy."
+        )
+
     results.sort(key=lambda x: x[2], reverse=True)
     top = results[:5]
-    
+
+    origin_txt = airport_name(airport)
     text = ""
-    for i, r in enumerate(top, start=1):
-        dest, dist, profit, trips, ci = r
-        text += f"**{i}. {airport} → {dest}**\n`Profit` ${profit:,}/day\n`Trips` {trips}/day\n`CI` {ci}%\n`Range` {dist:,} km\n\n"
-    
-    embed = discord.Embed(title=f"Best Routes • {plane['name']}", description=text, color=0x2b2d31)
+    for i, res in enumerate(top, start=1):
+        dest, dist, profit, trips, ci = res
+        dest_loc = airport_city_country(dest)
+        text += f"**{i}. {airport} → {dest}** ({dest_loc})\n`Profit` ${profit:,}/day\n`Trips` {trips}/day\n`CI` {ci}%\n`Range` {dist:,} km\n\n"
+
+    embed = discord.Embed(
+        title=f"🏆 Best Routes • {plane['name']}",
+        description=f"**From:** {origin_txt}\n\n{text}",
+        color=0x2b2d31
+    )
     embed.add_field(name="Analysis", value=f"`Airport:` {airport}\n`Aircraft:` {plane['name']}\n`Mode:` {mode.upper()}", inline=False)
     embed.set_footer(text="JARVIS • Smart Route Optimization")
-    
+
     export_data = {"Airport": airport, "Aircraft": plane["name"], "Mode": mode}
-    for i, r in enumerate(top, start=1):
-        dest, dist, profit, trips, ci = r
+    for i, res in enumerate(top, start=1):
+        dest, dist, profit, trips, ci = res
         export_data[f"#{i} Route"] = f"{airport}->{dest}"
         export_data[f"#{i} Profit"] = profit
         export_data[f"#{i} Trips"] = trips
@@ -1303,118 +1510,94 @@ async def best_r(ctx, airport, *, plane_name):
     await ctx.send(embed=embed)
     await ctx.send("Download Route Report", view=export_view)
 
-@bot.command(name="best_short")
-async def best_short(ctx, airport, *, plane_name):
+async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, label, emoji, color):
+    """Shared engine for best_short / best_long — same calc() everyone else uses."""
     airport = airport.upper()
     plane = get_plane(plane_name)
     if not plane:
         await ctx.send("❌ Plane not found")
         return
-    
+
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes WHERE f_iata = ? LIMIT 300", (airport,))
         routes = cursor.fetchall()
-    
+
+    if not routes:
+        await ctx.send(f"❌ No routes found from **{airport}**")
+        return
+
     results = []
     for r in routes:
         try:
             dest, dist, y, j, f = r
             distance = to_float(dist)
-            if distance > 3000 or distance > plane["range"]:
+            if distance <= min_dist or distance > max_dist or distance > plane["range"]:
                 continue
             y, j, f = int(y), int(j), int(f)
-            total = y + j + f
-            if total == 0:
+            if y + j + f == 0:
                 continue
-            cap = plane["capacity"]
-            y_seats = int(cap * (y / total) * 0.85)
-            j_seats = int(cap * (j / total) * 0.85)
-            f_seats = cap - y_seats - j_seats
-            y_price = distance * 0.35
-            j_price = distance * 0.9
-            f_price = distance * 1.8
-            income = (y_seats*y_price)+(j_seats*j_price)+(f_seats*f_price)
-            fuel = distance * plane["fuel"] * 6.5
-            co2 = distance * 3.2
-            profit = income - fuel - co2 - 40000 - 25000
-            flights = max(1, int(24 / (distance / plane["speed"])))
-            daily_profit = int(profit * flights)
-            results.append((dest, distance, daily_profit))
+            route_dict = {"distance": distance, "y": y, "j": j, "f": f, "cargo": 0}
+            result = calc(route_dict, plane, ctx.author.id)
+            if result["profit_day"] <= 0:
+                continue
+            results.append((dest, distance, result["profit_day"], result["trips"], result["ci"]))
         except:
             continue
+
     if not results:
-        await ctx.send("❌ No short routes found")
+        await ctx.send(
+            f"❌ No profitable **{label}** routes found from **{airport}** with **{plane['name']}**.\n"
+            f"Try a different aircraft, or check `!difficulty`."
+        )
         return
+
     results.sort(key=lambda x: x[2], reverse=True)
     top = results[:5]
+
+    origin_txt = airport_name(airport)
     text = ""
-    for i, r in enumerate(top, 1):
-        text += f"**{i}. {airport} → {r[0]}**\n📏 {int(r[1]):,} km\n💰 ${r[2]:,}/day\n\n"
-    embed = discord.Embed(title=f"⚡ Best SHORT Routes ({plane['name']})", description=text, color=0x00ffcc)
+    for i, res in enumerate(top, 1):
+        dest, dist, profit, trips, ci = res
+        dest_loc = airport_city_country(dest)
+        text += f"**{i}. {airport} → {dest}** ({dest_loc})\n📏 {int(dist):,} km  •  💰 ${profit:,}/day  •  🔁 {trips}/day  •  CI {ci}%\n\n"
+
+    embed = discord.Embed(
+        title=f"{emoji} Best {label.upper()} Routes • {plane['name']}",
+        description=f"**From:** {origin_txt}\n\n{text}",
+        color=color
+    )
     embed.set_footer(text="JARVIS - AERO CROWN DYNASTY ™")
     await ctx.send(embed=embed)
 
-@bot.command(name="best_long")
-async def best_long(ctx, airport, *, plane_name):
-    airport = airport.upper()
-    plane = get_plane(plane_name)
-    if not plane:
-        await ctx.send("❌ Plane not found")
-        return
-    
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes WHERE f_iata = ? LIMIT 300", (airport,))
-        routes = cursor.fetchall()
-    
-    results = []
-    for r in routes:
+@bot.hybrid_command(name="best_short", description="Top 5 profitable short-haul routes (<=3000km) from an airport")
+@app_commands.describe(airport="Origin airport", plane_name="Aircraft")
+@app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
+async def best_short(ctx, airport: str, *, plane_name: str):
+    await _best_route_by_distance(ctx, airport, plane_name, min_dist=0, max_dist=3000, label="short", emoji="⚡", color=0x00ffcc)
+
+@bot.hybrid_command(name="best_long", description="Top 5 profitable long-haul routes (>3000km) from an airport")
+@app_commands.describe(airport="Origin airport", plane_name="Aircraft")
+@app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
+async def best_long(ctx, airport: str, *, plane_name: str):
+    await _best_route_by_distance(ctx, airport, plane_name, min_dist=3000, max_dist=float("inf"), label="long", emoji="🌍", color=0xff9900)
+
+# =========================
+# ON READY — sync slash commands
+# =========================
+_synced = False
+
+@bot.event
+async def on_ready():
+    global _synced
+    print(f"✅ JARVIS online as {bot.user}")
+    if not _synced:
         try:
-            dest, dist, y, j, f = r
-            distance = to_float(dist)
-            if distance <= 3000 or distance > plane["range"]:
-                continue
-            y, j, f = int(y), int(j), int(f)
-            total = y + j + f
-            if total == 0:
-                continue
-            cap = plane["capacity"]
-            y_seats = int(cap * (y / total) * 0.85)
-            j_seats = int(cap * (j / total) * 0.85)
-            f_seats = cap - y_seats - j_seats
-            y_price = distance * 0.35
-            j_price = distance * 0.9
-            f_price = distance * 1.8
-            income = (y_seats*y_price)+(j_seats*j_price)+(f_seats*f_price)
-            fuel = distance * plane["fuel"] * 6.5
-            co2 = distance * 3.2
-            profit = income - fuel - co2 - 40000 - 25000
-            flights = max(1, int(24 / (distance / plane["speed"])))
-            daily_profit = int(profit * flights)
-            results.append((dest, distance, daily_profit))
-        except:
-            continue
-    if not results:
-        await ctx.send("❌ No long routes found")
-        return
-    results.sort(key=lambda x: x[2], reverse=True)
-    top = results[:5]
-    text = ""
-    for i, r in enumerate(top, 1):
-        text += f"**{i}. {airport} → {r[0]}**\n📏 {int(r[1]):,} km\n💰 ${r[2]:,}/day\n\n"
-    embed = discord.Embed(title=f"🌍 Best LONG Routes ({plane['name']})", description=text, color=0xff9900)
-    embed.set_footer(text="JARVIS - AERO CROWN DYNASTY ™")
-    await ctx.send(embed=embed)
-
-# =========================
-# AIRPORT COMMAND
-# =========================
-@bot.command()
-async def airport(ctx, code):
-    name = airport_name(code)
-    embed = discord.Embed(title=f"🛫 Airport", description=name, color=0x2ecc71)
-    await ctx.send(embed=embed)
+            synced_cmds = await bot.tree.sync()
+            print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
+            _synced = True
+        except Exception as e:
+            print(f"⚠️ Slash command sync failed: {e}")
 
 # =========================
 # WELCOME + CHAT
@@ -1455,222 +1638,11 @@ async def on_message(message):
         await message.channel.send(random.choice(replies))
     await bot.process_commands(message)
 
-# =========================================================
-# FUEL COMMANDS
-# =========================================================
-def get_am4_market_time():
-    real_ts = int(time.time())
-    ist_ts = real_ts + (5.5 * 3600)
-    market_slot_ts = (int(ist_ts) // 1800) * 1800
-    try:
-        dt = datetime.fromtimestamp(market_slot_ts, datetime.timezone.utc)
-    except:
-        dt = datetime.fromtimestamp(market_slot_ts, pytz.UTC)
-    return dt.day, dt.strftime("%H:%M"), real_ts
-
-def analyze_market(fuel, co2):
-    f_stat = "🟢 BUY" if fuel < 900 else ("🟡 NEED" if fuel <= 1100 else "🔴 NO")
-    c_stat = "🟢 BUY" if co2 < 100 else ("🟡 URG" if co2 <= 120 else "🔴 NO")
-    return f_stat, c_stat
-
-def get_market_session(fuel_price, co2_price):
-    if fuel_price < 800 and co2_price < 90:
-        return "🚀 SUPER SALE", 0xff0000
-    elif fuel_price < 900 and co2_price < 100:
-        return "🟢 BUYING WINDOW", 0x00ff00
-    elif fuel_price < 950 and co2_price < 110:
-        return "📊 GOOD OPPORTUNITY", 0x88ff88
-    elif fuel_price <= 1100 and co2_price <= 120:
-        return "⚠️ AVERAGE MARKET", 0xffaa00
-    else:
-        return "⏸️ NEUTRAL MARKET", 0x88aaff
-
-def calculate_price_trend(price_type, day_num, time_str):
-    try:
-        h, m = map(int, time_str.split(':'))
-        current_minutes = h * 60 + m
-        trends = []
-        with get_fuels_db() as conn:
-            cursor = conn.cursor()
-            for i in range(1, 4):
-                prev_minutes = current_minutes - (i * 30)
-                if prev_minutes < 0:
-                    prev_day = day_num - 1
-                    if prev_day < 1:
-                        prev_day = 7
-                    prev_minutes += 24 * 60
-                else:
-                    prev_day = day_num
-                prev_h = prev_minutes // 60
-                prev_m = prev_minutes % 60
-                prev_time = f"{prev_h:02d}:{prev_m:02d}"
-                cursor.execute(f"SELECT {price_type} FROM Day{prev_day} WHERE TimeUTC = ?", (prev_time,))
-                row = cursor.fetchone()
-                if row:
-                    trends.append(row[0])
-        if len(trends) >= 2:
-            if trends[0] < trends[1]:
-                return "falling"
-            elif trends[0] > trends[1]:
-                return "rising"
-        return "stable"
-    except:
-        return "stable"
-
-def get_trading_suggestion(fuel_price, co2_price, fuel_trend, co2_trend):
-    suggestions = []
-    if fuel_price < 850:
-        suggestions.append("⛽ 🔥 BUY NOW - historically low")
-    elif fuel_price < 950:
-        suggestions.append("⛽ ✅ GOOD PRICE - consider buying")
-    elif fuel_price <= 1100:
-        suggestions.append("⛽ ⚠️ MODERATE - buy only if urgent")
-    else:
-        suggestions.append("⛽ ❌ TOO EXPENSIVE - avoid buying")
-    if co2_price < 95:
-        suggestions.append("🌱 🔥 EXCELLENT - stock up now!")
-    elif co2_price < 110:
-        suggestions.append("🌱 ✅ DECENT PRICE - good to buy")
-    else:
-        suggestions.append("🌱 ⚠️ HIGH PRICE - wait for drop")
-    if fuel_price < 900 and co2_price < 100:
-        suggestions.append("\n🎯 STRATEGY: Aggressive buying")
-    elif fuel_price > 1200 or co2_price > 130:
-        suggestions.append("\n🛡️ STRATEGY: Hold resources")
-    else:
-        suggestions.append("\n⚖️ STRATEGY: Balanced approach")
-    return "\n".join(suggestions)
-
-@bot.command(name="fuel")
-async def fuel_check(ctx):
-    day_num, time_str, unix_ts = get_am4_market_time()
-    with get_fuels_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT FuelPrice, CO2Price FROM Day{day_num} WHERE TimeUTC = ?", (time_str,))
-        row = cursor.fetchone()
-    
-    if row:
-        fuel_price = row["FuelPrice"]
-        co2_price = row["CO2Price"]
-        fuel_trend = calculate_price_trend("FuelPrice", day_num, time_str)
-        co2_trend = calculate_price_trend("CO2Price", day_num, time_str)
-        session_msg, session_color = get_market_session(fuel_price, co2_price)
-        f_s, c_s = analyze_market(fuel_price, co2_price)
-        
-        embed = discord.Embed(title="⚡ AM4 FUEL Market Dashboard", description=f"### {session_msg}", color=session_color)
-        utc_real = datetime.now(datetime.timezone.utc).strftime("%H:%M UTC")
-        embed.add_field(name="🕐 Time Synchronization", value=f"🌍 **UTC Time:** `{utc_real}`\n\n🖥️ **Your Local Time:** <t:{unix_ts}:F>", inline=False)
-        fuel_emoji = "📉" if fuel_trend == "falling" else "📈" if fuel_trend == "rising" else "➡️"
-        co2_emoji = "📉" if co2_trend == "falling" else "📈" if co2_trend == "rising" else "➡️"
-        embed.add_field(name="⛽ FUEL ANALYSIS", value=f"```yaml\n💰 Price: ${fuel_price}\n{fuel_emoji} Trend: {fuel_trend.upper()}\n🎯 Status: {f_s}\n💡 Best Buy: < $900```", inline=True)
-        embed.add_field(name="🌱 CO2 ANALYSIS", value=f"```yaml\n💰 Price: ${co2_price}\n{co2_emoji} Trend: {co2_trend.upper()}\n🎯 Status: {c_s}\n💡 Best Buy: < $100```", inline=True)
-        fuel_score = max(0, 100 - ((fuel_price - 700) / 10)) if fuel_price > 700 else 100
-        co2_score = max(0, 100 - ((co2_price - 80) / 5)) if co2_price > 80 else 100
-        total_score = (fuel_score + co2_score) / 2
-        score_bar = "█" * int(total_score / 10) + "░" * (10 - int(total_score / 10))
-        embed.add_field(name="📊 MARKET HEALTH", value=f"```yaml\n{score_bar} {total_score:.1f}%\nRating: {'EXCELLENT' if total_score > 80 else 'GOOD' if total_score > 60 else 'AVERAGE'}```", inline=False)
-        suggestions = get_trading_suggestion(fuel_price, co2_price, fuel_trend, co2_trend)
-        embed.add_field(name="💡 SMART SUGGESTIONS", value=f"```yaml\n{suggestions}```", inline=False)
-        embed.set_footer(text="AM4 Market • Updates every 30 mins")
-        await ctx.send(embed=embed)
-    else:
-        await ctx.send("❌ No market data available for current time slot!")
-
-@bot.command(name="predict")
-async def predict_market(ctx):
-    try:
-        now_utc = datetime.now(datetime.timezone.utc)
-    except:
-        now_utc = datetime.now(pytz.UTC)
-    
-    ist_now = now_utc + timedelta(hours=5, minutes=30)
-    minute_slot = 30 if ist_now.minute >= 30 else 0
-    current_slot = ist_now.replace(minute=minute_slot, second=0, microsecond=0)
-    rows = []
-    best_fuel_price = float("inf")
-    best_fuel_slot = None
-    best_co2_price = float("inf")
-    best_co2_slot = None
-
-    for i in range(24):
-        future_slot = current_slot + timedelta(minutes=(i * 30))
-        target_day = future_slot.day
-        db_time = future_slot.strftime("%H:%M")
-        try:
-            with get_fuels_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute(f"SELECT FuelPrice, CO2Price FROM Day{target_day} WHERE TimeUTC = ?", (db_time,))
-                row = cursor.fetchone()
-        except:
-            row = None
-        if row:
-            fuel_price = row["FuelPrice"]
-            co2_price = row["CO2Price"]
-            if fuel_price < 900 and co2_price < 100:
-                action = "🟢 BUY"
-            elif fuel_price <= 1100:
-                action = "🟡 WAIT"
-            else:
-                action = "🔴 AVOID"
-            utc_slot = future_slot - timedelta(hours=5, minutes=30)
-            ist_timezone = datetime.timezone(timedelta(hours=5, minutes=30))
-            future_slot_ist = future_slot.replace(tzinfo=ist_timezone)
-            rows.append({"utc": utc_slot.strftime("%H:%M"), "local": int(future_slot_ist.timestamp()), "fuel": fuel_price, "co2": co2_price, "action": action})
-            if fuel_price < best_fuel_price:
-                best_fuel_price = fuel_price
-                best_fuel_slot = int(future_slot_ist.timestamp())
-            if co2_price < best_co2_price:
-                best_co2_price = co2_price
-                best_co2_slot = int(future_slot_ist.timestamp())
-
-    if not rows:
-        return await ctx.send("❌ No market data available!")
-
-    embeds = []
-    items_per_page = 8
-    total_pages = ((len(rows) - 1) // items_per_page) + 1
-    utc_display = now_utc.strftime("%A, %B %d, %Y %I:%M %p UTC")
-
-    for page_start in range(0, len(rows), items_per_page):
-        page_rows = rows[page_start:page_start + items_per_page]
-        embed = discord.Embed(title=f"🔮 Market Outlook • Page {(page_start // items_per_page) + 1}/{total_pages}", description=f"🕐 **UTC Current:** {utc_display}\n📊 **12-Hour Fuel & CO2 Forecast**\n\n━━━━━━━━━━━━━━━━━━", color=0x9b59b6)
-        prediction_text = ""
-        for r in page_rows:
-            prediction_text += f"⏰ <t:{r['local']}:t>\n⛽ Fuel: **${r['fuel']}**\n🌱 CO2: **${r['co2']}**\n{r['action']}\n━━━━━━━━━━━━━━━━━━\n"
-        embed.add_field(name="📈 Prediction Matrix", value=prediction_text, inline=False)
-        if page_start == 0:
-            best_text = f"⛽ **Best Fuel:** `${best_fuel_price}`\n🕒 <t:{best_fuel_slot}:F>\n\n🌱 **Best CO2:** `${best_co2_price}`\n🕒 <t:{best_co2_slot}:F>"
-            embed.add_field(name="🎯 Best Trading Windows", value=best_text, inline=False)
-        embed.set_footer(text="🟢 Buy • 🟡 Wait • 🔴 Avoid • Updates every 30 mins")
-        embeds.append(embed)
-
-    class PredictView(View):
-        def __init__(self, embeds):
-            super().__init__(timeout=43200)
-            self.embeds = embeds
-            self.page = 0
-        async def update_message(self, interaction):
-            await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
-        @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.secondary)
-        async def prev_btn(self, interaction, button):
-            if self.page > 0:
-                self.page -= 1
-            await self.update_message(interaction)
-        @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
-        async def next_btn(self, interaction, button):
-            if self.page < len(self.embeds) - 1:
-                self.page += 1
-            await self.update_message(interaction)
-
-    view = PredictView(embeds)
-    await ctx.send(embed=embeds[0], view=view)
-
 # =========================
-# RUN BOT (WITH PORT BINDING)
+# RUN BOT (NO FLASK)
 # =========================
 if __name__ == "__main__":
     if not TOKEN:
         print("ERROR: TOKEN environment variable missing.")
     else:
-        keep_alive()  # Flask server start (Render port binding)
-        bot.run(TOKEN)  # Discord bot start
+        bot.run(TOKEN)
