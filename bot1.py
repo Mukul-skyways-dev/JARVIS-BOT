@@ -618,10 +618,17 @@ def add_usage(user):
     now = time.time()
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (str(user.id),))
+        # FIX: last_used column ko float mein convert karo
+        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
         row = cursor.fetchone()
-        if row and now - row[0] < COOLDOWN:
-            return
+        if row:
+            try:
+                last_used = float(row[0])  # Convert to float
+                if now - last_used < COOLDOWN:
+                    return
+            except (ValueError, TypeError):
+                pass  # Agar convert na ho toh proceed karo
+        
         cursor.execute("""
         INSERT INTO users (user_id, username, points, last_used)
         VALUES (?, ?, 1, ?)
