@@ -25,28 +25,26 @@ import pytz
 
 from export_view import ExportView
 
-# =========================
-# FLASK - PORT BINDING
-# =========================
+# =========================================================
+# KEEP ALIVE / PORT BINDING (Render requires a bound port on
+# Web Service plans, or it times out waiting for one)
+# =========================================================
 from flask import Flask
 from threading import Thread
-import os
 
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "JARVIS Bot is Alive! ✅"
+    return "JARVIS is alive"
 
 def run():
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Flask server running on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    port = int(os.getenv("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run, daemon=True)
     t.start()
-    print("✅ Flask thread started")
 
 from datetime import datetime, timedelta
 import asyncio
@@ -489,12 +487,22 @@ async def airport_autocomplete(interaction: discord.Interaction, current: str):
 #   - A-check absolute cost: we only have ONE confirmed reference ratio
 #     (check_cost -> per-trip amount), not the real check-interval
 #     formula, so acheck_k below is empirical, not derived.
-def calc(route, plane, user_id, mods=None):
+#
+# NEW: Cost Index (CI) is no longer hardcoded at 200. Real formula
+# (confirmed, R^2=1): effective_speed = base_speed * (0.0035*CI + 0.3).
+# CI also scales fuel and CO2 cost (both confirmed formulas below).
+# Lower CI = slower/cheaper, higher CI = faster/pricier — there's a
+# genuine profit-maximizing CI per route, which is exactly the kind of
+# thing a static calculator won't tell you. See find_optimal_ci().
+def calc(route, plane, user_id, mods=None, cost_index=200):
     mode = get_user_mode(user_id)
     dist = float(route["distance"])
-    speed = float(plane["speed"])
+    base_speed = float(plane["speed"])
     if mods and "speed" in mods:
-        speed *= 1.1
+        base_speed *= 1.1
+
+    cost_index = max(0, min(200, cost_index))
+    speed = base_speed * (0.0035 * cost_index + 0.3)
     time = dist / speed if speed else 1
 
     y = int(route["y"])
@@ -523,12 +531,14 @@ def calc(route, plane, user_id, mods=None):
         f_auto = (1.2 * dist) + 1200
         acheck_k = 0.004444  # empirical — see note above
         cargo_mul = 0.5
+        k_gm = 1.0  # contribution multiplier — easy
     else:
         y_auto = (0.3 * dist) + 150
         j_auto = (0.6 * dist) + 500
         f_auto = (0.9 * dist) + 1000
         acheck_k = 0.008889  # empirical — see note above
         cargo_mul = 0.35
+        k_gm = 1.5  # contribution multiplier — realism
 
     y_price = y_auto * 1.10
     j_price = j_auto * 1.08
@@ -539,14 +549,16 @@ def calc(route, plane, user_id, mods=None):
     cargo_income = cargo * cargo_mul
     income_trip += cargo_income
 
-    # ---- Fuel & CO2 (mode-independent — confirmed) ----
-    fuel = dist * float(plane["fuel"])
+    # ---- Fuel & CO2 — confirmed formulas, now CI-scaled ----
+    fuel_factor = (cost_index / 500) + 0.6
+    fuel = dist * float(plane["fuel"]) * fuel_factor
     if mods and "fuel" in mods:
         fuel *= 0.9
 
     # CO2 weight approximation: load == configured seats (see note above)
     co2_weighted = (2 * y_c) + (3 * j_c) + (4 * f_c)
-    co2 = dist * float(plane["co2"]) * co2_weighted
+    co2_factor = (cost_index / 2000) + 0.9
+    co2 = dist * float(plane["co2"]) * co2_weighted * co2_factor
     if mods and "co2" in mods:
         co2 *= 0.9
 
@@ -562,18 +574,31 @@ def calc(route, plane, user_id, mods=None):
 
     total_cost = fuel + co2 + acheck + repair
     profit_trip = income_trip - total_cost
-    ci = int((profit_trip / income_trip) * 100) if income_trip else 0
+    ci_margin = int((profit_trip / income_trip) * 100) if income_trip else 0
+
+    # ---- Contribution — confirmed formula ----
+    # $C = min(k_gm * k * d * (3 - CI/100), 152) per flight
+    if dist < 6000:
+        k_dist = 0.0064
+    elif dist < 10000:
+        k_dist = 0.0032
+    else:
+        k_dist = 0.0048
+    contribution_trip = min(k_gm * k_dist * dist * (3 - cost_index / 100), 152)
+    contribution_trip = max(0, contribution_trip)
 
     income_day = income_trip * trips
     fuel_day = fuel * trips
     co2_day = co2 * trips
     profit_day = profit_trip * trips
+    contribution_day = contribution_trip * trips
 
     return {
         "mode": mode,
         "distance": int(dist),
         "time": round(time, 2),
         "trips": trips,
+        "cost_index": cost_index,
         "y": y_c,
         "j": j_c,
         "f": f_c,
@@ -590,12 +615,31 @@ def calc(route, plane, user_id, mods=None):
         "repair": int(repair),
         "total_cost": int(total_cost),
         "profit_trip": int(profit_trip),
-        "ci": ci,
+        "ci": ci_margin,
+        "contribution_trip": round(contribution_trip, 2),
+        "contribution_day": round(contribution_day, 2),
         "income_day": int(income_day),
         "fuel_day": int(fuel_day),
         "co2_day": int(co2_day),
         "profit_day": int(profit_day)
     }
+
+def find_optimal_ci(route, plane, user_id, mods=None, step=10):
+    """Scans CI 0-200 and returns the result for whichever CI gives the
+    best daily profit, plus the one that gives the best daily
+    contribution — these are usually NOT the same CI. A calculator
+    that always assumes CI=200 misses this trade-off entirely."""
+    best_profit_result = None
+    best_contribution_result = None
+
+    for ci_candidate in range(0, 201, step):
+        result = calc(route, plane, user_id, mods=mods, cost_index=ci_candidate)
+        if best_profit_result is None or result["profit_day"] > best_profit_result["profit_day"]:
+            best_profit_result = result
+        if best_contribution_result is None or result["contribution_day"] > best_contribution_result["contribution_day"]:
+            best_contribution_result = result
+
+    return best_profit_result, best_contribution_result
 
 # ========================
 # Leaderboard 
@@ -618,17 +662,10 @@ def add_usage(user):
     now = time.time()
     with get_db() as conn:
         cursor = conn.cursor()
-        # FIX: last_used column ko float mein convert karo
-        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
+        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (str(user.id),))
         row = cursor.fetchone()
-        if row:
-            try:
-                last_used = float(row[0])  # Convert to float
-                if now - last_used < COOLDOWN:
-                    return
-            except (ValueError, TypeError):
-                pass  # Agar convert na ho toh proceed karo
-        
+        if row and now - row[0] < COOLDOWN:
+            return
         cursor.execute("""
         INSERT INTO users (user_id, username, points, last_used)
         VALUES (?, ?, 1, ?)
@@ -1158,10 +1195,10 @@ def get_top_alternative_routes(origin, plane, user_id, exclude_dest=None, limit=
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:limit]
 
-@bot.hybrid_command(description="Full route analysis — profit, demand, seat config, pricing")
-@app_commands.describe(frm="Origin airport", to="Destination airport", plane_name="Aircraft")
+@bot.hybrid_command(description="Full route analysis — profit, demand, seat config, pricing, contribution")
+@app_commands.describe(frm="Origin airport", to="Destination airport", plane_name="Aircraft", ci="Cost Index 0-200 (default 200)")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete, plane_name=aircraft_autocomplete)
-async def route(ctx, frm: str, to: str, *, plane_name: str):
+async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     route = get_route(frm, to)
     plane = get_plane(plane_name)
     if not route:
@@ -1185,24 +1222,36 @@ async def route(ctx, frm: str, to: str, *, plane_name: str):
             if row:
                 stop_airport = row[0]
     
-    result = calc(route, plane, ctx.author.id)
+    result = calc(route, plane, ctx.author.id, cost_index=ci)
     mode = result["mode"]
     
     from_txt = airport_name(frm)
     to_txt = airport_name(to)
     if stop_airport:
         stop_txt = airport_name(stop_airport)
-        route_display = f"{from_txt}\n→ {stop_txt}\n→ {to_txt}"
+        legs = [("┌", from_txt), ("├", stop_txt), ("└", to_txt)]
     else:
-        route_display = f"{from_txt}\n→ {to_txt}"
-    
-    embed = discord.Embed(title=f"{plane['name']} • Route Analysis V3.0.1", description=f"```{route_display}```", color=0x2b2d31)
-    embed.add_field(name="✈ Flight Info", value=f"**Distance:** {int(distance_total):,} km\n**Trips:** {result['trips']}/day\n**Mode:** {mode.upper()}", inline=False)
+        legs = [("┌", from_txt), ("└", to_txt)]
+    route_display = format_route_display(legs)
+
+    embed = discord.Embed(title=f"{plane['name']} • Route Analysis V4.0", description=f"```{route_display}```", color=route_health_color(result["ci"]))
+    embed.add_field(name="✈ Flight Info", value=f"**Distance:** {int(distance_total):,} km\n**Trips:** {result['trips']}/day\n**Flight Time:** {result['time']} hr\n**Mode:** {mode.upper()}\n**Cost Index:** {result['cost_index']}", inline=False)
     embed.add_field(name="📊 Demand", value=f"**Y:** {route['y']}\n**J:** {route['j']}\n**F:** {route['f']}", inline=True)
     embed.add_field(name="⚙ Configuration", value=f"**Y:** {result['y']}\n**J:** {result['j']}\n**F:** {result['f']}", inline=True)
     embed.add_field(name="🎟 Ticket Pricing", value=f"**Y:** ${result['y_price']:,}\n**J:** ${result['j_price']:,}\n**F:** ${result['f_price']:,}", inline=True)
-    embed.add_field(name="💰 Per Flight", value=f"**Income:** ${result['income_trip']:,}\n**Fuel:** ${result['fuel']:,}\n**CO2:** ${result['co2']:,}\n**Maint:** ${result['acheck'] + result['repair']:,}\n\n**Profit:** ${result['profit_trip']:,}\n**CI:** {result['ci']}%", inline=False)
-    embed.add_field(name="📅 Per Day", value=f"**Income:** ${result['income_day']:,}\n**Fuel:** ${result['fuel_day']:,}\n**CO2:** ${result['co2_day']:,}\n**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n**Profit:** ${result['profit_day']:,}\n**Flights:** {result['trips']}", inline=False)
+    embed.add_field(name="💰 Per Flight", value=f"**Income:** ${result['income_trip']:,}\n**Fuel:** ${result['fuel']:,}\n**CO2:** ${result['co2']:,}\n**Maint:** ${result['acheck'] + result['repair']:,}\n\n**Profit:** ${result['profit_trip']:,}\n**CI Margin:** {result['ci']}%\n**Contribution:** ${result['contribution_trip']:,}", inline=False)
+    embed.add_field(name="📅 Per Day", value=f"**Income:** ${result['income_day']:,}\n**Fuel:** ${result['fuel_day']:,}\n**CO2:** ${result['co2_day']:,}\n**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n**Profit:** ${result['profit_day']:,}\n**Contribution:** ${result['contribution_day']:,}\n**Flights:** {result['trips']}", inline=False)
+
+    # ---- CI Optimization — the value-add a fixed-CI calculator can't offer ----
+    best_profit, best_contrib = find_optimal_ci(route, plane, ctx.author.id)
+    if best_profit["cost_index"] != ci or best_contrib["cost_index"] != ci:
+        opt_lines = []
+        if best_profit["cost_index"] != ci:
+            opt_lines.append(f"💰 **Max Profit:** CI {best_profit['cost_index']} → ${best_profit['profit_day']:,}/day ({best_profit['trips']} trips)")
+        if best_contrib["cost_index"] != ci:
+            opt_lines.append(f"🏆 **Max Contribution:** CI {best_contrib['cost_index']} → ${best_contrib['contribution_day']:,}/day ({best_contrib['trips']} trips)")
+        if opt_lines:
+            embed.add_field(name="🎯 CI Optimization (vs. your CI " + str(ci) + ")", value="\n".join(opt_lines), inline=False)
 
     alternatives = get_top_alternative_routes(frm, plane, ctx.author.id, exclude_dest=to, limit=3)
     if alternatives:
@@ -1216,6 +1265,7 @@ async def route(ctx, frm: str, to: str, *, plane_name: str):
         "Aircraft": plane["name"],
         "Distance": f"{int(distance_total):,} km",
         "Mode": mode.upper(),
+        "Cost Index": result["cost_index"],
         "Trips/Day": result["trips"],
         "Economy Demand": route["y"],
         "Business Demand": route["j"],
@@ -1231,6 +1281,7 @@ async def route(ctx, frm: str, to: str, *, plane_name: str):
         "CO2/Flight": result["co2"],
         "Profit/Flight": result["profit_trip"],
         "Profit/Day": result["profit_day"],
+        "Contribution/Day": result["contribution_day"],
         "CI": f"{result['ci']}%"
     }
     
@@ -1426,11 +1477,12 @@ async def best(ctx, frm: str, to: str):
             continue
     if not best_plane:
         return await ctx.send("No suitable aircraft found")
-    embed = discord.Embed(title="Best Aircraft", description=f"```{airport_name(frm)}\n→ {airport_name(to)}```", color=0x2b2d31)
-    embed.add_field(name="Aircraft", value=best_plane["name"], inline=False)
-    embed.add_field(name="Profit/Day", value=money(best_calc["profit_day"]), inline=True)
-    embed.add_field(name="Trips/Day", value=best_calc["trips"], inline=True)
-    embed.add_field(name="Mode", value=best_calc["mode"].upper(), inline=False)
+    route_display = format_route_display([("┌", airport_name(frm)), ("└", airport_name(to))])
+    embed = discord.Embed(title="Best Aircraft", description=f"```{route_display}```", color=route_health_color(best_calc["ci"]))
+    embed.add_field(name="Aircraft", value=f"**{best_plane['name']}**", inline=False)
+    embed.add_field(name="Profit/Day", value=f"**{money(best_calc['profit_day'])}**", inline=True)
+    embed.add_field(name="Trips/Day", value=f"**{best_calc['trips']}**", inline=True)
+    embed.add_field(name="Mode", value=f"**{best_calc['mode'].upper()}**", inline=False)
     embed.set_footer(text="JARVIS • Aircraft Optimization")
     report_data = {
         "Route": f"{frm.upper()} -> {to.upper()}",
@@ -1456,6 +1508,36 @@ def airport_city_country(iata):
     if "\n" in full:
         return full.split("\n", 1)[1]
     return iata
+
+def format_route_display(legs):
+    """Tree-style connector formatting for a route's airports.
+    legs: list of (connector_char, airport_text) where airport_text is
+    airport_name()'s 'IATA • Name\\nCity, Country' output. Draws:
+        ┌ DEL • Indira Gandhi Intl
+        │   New Delhi, India
+        ├ XXX • Stopover Name          (only if a stopover leg is passed)
+        │   City, Country
+        └ BOM • Chhatrapati Shivaji Intl
+            Mumbai, India
+    """
+    lines = []
+    for i, (connector, text) in enumerate(legs):
+        parts = text.split("\n", 1)
+        lines.append(f"{connector} {parts[0]}")
+        if len(parts) > 1:
+            cont_char = "│" if i < len(legs) - 1 else " "
+            lines.append(f"{cont_char}   {parts[1]}")
+    return "\n".join(lines)
+
+def route_health_color(ci_margin):
+    """Embed strip color reflecting profit-margin health — green/amber/red,
+    no extra emoji needed."""
+    if ci_margin >= 30:
+        return 0x2ecc71  # healthy
+    elif ci_margin >= 15:
+        return 0xf1c40f  # thin but workable
+    else:
+        return 0xe74c3c  # weak/risky
 
 @bot.hybrid_command(name="best_r", aliases=["bestr", "top"], description="Top 5 most profitable routes from an airport")
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
@@ -1663,11 +1745,11 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # =========================
-# RUN BOT (WITH PORT BINDING)
+# RUN BOT
 # =========================
 if __name__ == "__main__":
+    keep_alive()
     if not TOKEN:
         print("ERROR: TOKEN environment variable missing.")
     else:
-        keep_alive()  # Flask server start (Render port binding)
-        bot.run(TOKEN)  # Discord bot start
+        bot.run(TOKEN)
