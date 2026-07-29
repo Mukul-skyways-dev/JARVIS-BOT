@@ -1163,6 +1163,95 @@ def format_time(minutes):
 # =========================================================
 # ROUTE COMMAND
 # =========================================================
+from matplotlib.colors import LinearSegmentedColormap
+
+_JARVIS_CMAP = LinearSegmentedColormap.from_list("jarvis_radar", ["#a855f7", "#00e5ff", "#00ff88"])
+
+def draw_flight_radar(origin_iata, plane, routes_data):
+    """routes_data: list of dicts with dest_iata, dest_lat, dest_lng,
+    profit_day, trips, ci, distance. Draws a two-panel 'Flight Radar':
+    left = glowing route lines radiating from the origin (not plain dots
+    — this is the distinctive part), right = distance vs profit glow-scatter."""
+    fig = plt.figure(figsize=(13, 5.5))
+    fig.patch.set_facecolor("#0a0e1a")
+
+    # ============ LEFT: FLIGHT RADAR MAP ============
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.set_facecolor("#0a0e1a")
+
+    # Faint context dots — every airport in the DB, for a recognizable
+    # world silhouette without needing a real basemap image
+    with get_static_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT lat, lng FROM airports")
+        all_pts = cursor.fetchall()
+    if all_pts:
+        ax1.scatter(
+            [p["lng"] for p in all_pts], [p["lat"] for p in all_pts],
+            s=1.2, color="#1c2438", zorder=1, linewidths=0
+        )
+
+    origin_lat = routes_data[0]["origin_lat"]
+    origin_lng = routes_data[0]["origin_lng"]
+
+    max_profit = max((r["profit_day"] for r in routes_data), default=1) or 1
+    for r in routes_data:
+        t = max(0, min(1, r["profit_day"] / max_profit))
+        color = _JARVIS_CMAP(t)
+        lw = 0.6 + t * 2.2
+        # Glow effect: a wider, faint line underneath a thin bright one
+        ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
+                  color=color, linewidth=lw * 3, alpha=0.10, zorder=2, solid_capstyle="round")
+        ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
+                  color=color, linewidth=lw, alpha=0.85, zorder=3, solid_capstyle="round")
+        ax1.scatter([r["dest_lng"]], [r["dest_lat"]], s=18 + t * 40, color=color, zorder=4, edgecolors="none")
+
+    # Origin hub marker — layered glow
+    for size, alpha in [(600, 0.08), (300, 0.15), (120, 0.35), (50, 1.0)]:
+        ax1.scatter([origin_lng], [origin_lat], s=size, color="#00e5ff", alpha=alpha, zorder=5, edgecolors="none")
+
+    ax1.set_xlim(-180, 180)
+    ax1.set_ylim(-90, 90)
+    ax1.set_xticks([])
+    ax1.set_yticks([])
+    for spine in ax1.spines.values():
+        spine.set_visible(False)
+    ax1.set_title(f"FLIGHT RADAR • {origin_iata}", color="#00e5ff", fontsize=13, fontweight="bold", loc="left", pad=10)
+
+    # ============ RIGHT: PROFIT VELOCITY ============
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.set_facecolor("#0a0e1a")
+
+    distances = [r["distance"] for r in routes_data]
+    profits = [r["profit_day"] for r in routes_data]
+    trips = [r["trips"] for r in routes_data]
+    cis = [r["ci"] for r in routes_data]
+
+    sizes = [30 + t * 45 for t in trips]
+    colors = [_JARVIS_CMAP(max(0, min(1, c / 60))) for c in cis]
+
+    # Glow layers behind the real points
+    ax2.scatter(distances, profits, s=[s * 4 for s in sizes], c=colors, alpha=0.08, edgecolors="none", zorder=2)
+    ax2.scatter(distances, profits, s=[s * 2 for s in sizes], c=colors, alpha=0.15, edgecolors="none", zorder=3)
+    ax2.scatter(distances, profits, s=sizes, c=colors, alpha=0.9, edgecolors="none", zorder=4)
+
+    ax2.set_xlabel("Distance (km)", color="#8e9ac0", fontsize=10)
+    ax2.set_ylabel("Profit / day ($)", color="#8e9ac0", fontsize=10)
+    ax2.tick_params(colors="#8e9ac0", labelsize=8)
+    ax2.grid(alpha=0.08, color="#8e9ac0", linestyle=":")
+    for spine in ax2.spines.values():
+        spine.set_color("#2a3450")
+    ax2.set_title("PROFIT VELOCITY", color="#00ff88", fontsize=13, fontweight="bold", loc="left", pad=10)
+
+    fig.text(0.5, 0.02, f"Aircraft: {plane['name']}  •  Node size = trips/day  •  Node color = CI margin",
+              color="#4a5570", fontsize=8, ha="center")
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight", facecolor="#0a0e1a", dpi=100)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
 def get_top_alternative_routes(origin, plane, user_id, exclude_dest=None, limit=3):
     """Top profitable routes from `origin` with `plane`, excluding the
     current destination — used for the 'Related Routes' summary."""
@@ -1538,6 +1627,76 @@ def route_health_color(ci_margin):
         return 0xf1c40f  # thin but workable
     else:
         return 0xe74c3c  # weak/risky
+
+@bot.hybrid_command(name="routemap", description="Flight Radar — glowing route map + profit-vs-distance chart from an airport")
+@app_commands.describe(airport="Origin airport", plane_name="Aircraft")
+@app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
+async def routemap(ctx, airport: str, *, plane_name: str):
+    airport = airport.upper()
+    plane = get_plane(plane_name)
+    if not plane:
+        return await ctx.send("❌ Plane not found")
+
+    with get_static_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT lat, lng FROM airports WHERE iata = ? LIMIT 1", (airport,))
+        origin_row = cursor.fetchone()
+    if not origin_row:
+        return await ctx.send(f"❌ No coordinates on file for **{airport}** — can't plot the radar.")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes WHERE f_iata = ? LIMIT 300", (airport,))
+        routes = cursor.fetchall()
+    if not routes:
+        return await ctx.send(f"❌ No routes found from **{airport}**")
+
+    dest_iatas = [r[0] for r in routes]
+    with get_static_db() as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join("?" * len(dest_iatas))
+        cursor.execute(f"SELECT iata, lat, lng FROM airports WHERE iata IN ({placeholders})", dest_iatas)
+        coord_map = {row["iata"]: (row["lat"], row["lng"]) for row in cursor.fetchall()}
+
+    routes_data = []
+    for r in routes:
+        try:
+            dest, dist, y, j, f = r
+            distance = float(dist)
+            if distance > float(plane["range"]):
+                continue
+            y, j, f = int(y), int(j), int(f)
+            if y + j + f == 0:
+                continue
+            if dest not in coord_map:
+                continue
+            route_dict = {"distance": distance, "y": y, "j": j, "f": f, "cargo": 0}
+            result = calc(route_dict, plane, ctx.author.id)
+            if result["profit_day"] <= 0:
+                continue
+            dest_lat, dest_lng = coord_map[dest]
+            routes_data.append({
+                "dest_iata": dest, "dest_lat": dest_lat, "dest_lng": dest_lng,
+                "origin_lat": origin_row["lat"], "origin_lng": origin_row["lng"],
+                "profit_day": result["profit_day"], "trips": result["trips"],
+                "ci": result["ci"], "distance": distance
+            })
+        except:
+            continue
+
+    if not routes_data:
+        return await ctx.send(f"❌ No profitable routes found from **{airport}** with **{plane['name']}** to plot.")
+
+    img_buf = draw_flight_radar(airport, plane, routes_data)
+    file = discord.File(img_buf, filename="radar.png")
+    embed = discord.Embed(
+        title=f"📡 Flight Radar • {airport}",
+        description=f"**{len(routes_data)}** profitable routes plotted with **{plane['name']}**",
+        color=0x00e5ff
+    )
+    embed.set_image(url="attachment://radar.png")
+    embed.set_footer(text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT")
+    await ctx.send(embed=embed, file=file)
 
 @bot.hybrid_command(name="best_r", aliases=["bestr", "top"], description="Top 5 most profitable routes from an airport")
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
