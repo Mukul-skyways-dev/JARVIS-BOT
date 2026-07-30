@@ -470,30 +470,39 @@ async def airport_autocomplete(interaction: discord.Interaction, current: str):
 # Everything below was checked against a real am4help bot screenshot
 # (DEL->BOM, A380-800, both easy & realism) unless flagged otherwise.
 #
-# CONFIRMED (exact or near-exact match):
-#   - trips/day  = ceil(total_demand / capacity)
-#   - seat config = weighted capacity (Y=1, J=2, F=3 units), filled in
-#                   order F, J, Y using floor(demand_class / trips),
-#                   capped by remaining weighted capacity
+# CONFIRMED (exact or near-exact match against a real reference,
+# DEL->BOM A380-800):
+#   - trips/day    = ceil(total_demand / capacity)
+#   - seat config  = weighted capacity (Y=1, J=2, F=3 units), filled in
+#                    order F, J, Y using floor(demand_class / trips),
+#                    capped by remaining weighted capacity
 #   - ticket price = autoprice x optimal multiplier (Y x1.10, J x1.08, F x1.06)
-#   - fuel cost   = distance x aircraft fuel stat (mode-independent)
-#   - repair cost = 0.0000075 x aircraft cost (expected wear, mode-independent)
+#   - fuel qty     = distance x aircraft fuel stat x CI factor (verified
+#                    to the unit: 25,337.4 lb computed vs 25,337 lb real)
+#   - co2 qty      = distance x aircraft co2 stat x (Y+2J+3F config-weighted)
+#                    x CI factor (verified: 109,270 computed vs 108,552 real)
+#   - repair cost  = 0.0000075 x aircraft cost (expected wear)
 #   - A-check realism = exactly 2x A-check easy
 #
 # APPROXIMATED (flagged — refine later with more reference samples):
-#   - CO2 cost: real formula needs actual loaded pax (a live, random,
-#     per-flight game value); we approximate load == configured seats,
-#     which holds for any route where demand keeps the flight full.
+#   - Fuel/CO2 DOLLAR cost = quantity x current market price per unit.
+#     We don't have a live market feed wired in here, so
+#     FUEL_PRICE_PER_LB / CO2_PRICE_PER_QUINTAL below are fixed
+#     estimates calibrated against the one reference we have — real
+#     prices move with the in-game market, same as the fuel bot tracks.
 #   - A-check absolute cost: we only have ONE confirmed reference ratio
 #     (check_cost -> per-trip amount), not the real check-interval
 #     formula, so acheck_k below is empirical, not derived.
 #
-# NEW: Cost Index (CI) is no longer hardcoded at 200. Real formula
-# (confirmed, R^2=1): effective_speed = base_speed * (0.0035*CI + 0.3).
-# CI also scales fuel and CO2 cost (both confirmed formulas below).
-# Lower CI = slower/cheaper, higher CI = faster/pricier — there's a
-# genuine profit-maximizing CI per route, which is exactly the kind of
-# thing a static calculator won't tell you. See find_optimal_ci().
+# Cost Index (CI) is not hardcoded at 200. Real formula (confirmed,
+# R^2=1): effective_speed = base_speed * (0.0035*CI + 0.3). CI also
+# scales fuel/CO2 quantity (both confirmed formulas below). Lower CI =
+# slower/cheaper, higher CI = faster/pricier — there's a genuine
+# profit-maximizing CI per route, which is exactly the kind of thing a
+# static calculator won't tell you. See find_optimal_ci().
+FUEL_PRICE_PER_LB = 0.70       # $/lb — calibrated against reference; approximate
+CO2_PRICE_PER_QUINTAL = 0.12   # $/quintal — calibrated against reference; approximate
+
 def calc(route, plane, user_id, mods=None, cost_index=200):
     mode = get_user_mode(user_id)
     dist = float(route["distance"])
@@ -550,20 +559,30 @@ def calc(route, plane, user_id, mods=None, cost_index=200):
     income_trip += cargo_income
 
     # ---- Fuel & CO2 — confirmed formulas, now CI-scaled ----
+    # IMPORTANT: these formulas compute a physical QUANTITY (lb / quintals),
+    # verified to the unit against a real reference (am4help output for
+    # DEL->BOM, A380-800: our fuel_lb formula gave 25,337.4 lb vs their
+    # exact 25,337 lb; our co2_qty gave 109,270 vs their 108,552 quintals).
+    # Cost = quantity x current market price per unit. We don't have a
+    # live market feed wired into this bot, so FUEL_PRICE_PER_LB and
+    # CO2_PRICE_PER_QUINTAL below are fixed estimates calibrated against
+    # that same reference (~$0.70/lb, ~$0.12/quintal) — real prices move
+    # with the in-game fuel/CO2 market, so treat these as approximate
+    # until live prices are wired in.
     fuel_factor = (cost_index / 500) + 0.6
-    fuel = dist * float(plane["fuel"]) * fuel_factor
+    fuel_lb = dist * float(plane["fuel"]) * fuel_factor
     if mods and "fuel" in mods:
-        fuel *= 0.9
+        fuel_lb *= 0.9
+    fuel = fuel_lb * FUEL_PRICE_PER_LB
 
-    # CO2 weight approximation: load == configured seats (see note above)
-    co2_weighted = (2 * y_c) + (3 * j_c) + (4 * f_c)
+    # CO2 quantity: config-only, weighted Y=1/J=2/F=3 (NOT load+config
+    # combined — that earlier assumption double-counted and was the bug).
+    co2_weighted = y_c + (2 * j_c) + (3 * f_c)
     co2_factor = (cost_index / 2000) + 0.9
-    co2 = dist * float(plane["co2"]) * co2_weighted * co2_factor
+    co2_q = dist * float(plane["co2"]) * co2_weighted * co2_factor
     if mods and "co2" in mods:
-        co2 *= 0.9
-
-    fuel_lb = fuel * 2.2
-    co2_q = co2 * 1.1
+        co2_q *= 0.9
+    co2 = co2_q * CO2_PRICE_PER_QUINTAL
 
     # ---- Repair (confirmed) & A-check (approximated) ----
     aircraft_cost = float(plane.get("cost", 0))
@@ -1169,56 +1188,109 @@ _JARVIS_CMAP = LinearSegmentedColormap.from_list("jarvis_radar", ["#a855f7", "#0
 
 def draw_flight_radar(origin_iata, plane, routes_data):
     """routes_data: list of dicts with dest_iata, dest_lat, dest_lng,
-    profit_day, trips, ci, distance. Draws a two-panel 'Flight Radar':
-    left = glowing route lines radiating from the origin (not plain dots
-    — this is the distinctive part), right = distance vs profit glow-scatter."""
-    fig = plt.figure(figsize=(13, 5.5))
-    fig.patch.set_facecolor("#0a0e1a")
+    profit_day, trips, ci, distance. Draws a two-panel display:
 
-    # ============ LEFT: FLIGHT RADAR MAP ============
-    ax1 = fig.add_subplot(1, 2, 1)
-    ax1.set_facecolor("#0a0e1a")
+    LEFT — a REAL lat/lng map (destinations sit at their true
+    coordinates), skinned to look like an ATC radar scope: a circular
+    viewport zoomed on the route cluster, concentric range rings, a
+    center crosshair, a decorative sweep wedge, and a glowing bezel.
+    No external map image is fetched, so there's no fragile network
+    dependency — the "radar" look comes entirely from matplotlib
+    shapes drawn over real coordinates.
 
-    # Faint context dots — every airport in the DB, for a recognizable
-    # world silhouette without needing a real basemap image
-    with get_static_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT lat, lng FROM airports")
-        all_pts = cursor.fetchall()
-    if all_pts:
-        ax1.scatter(
-            [p["lng"] for p in all_pts], [p["lat"] for p in all_pts],
-            s=1.2, color="#1c2438", zorder=1, linewidths=0
-        )
+    RIGHT — 'Profit Velocity': distance vs profit/day glow-scatter,
+    dark data-panel styling.
+    """
+    from matplotlib.patches import Circle, Wedge
+
+    fig = plt.figure(figsize=(13, 5.6))
+    fig.patch.set_facecolor("#050805")
 
     origin_lat = routes_data[0]["origin_lat"]
     origin_lng = routes_data[0]["origin_lng"]
+
+    # Zoom window scaled to the farthest profitable destination — a
+    # cluster of short-haul routes zooms in tight, long-haul zooms out.
+    # ~111km per degree of latitude (a stylised approximation).
+    max_dist = max((r["distance"] for r in routes_data), default=1000)
+    scope_radius = max(min(max_dist / 111 * 1.25, 90), 8)
+
+    # ============ LEFT: RADAR SCOPE MAP (real lat/lng) ============
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.set_facecolor("#050805")
+    ax1.set_aspect("equal")
+
+    scope = Circle((origin_lng, origin_lat), scope_radius, transform=ax1.transData)
+    ax1.add_patch(Circle((origin_lng, origin_lat), scope_radius, facecolor="#08120a",
+                          edgecolor="none", zorder=0))
+
+    # Concentric range rings
+    for frac in (0.25, 0.5, 0.75, 1.0):
+        ring = Circle((origin_lng, origin_lat), scope_radius * frac, facecolor="none",
+                       edgecolor="#1f6b3a", linewidth=1.1, alpha=0.7, zorder=1)
+        ring.set_clip_path(scope)
+        ax1.add_patch(ring)
+        ring_km = int(scope_radius * frac * 111)
+        ax1.text(origin_lng, origin_lat + scope_radius * frac, f"{ring_km:,}km",
+                  color="#2e8f4d", fontsize=6.5, ha="center", va="bottom", zorder=6, clip_path=scope)
+
+    # Crosshair through the scope center
+    ax1.plot([origin_lng - scope_radius, origin_lng + scope_radius], [origin_lat, origin_lat],
+              color="#1f6b3a", linewidth=0.8, alpha=0.6, zorder=1, clip_on=True)
+    ax1.plot([origin_lng, origin_lng], [origin_lat - scope_radius, origin_lat + scope_radius],
+              color="#1f6b3a", linewidth=0.8, alpha=0.6, zorder=1, clip_on=True)
+
+    # Decorative sweep wedge — purely stylistic "live scan" flourish
+    sweep = Wedge((origin_lng, origin_lat), scope_radius, 60, 95, facecolor="#39ff6a", alpha=0.14, zorder=2)
+    sweep.set_clip_path(scope)
+    ax1.add_patch(sweep)
+
+    # Faint airport "contacts" within the scope window — real coordinates
+    with get_static_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT lat, lng FROM airports
+            WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+        """, (origin_lat - scope_radius, origin_lat + scope_radius,
+              origin_lng - scope_radius, origin_lng + scope_radius))
+        ctx_pts = cursor.fetchall()
+    if ctx_pts:
+        pts = ax1.scatter([p["lng"] for p in ctx_pts], [p["lat"] for p in ctx_pts],
+                          s=1.6, color="#215c34", zorder=2, linewidths=0)
+        pts.set_clip_path(scope)
 
     max_profit = max((r["profit_day"] for r in routes_data), default=1) or 1
     for r in routes_data:
         t = max(0, min(1, r["profit_day"] / max_profit))
         color = _JARVIS_CMAP(t)
         lw = 0.6 + t * 2.2
-        # Glow effect: a wider, faint line underneath a thin bright one
-        ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
-                  color=color, linewidth=lw * 3, alpha=0.10, zorder=2, solid_capstyle="round")
-        ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
-                  color=color, linewidth=lw, alpha=0.85, zorder=3, solid_capstyle="round")
-        ax1.scatter([r["dest_lng"]], [r["dest_lat"]], s=18 + t * 40, color=color, zorder=4, edgecolors="none")
+        line1, = ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
+                          color=color, linewidth=lw * 3, alpha=0.14, zorder=3, solid_capstyle="round")
+        line1.set_clip_path(scope)
+        line2, = ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
+                          color=color, linewidth=lw, alpha=0.9, zorder=4, solid_capstyle="round")
+        line2.set_clip_path(scope)
+        blip = ax1.scatter([r["dest_lng"]], [r["dest_lat"]], s=16 + t * 38, color=color, zorder=5,
+                           edgecolors="#050805", linewidths=0.4)
+        blip.set_clip_path(scope)
 
-    # Origin hub marker — layered glow
-    for size, alpha in [(600, 0.08), (300, 0.15), (120, 0.35), (50, 1.0)]:
-        ax1.scatter([origin_lng], [origin_lat], s=size, color="#00e5ff", alpha=alpha, zorder=5, edgecolors="none")
+    # Origin hub marker — layered glow at scope center
+    for size, alpha in [(500, 0.10), (260, 0.20), (110, 0.45), (48, 1.0)]:
+        ax1.scatter([origin_lng], [origin_lat], s=size, color="#39ff6a", alpha=alpha, zorder=6, edgecolors="none")
 
-    ax1.set_xlim(-180, 180)
-    ax1.set_ylim(-90, 90)
+    # Scope bezel
+    ax1.add_patch(Circle((origin_lng, origin_lat), scope_radius, facecolor="none",
+                         edgecolor="#39ff6a", linewidth=2, zorder=7))
+
+    ax1.set_xlim(origin_lng - scope_radius * 1.08, origin_lng + scope_radius * 1.08)
+    ax1.set_ylim(origin_lat - scope_radius * 1.08, origin_lat + scope_radius * 1.08)
     ax1.set_xticks([])
     ax1.set_yticks([])
     for spine in ax1.spines.values():
         spine.set_visible(False)
-    ax1.set_title(f"FLIGHT RADAR • {origin_iata}", color="#00e5ff", fontsize=13, fontweight="bold", loc="left", pad=10)
+    ax1.set_title(f"RADAR SCOPE • {origin_iata}", color="#39ff6a", fontsize=13, fontweight="bold", loc="left", pad=10)
 
-    # ============ RIGHT: PROFIT VELOCITY ============
+    # ============ RIGHT: PROFIT VELOCITY (dark data panel) ============
     ax2 = fig.add_subplot(1, 2, 2)
     ax2.set_facecolor("#0a0e1a")
 
@@ -1230,7 +1302,6 @@ def draw_flight_radar(origin_iata, plane, routes_data):
     sizes = [30 + t * 45 for t in trips]
     colors = [_JARVIS_CMAP(max(0, min(1, c / 60))) for c in cis]
 
-    # Glow layers behind the real points
     ax2.scatter(distances, profits, s=[s * 4 for s in sizes], c=colors, alpha=0.08, edgecolors="none", zorder=2)
     ax2.scatter(distances, profits, s=[s * 2 for s in sizes], c=colors, alpha=0.15, edgecolors="none", zorder=3)
     ax2.scatter(distances, profits, s=sizes, c=colors, alpha=0.9, edgecolors="none", zorder=4)
@@ -1247,10 +1318,11 @@ def draw_flight_radar(origin_iata, plane, routes_data):
               color="#4a5570", fontsize=8, ha="center")
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight", facecolor="#0a0e1a", dpi=100)
+    plt.savefig(buf, format="png", bbox_inches="tight", facecolor="#050805", dpi=100)
     buf.seek(0)
     plt.close(fig)
     return buf
+
 
 def get_top_alternative_routes(origin, plane, user_id, exclude_dest=None, limit=3):
     """Top profitable routes from `origin` with `plane`, excluding the
