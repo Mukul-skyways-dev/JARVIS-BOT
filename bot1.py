@@ -18,6 +18,7 @@ import numpy as np
 import io
 
 import sqlite3
+import re
 import os
 import requests
 from openai import OpenAI
@@ -62,6 +63,38 @@ groq = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
+async def get_groq_reply(user_message):
+    """Actually calls Groq for a real conversational reply — this was
+    previously set up but never called anywhere, so every message that
+    wasn't a greeting/thanks/help fell through to a generic canned
+    reply. Runs the (blocking) API call in a thread so it doesn't
+    freeze the bot's event loop."""
+    try:
+        response = await asyncio.to_thread(
+            groq.chat.completions.create,
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are JARVIS, a Discord bot for an AM4 (Airline Manager 4) "
+                        "game alliance called AERO CROWN DYNASTY. Keep replies short "
+                        "(2-4 sentences), friendly, a little witty. For route/profit/"
+                        "aircraft-specific numbers, tell the user to use a command "
+                        "like !route, !best_r, !compare, or !aircraft instead of "
+                        "guessing numbers yourself."
+                    )
+                },
+                {"role": "user", "content": user_message}
+            ],
+            max_tokens=200,
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"⚠️ Groq API error: {e}")
+        return None
+
 WELCOME_ROLE_NAME = "Member"
 
 intents = discord.Intents.default()
@@ -92,6 +125,30 @@ def download_db():
         print("❌ DB download failed:", e)
 
 download_db()
+
+# =========================================================
+# WORLD MAP DATA (one-time download, cached — for routemap's real
+# geography, not fetched fresh every restart like am4_data.db is)
+# =========================================================
+WORLD_MAP_URL = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson"
+WORLD_MAP_FILE = "world_countries.geojson"
+
+def download_world_map():
+    if os.path.exists(WORLD_MAP_FILE):
+        return
+    print("🔄 Downloading world map data (one-time, ~800KB, public domain)...")
+    try:
+        with requests.get(WORLD_MAP_URL, timeout=30, stream=True) as response:
+            response.raise_for_status()
+            with open(WORLD_MAP_FILE, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        f.write(chunk)
+        print("✅ World map data downloaded")
+    except Exception as e:
+        print("❌ World map download failed:", e)
+
+download_world_map()
 
 
 # =========================================================
@@ -1726,10 +1783,11 @@ def route_health_color(ci_margin):
     else:
         return 0xe74c3c  # weak/risky
 
-@bot.hybrid_command(name="best_world", description="World-wide: the single most profitable routes for an aircraft, scanned across all origins")
-@app_commands.describe(plane_name="Aircraft")
-@app_commands.autocomplete(plane_name=aircraft_autocomplete)
-async def best_world(ctx, *, plane_name: str):
+def _looks_like_airport_code(token):
+    return token.isalpha() and 2 <= len(token) <= 4
+
+async def _best_world_scan(ctx, plane_name):
+    """Old behaviour, unchanged: world-wide top-10 scan for one aircraft."""
     plane = get_plane(plane_name)
     if not plane:
         return await ctx.send("❌ Plane not found")
@@ -1778,6 +1836,117 @@ async def best_world(ctx, *, plane_name: str):
     )
     embed.set_footer(text=f"Scanned {len(candidates):,} candidate routes (capped at 8,000 for performance) • JARVIS")
     await msg.edit(content=None, embed=embed)
+
+async def _best_world_specific(ctx, frm, to, plane_name, max_distance):
+    """New mode: check ONE specific route. If it's beyond the aircraft's
+    range (or beyond max_distance, if given), auto-search for the best
+    single stopover (same logic as !route) — and if even that can't
+    make it work, say so explicitly instead of silently computing a
+    nonsensical over-range result."""
+    plane = get_plane(plane_name)
+    if not plane:
+        return await ctx.send("❌ Plane not found")
+
+    route = get_route(frm, to)
+    if not route:
+        return await ctx.send(f"❌ Route not found: **{frm}** → **{to}**")
+
+    distance_total = float(route["distance"])
+    effective_range = min(float(plane["range"]), max_distance) if max_distance else float(plane["range"])
+
+    if distance_total <= effective_range:
+        result = calc(route, plane, ctx.author.id)
+        embed = discord.Embed(
+            title=f"✅ Direct Route OK • {plane['name']}",
+            description=f"**{frm.upper()} → {to.upper()}**\n{int(distance_total):,} km — within range, no stopover needed",
+            color=route_health_color(result["ci"])
+        )
+        embed.add_field(name="💰 Profit/Day", value=f"${result['profit_day']:,}", inline=True)
+        embed.add_field(name="🔁 Trips/Day", value=str(result["trips"]), inline=True)
+        embed.add_field(name="📊 CI Margin", value=f"{result['ci']}%", inline=True)
+        return await ctx.send(embed=embed)
+
+    # Beyond range (or beyond the user's max_distance cap) — search for the
+    # best single stopover, same approach as the !route command.
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes
+            WHERE f_iata = ? AND CAST(distance AS REAL) <= ?
+            LIMIT 200
+        """, (frm.upper(), effective_range))
+        leg1_candidates = cursor.fetchall()
+
+    best_combined = -1
+    best_stop = None
+    best_leg1 = None
+    best_leg2 = None
+    for cand in leg1_candidates:
+        cand_iata, cand_dist, cy, cj, cf = cand
+        if int(cy) + int(cj) + int(cf) == 0:
+            continue
+        leg2_route = get_route(cand_iata, to)
+        if not leg2_route or leg2_route["distance"] > effective_range:
+            continue
+        leg1_route = {"distance": float(cand_dist), "y": int(cy), "j": int(cj), "f": int(cf), "cargo": 0}
+        try:
+            leg1_result = calc(leg1_route, plane, ctx.author.id)
+            leg2_result = calc(leg2_route, plane, ctx.author.id)
+            combined = leg1_result["profit_day"] + leg2_result["profit_day"]
+        except:
+            continue
+        if combined > best_combined:
+            best_combined = combined
+            best_stop = cand_iata
+            best_leg1 = leg1_result
+            best_leg2 = leg2_result
+
+    if not best_stop:
+        limit_note = f" (max distance limit: {max_distance:,} km)" if max_distance else ""
+        return await ctx.send(
+            f"❌ Route not found due to flight distance — **{frm.upper()} → {to.upper()}** "
+            f"is {int(distance_total):,} km, beyond **{plane['name']}**'s range "
+            f"({int(plane['range']):,} km){limit_note}, and no viable single stopover connects it either."
+        )
+
+    embed = discord.Embed(
+        title=f"🔀 Stopover Required • {plane['name']}",
+        description=f"**{frm.upper()} → {to.upper()}** ({int(distance_total):,} km) exceeds range directly — best stopover found automatically:",
+        color=route_health_color(min(best_leg1["ci"], best_leg2["ci"]))
+    )
+    embed.add_field(name=f"{frm.upper()} → {best_stop}", value=f"${best_leg1['profit_day']:,}/day", inline=True)
+    embed.add_field(name=f"{best_stop} → {to.upper()}", value=f"${best_leg2['profit_day']:,}/day", inline=True)
+    embed.add_field(name="Combined Profit", value=f"${best_combined:,}/day", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.hybrid_command(name="best_world", description="World-wide best routes for an aircraft, OR check one specific route with auto-stopover")
+@app_commands.describe(query="Just an aircraft (world-scan), OR 'FROM TO AIRCRAFT [max_km]' for a specific route")
+async def best_world(ctx, *, query: str):
+    tokens = query.strip().split()
+
+    specific_mode = (
+        len(tokens) >= 3
+        and _looks_like_airport_code(tokens[0])
+        and _looks_like_airport_code(tokens[1])
+    )
+
+    if not specific_mode:
+        return await _best_world_scan(ctx, query)
+
+    frm, to = tokens[0].upper(), tokens[1].upper()
+    rest = tokens[2:]
+    max_distance = None
+    if rest and re.match(r"^\d+(km)?$", rest[-1], re.IGNORECASE):
+        max_distance = int(re.sub(r"\D", "", rest[-1]))
+        rest = rest[:-1]
+    plane_name = " ".join(rest).strip()
+
+    if not plane_name:
+        return await ctx.send("❌ Give an aircraft name — e.g. `best_world DEL BOM A380` or `best_world DEL BOM A380 9999km`")
+
+    await _best_world_specific(ctx, frm, to, plane_name, max_distance)
+
+
 
 def draw_whatif_heatmap(planes, ci_values, matrix, frm, to):
     """Aircraft x Cost-Index profit/day heatmap — feature 3."""
@@ -2134,8 +2303,13 @@ async def on_message(message):
     elif any(word in msg for word in help_words):
         await message.channel.send(f"🧠 {message.author.mention} I can help with AM4 routes, aircraft data, comparisons, leaderboard, and system commands.")
     else:
-        replies = [f"{message.author.mention} I'm not fully sure, but I can try helping. Can you rephrase?", f"{message.author.mention} 🤔 I need a bit more context.", f"{message.author.mention} I don't have a direct match for that, but I'm listening."]
-        await message.channel.send(random.choice(replies))
+        async with message.channel.typing():
+            ai_reply = await get_groq_reply(msg)
+        if ai_reply:
+            await message.channel.send(f"{message.author.mention} {ai_reply}")
+        else:
+            replies = [f"{message.author.mention} I'm not fully sure, but I can try helping. Can you rephrase?", f"{message.author.mention} 🤔 I need a bit more context.", f"{message.author.mention} I don't have a direct match for that, but I'm listening."]
+            await message.channel.send(random.choice(replies))
     await bot.process_commands(message)
 
 # =========================
