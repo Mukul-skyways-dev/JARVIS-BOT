@@ -1190,105 +1190,69 @@ def draw_flight_radar(origin_iata, plane, routes_data):
     """routes_data: list of dicts with dest_iata, dest_lat, dest_lng,
     profit_day, trips, ci, distance. Draws a two-panel display:
 
-    LEFT — a REAL lat/lng map (destinations sit at their true
-    coordinates), skinned to look like an ATC radar scope: a circular
-    viewport zoomed on the route cluster, concentric range rings, a
-    center crosshair, a decorative sweep wedge, and a glowing bezel.
-    No external map image is fetched, so there's no fragile network
-    dependency — the "radar" look comes entirely from matplotlib
-    shapes drawn over real coordinates.
+    LEFT — a real, bright daylight lat/lng map, tightly zoomed to the
+    actual bounding box of the origin + its destinations (not a fixed
+    wide view) — routes are glowing lines colored by profit.
 
     RIGHT — 'Profit Velocity': distance vs profit/day glow-scatter,
     dark data-panel styling.
     """
-    from matplotlib.patches import Circle, Wedge
-
     fig = plt.figure(figsize=(13, 5.6))
-    fig.patch.set_facecolor("#050805")
+    fig.patch.set_facecolor("#0d1117")
 
     origin_lat = routes_data[0]["origin_lat"]
     origin_lng = routes_data[0]["origin_lng"]
 
-    # Zoom window scaled to the farthest profitable destination — a
-    # cluster of short-haul routes zooms in tight, long-haul zooms out.
-    # ~111km per degree of latitude (a stylised approximation).
-    max_dist = max((r["distance"] for r in routes_data), default=1000)
-    scope_radius = max(min(max_dist / 111 * 1.25, 90), 8)
-
-    # ============ LEFT: RADAR SCOPE MAP (real lat/lng) ============
+    # ============ LEFT: DAYLIGHT MAP, ZOOMED TO THE ROUTE CLUSTER ============
     ax1 = fig.add_subplot(1, 2, 1)
-    ax1.set_facecolor("#050805")
+    ax1.set_facecolor("#dff2fb")  # bright daylight ocean
     ax1.set_aspect("equal")
 
-    scope = Circle((origin_lng, origin_lat), scope_radius, transform=ax1.transData)
-    ax1.add_patch(Circle((origin_lng, origin_lat), scope_radius, facecolor="#08120a",
-                          edgecolor="none", zorder=0))
+    all_lats = [origin_lat] + [r["dest_lat"] for r in routes_data]
+    all_lngs = [origin_lng] + [r["dest_lng"] for r in routes_data]
+    lat_min, lat_max = min(all_lats), max(all_lats)
+    lng_min, lng_max = min(all_lngs), max(all_lngs)
+    lat_pad = max((lat_max - lat_min) * 0.2, 3)
+    lng_pad = max((lng_max - lng_min) * 0.2, 3)
+    view_lat_min, view_lat_max = lat_min - lat_pad, lat_max + lat_pad
+    view_lng_min, view_lng_max = lng_min - lng_pad, lng_max + lng_pad
 
-    # Concentric range rings
-    for frac in (0.25, 0.5, 0.75, 1.0):
-        ring = Circle((origin_lng, origin_lat), scope_radius * frac, facecolor="none",
-                       edgecolor="#1f6b3a", linewidth=1.1, alpha=0.7, zorder=1)
-        ring.set_clip_path(scope)
-        ax1.add_patch(ring)
-        ring_km = int(scope_radius * frac * 111)
-        ax1.text(origin_lng, origin_lat + scope_radius * frac, f"{ring_km:,}km",
-                  color="#2e8f4d", fontsize=6.5, ha="center", va="bottom", zorder=6, clip_path=scope)
-
-    # Crosshair through the scope center
-    ax1.plot([origin_lng - scope_radius, origin_lng + scope_radius], [origin_lat, origin_lat],
-              color="#1f6b3a", linewidth=0.8, alpha=0.6, zorder=1, clip_on=True)
-    ax1.plot([origin_lng, origin_lng], [origin_lat - scope_radius, origin_lat + scope_radius],
-              color="#1f6b3a", linewidth=0.8, alpha=0.6, zorder=1, clip_on=True)
-
-    # Decorative sweep wedge — purely stylistic "live scan" flourish
-    sweep = Wedge((origin_lng, origin_lat), scope_radius, 60, 95, facecolor="#39ff6a", alpha=0.14, zorder=2)
-    sweep.set_clip_path(scope)
-    ax1.add_patch(sweep)
-
-    # Faint airport "contacts" within the scope window — real coordinates
+    # Context airports within the zoomed view — tan/land-toned dots
     with get_static_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT lat, lng FROM airports
             WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
-        """, (origin_lat - scope_radius, origin_lat + scope_radius,
-              origin_lng - scope_radius, origin_lng + scope_radius))
+        """, (view_lat_min, view_lat_max, view_lng_min, view_lng_max))
         ctx_pts = cursor.fetchall()
     if ctx_pts:
-        pts = ax1.scatter([p["lng"] for p in ctx_pts], [p["lat"] for p in ctx_pts],
-                          s=1.6, color="#215c34", zorder=2, linewidths=0)
-        pts.set_clip_path(scope)
+        ax1.scatter([p["lng"] for p in ctx_pts], [p["lat"] for p in ctx_pts],
+                    s=4, color="#c9b896", zorder=1, linewidths=0, alpha=0.9)
 
     max_profit = max((r["profit_day"] for r in routes_data), default=1) or 1
+    day_cmap = LinearSegmentedColormap.from_list("jarvis_day", ["#3b3b98", "#c0392b", "#e67e22"])
     for r in routes_data:
         t = max(0, min(1, r["profit_day"] / max_profit))
-        color = _JARVIS_CMAP(t)
-        lw = 0.6 + t * 2.2
-        line1, = ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
-                          color=color, linewidth=lw * 3, alpha=0.14, zorder=3, solid_capstyle="round")
-        line1.set_clip_path(scope)
-        line2, = ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
-                          color=color, linewidth=lw, alpha=0.9, zorder=4, solid_capstyle="round")
-        line2.set_clip_path(scope)
-        blip = ax1.scatter([r["dest_lng"]], [r["dest_lat"]], s=16 + t * 38, color=color, zorder=5,
-                           edgecolors="#050805", linewidths=0.4)
-        blip.set_clip_path(scope)
+        color = day_cmap(t)
+        lw = 0.8 + t * 2.4
+        ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
+                  color=color, linewidth=lw * 2.5, alpha=0.15, zorder=2, solid_capstyle="round")
+        ax1.plot([origin_lng, r["dest_lng"]], [origin_lat, r["dest_lat"]],
+                  color=color, linewidth=lw, alpha=0.95, zorder=3, solid_capstyle="round")
+        ax1.scatter([r["dest_lng"]], [r["dest_lat"]], s=22 + t * 42, color=color, zorder=4,
+                    edgecolors="#0d1117", linewidths=0.6)
 
-    # Origin hub marker — layered glow at scope center
-    for size, alpha in [(500, 0.10), (260, 0.20), (110, 0.45), (48, 1.0)]:
-        ax1.scatter([origin_lng], [origin_lat], s=size, color="#39ff6a", alpha=alpha, zorder=6, edgecolors="none")
+    # Origin marker — bold, high-contrast against the bright map
+    ax1.scatter([origin_lng], [origin_lat], s=260, color="#1a1a2e", alpha=0.18, zorder=5, edgecolors="none")
+    ax1.scatter([origin_lng], [origin_lat], s=90, color="#1a1a2e", zorder=6, edgecolors="#ffffff", linewidths=1.5)
 
-    # Scope bezel
-    ax1.add_patch(Circle((origin_lng, origin_lat), scope_radius, facecolor="none",
-                         edgecolor="#39ff6a", linewidth=2, zorder=7))
-
-    ax1.set_xlim(origin_lng - scope_radius * 1.08, origin_lng + scope_radius * 1.08)
-    ax1.set_ylim(origin_lat - scope_radius * 1.08, origin_lat + scope_radius * 1.08)
+    ax1.set_xlim(view_lng_min, view_lng_max)
+    ax1.set_ylim(view_lat_min, view_lat_max)
     ax1.set_xticks([])
     ax1.set_yticks([])
     for spine in ax1.spines.values():
         spine.set_visible(False)
-    ax1.set_title(f"RADAR SCOPE • {origin_iata}", color="#39ff6a", fontsize=13, fontweight="bold", loc="left", pad=10)
+    ax1.set_title(f"ROUTE MAP • {origin_iata}", color="#1a1a2e", fontsize=13, fontweight="bold", loc="left", pad=10)
 
     # ============ RIGHT: PROFIT VELOCITY (dark data panel) ============
     ax2 = fig.add_subplot(1, 2, 2)
@@ -1318,7 +1282,7 @@ def draw_flight_radar(origin_iata, plane, routes_data):
               color="#4a5570", fontsize=8, ha="center")
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight", facecolor="#050805", dpi=100)
+    plt.savefig(buf, format="png", bbox_inches="tight", facecolor="#0d1117", dpi=100)
     buf.seek(0)
     plt.close(fig)
     return buf
@@ -1370,19 +1334,44 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     distance_total = float(route["distance"])
     plane_range = float(plane["range"])
     stop_airport = None
-    
+    stop_leg1 = None
+    stop_leg2 = None
+
     if distance_total > plane_range:
+        # Best Stopover Selector: evaluate every airport reachable from
+        # the origin (leg1 <= range) from which the destination is ALSO
+        # reachable (leg2 <= range), and pick whichever gives the best
+        # combined profit — not just the geographically nearest one.
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-            SELECT t_iata FROM routes
-            WHERE f_iata = ? AND CAST(distance AS REAL) < ?
-            ORDER BY CAST(distance AS REAL) DESC LIMIT 1
+                SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes
+                WHERE f_iata = ? AND CAST(distance AS REAL) <= ?
+                LIMIT 200
             """, (frm.upper(), plane_range))
-            row = cursor.fetchone()
-            if row:
-                stop_airport = row[0]
-    
+            leg1_candidates = cursor.fetchall()
+
+        best_combined_profit = -1
+        for cand in leg1_candidates:
+            cand_iata, cand_dist, cy, cj, cf = cand
+            if int(cy) + int(cj) + int(cf) == 0:
+                continue
+            leg2_route = get_route(cand_iata, to)
+            if not leg2_route or leg2_route["distance"] > plane_range:
+                continue
+            leg1_route = {"distance": float(cand_dist), "y": int(cy), "j": int(cj), "f": int(cf), "cargo": 0}
+            try:
+                leg1_result = calc(leg1_route, plane, ctx.author.id, cost_index=ci)
+                leg2_result = calc(leg2_route, plane, ctx.author.id, cost_index=ci)
+                combined = leg1_result["profit_day"] + leg2_result["profit_day"]
+            except:
+                continue
+            if combined > best_combined_profit:
+                best_combined_profit = combined
+                stop_airport = cand_iata
+                stop_leg1 = leg1_result
+                stop_leg2 = leg2_result
+
     result = calc(route, plane, ctx.author.id, cost_index=ci)
     mode = result["mode"]
     
@@ -1402,6 +1391,43 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     embed.add_field(name="🎟 Ticket Pricing", value=f"**Y:** ${result['y_price']:,}\n**J:** ${result['j_price']:,}\n**F:** ${result['f_price']:,}", inline=True)
     embed.add_field(name="💰 Per Flight", value=f"**Income:** ${result['income_trip']:,}\n**Fuel:** ${result['fuel']:,}\n**CO2:** ${result['co2']:,}\n**Maint:** ${result['acheck'] + result['repair']:,}\n\n**Profit:** ${result['profit_trip']:,}\n**CI Margin:** {result['ci']}%\n**Contribution:** ${result['contribution_trip']:,}", inline=False)
     embed.add_field(name="📅 Per Day", value=f"**Income:** ${result['income_day']:,}\n**Fuel:** ${result['fuel_day']:,}\n**CO2:** ${result['co2_day']:,}\n**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n**Profit:** ${result['profit_day']:,}\n**Contribution:** ${result['contribution_day']:,}\n**Flights:** {result['trips']}", inline=False)
+
+    if stop_airport and stop_leg1 and stop_leg2:
+        embed.add_field(
+            name="🔀 Best Stopover (auto-selected by combined profit)",
+            value=f"**{frm.upper()} → {stop_airport}:** ${stop_leg1['profit_day']:,}/day\n"
+                  f"**{stop_airport} → {to.upper()}:** ${stop_leg2['profit_day']:,}/day\n"
+                  f"**Combined:** ${stop_leg1['profit_day'] + stop_leg2['profit_day']:,}/day",
+            inline=False
+        )
+
+    # ---- Break-even Calculator (feature 2) ----
+    aircraft_cost = plane.get("cost", 0)
+    if result["profit_day"] > 0 and aircraft_cost:
+        payback_days = aircraft_cost / result["profit_day"]
+        annual_roi = (result["profit_day"] * 365 / aircraft_cost) * 100
+        embed.add_field(
+            name="💵 Break-Even",
+            value=f"**Payback:** {payback_days:,.0f} days\n**Annual ROI:** {annual_roi:,.0f}%",
+            inline=True
+        )
+    elif aircraft_cost:
+        embed.add_field(name="💵 Break-Even", value="⚠️ Route runs at a loss — no payback at this CI/mode.", inline=True)
+
+    # ---- Fleet Saturation Planner (feature 4) ----
+    total_demand = route["y"] + route["j"] + route["f"]
+    cap = plane.get("capacity", 0)
+    demand_trips_needed = max(1, -(-total_demand // cap)) if cap else 1
+    technical_max = max(1, int(24 / result["time"])) if result["time"] else 1
+    if demand_trips_needed > technical_max:
+        fleet_needed = -(-demand_trips_needed // technical_max)
+        embed.add_field(
+            name="✈️ Fleet Saturation",
+            value=f"**{fleet_needed} aircraft** needed to fully cover this route's demand\n(1 aircraft only manages {result['trips']}/{demand_trips_needed} required trips)",
+            inline=True
+        )
+    else:
+        embed.add_field(name="✈️ Fleet Saturation", value="✅ 1 aircraft fully covers this route's demand", inline=True)
 
     # ---- CI Optimization — the value-add a fixed-CI calculator can't offer ----
     best_profit, best_contrib = find_optimal_ci(route, plane, ctx.author.id)
@@ -1699,6 +1725,143 @@ def route_health_color(ci_margin):
         return 0xf1c40f  # thin but workable
     else:
         return 0xe74c3c  # weak/risky
+
+@bot.hybrid_command(name="best_world", description="World-wide: the single most profitable routes for an aircraft, scanned across all origins")
+@app_commands.describe(plane_name="Aircraft")
+@app_commands.autocomplete(plane_name=aircraft_autocomplete)
+async def best_world(ctx, *, plane_name: str):
+    plane = get_plane(plane_name)
+    if not plane:
+        return await ctx.send("❌ Plane not found")
+
+    msg = await ctx.send(f"🔍 Scanning routes world-wide for **{plane['name']}**... this can take a few seconds.")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT f_iata, t_iata, distance, dem_y, dem_j, dem_f FROM routes
+            WHERE CAST(distance AS REAL) <= ?
+            LIMIT 8000
+        """, (float(plane["range"]),))
+        candidates = cursor.fetchall()
+
+    results = []
+    for r in candidates:
+        try:
+            frm_i, to_i, dist, y, j, f = r
+            y, j, f = int(y), int(j), int(f)
+            if y + j + f == 0:
+                continue
+            route_dict = {"distance": float(dist), "y": y, "j": j, "f": f, "cargo": 0}
+            result = calc(route_dict, plane, ctx.author.id)
+            if result["profit_day"] <= 0:
+                continue
+            results.append((frm_i, to_i, float(dist), result["profit_day"], result["trips"], result["ci"]))
+        except:
+            continue
+
+    if not results:
+        return await msg.edit(content=f"❌ No profitable routes found world-wide for **{plane['name']}**.")
+
+    results.sort(key=lambda x: x[3], reverse=True)
+    top = results[:10]
+
+    text = ""
+    for i, res in enumerate(top, 1):
+        frm_i, to_i, dist, profit, trips, ci = res
+        text += f"**{i}. {frm_i} → {to_i}**\n${profit:,}/day  •  {int(dist):,} km  •  {trips} trips/day  •  CI margin {ci}%\n\n"
+
+    embed = discord.Embed(
+        title=f"🌍 World's Best Routes • {plane['name']}",
+        description=text,
+        color=0x00e5ff
+    )
+    embed.set_footer(text=f"Scanned {len(candidates):,} candidate routes (capped at 8,000 for performance) • JARVIS")
+    await msg.edit(content=None, embed=embed)
+
+def draw_whatif_heatmap(planes, ci_values, matrix, frm, to):
+    """Aircraft x Cost-Index profit/day heatmap — feature 3."""
+    fig, ax = plt.subplots(figsize=(7.5, 1.6 + 1.1 * len(planes)))
+    fig.patch.set_facecolor("#0a0e1a")
+    ax.set_facecolor("#0a0e1a")
+
+    n_rows = len(planes)
+    n_cols = len(ci_values)
+
+    valid_vals = [v for row in matrix for v in row if v is not None]
+    vmin, vmax = (min(valid_vals), max(valid_vals)) if valid_vals else (0, 1)
+    if vmax == vmin:
+        vmax = vmin + 1
+
+    for i in range(n_rows):
+        for j in range(n_cols):
+            val = matrix[i][j]
+            if val is None:
+                color = "#2a3450"
+                label = "OUT OF\nRANGE"
+                text_color = "#8e9ac0"
+            else:
+                t = (val - vmin) / (vmax - vmin)
+                color = _JARVIS_CMAP(t)
+                label = f"${val:,.0f}"
+                text_color = "#0a0e1a"
+            rect = plt.Rectangle((j, n_rows - i - 1), 1, 1, facecolor=color, edgecolor="#0a0e1a", linewidth=2)
+            ax.add_patch(rect)
+            ax.text(j + 0.5, n_rows - i - 1 + 0.5, label, ha="center", va="center",
+                    color=text_color, fontsize=8.5, fontweight="bold")
+
+    ax.set_xlim(0, n_cols)
+    ax.set_ylim(0, n_rows)
+    ax.set_xticks([j + 0.5 for j in range(n_cols)])
+    ax.set_xticklabels([f"CI {c}" for c in ci_values], color="#8e9ac0", fontsize=9)
+    ax.set_yticks([n_rows - i - 1 + 0.5 for i in range(n_rows)])
+    ax.set_yticklabels([p["name"] for p in planes], color="#8e9ac0", fontsize=9)
+    ax.tick_params(length=0)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_title(f"PROFIT/DAY MATRIX • {frm.upper()} → {to.upper()}", color="#00e5ff", fontsize=12, fontweight="bold", pad=12)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight", facecolor="#0a0e1a", dpi=100)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+@bot.hybrid_command(name="whatif", description="Compare 2-4 aircraft across Cost Index settings in one heatmap")
+@app_commands.describe(frm="Origin airport", to="Destination airport", planes="Comma-separated aircraft, e.g. 'a380, 777, 747'")
+@app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
+async def whatif(ctx, frm: str, to: str, *, planes: str):
+    route = get_route(frm, to)
+    if not route:
+        return await ctx.send("❌ Route not found")
+
+    plane_names = [p.strip() for p in planes.split(",") if p.strip()][:4]
+    resolved_planes = []
+    for name in plane_names:
+        p = get_plane(name)
+        if p:
+            resolved_planes.append(p)
+    if len(resolved_planes) < 2:
+        return await ctx.send("❌ Need at least 2 valid aircraft, comma-separated — e.g. `a380, 777, 747`")
+
+    ci_values = [0, 70, 140, 200]
+    matrix = []
+    for p in resolved_planes:
+        row_vals = []
+        for ci_val in ci_values:
+            if route["distance"] > p["range"]:
+                row_vals.append(None)
+                continue
+            result = calc(route, p, ctx.author.id, cost_index=ci_val)
+            row_vals.append(result["profit_day"])
+        matrix.append(row_vals)
+
+    img_buf = draw_whatif_heatmap(resolved_planes, ci_values, matrix, frm, to)
+    file = discord.File(img_buf, filename="whatif.png")
+    embed = discord.Embed(title=f"🧮 What-If Matrix • {frm.upper()} → {to.upper()}", description="Profit/day across aircraft & Cost Index — greener = better", color=0xa855f7)
+    embed.set_image(url="attachment://whatif.png")
+    embed.set_footer(text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT")
+    await ctx.send(embed=embed, file=file)
 
 @bot.hybrid_command(name="routemap", description="Flight Radar — glowing route map + profit-vs-distance chart from an airport")
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
