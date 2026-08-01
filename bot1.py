@@ -1,5 +1,6 @@
 import discord
-import random 
+import random
+import json
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Modal, TextInput, View, Button
@@ -23,9 +24,6 @@ import os
 import requests
 from openai import OpenAI
 import pytz
-import asyncio
-from gtts import gTTS
-
 
 from export_view import ExportView
 
@@ -66,34 +64,181 @@ groq = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-async def get_groq_reply(user_message):
-    """Actually calls Groq for a real conversational reply — this was
-    previously set up but never called anywhere, so every message that
-    wasn't a greeting/thanks/help fell through to a generic canned
-    reply. Runs the (blocking) API call in a thread so it doesn't
-    freeze the bot's event loop."""
+# =========================================================
+# GROQ CONVERSATIONAL AI — memory + real-data tool calling
+# =========================================================
+# Per-user short-term conversation memory (in-memory, resets on
+# restart — not persisted to disk). Each entry is a list of
+# {"role": ..., "content": ...} dicts, oldest first.
+_conversation_memory = {}
+MEMORY_TURNS = 6  # keep last 6 user+assistant messages (~3 exchanges)
+
+def _get_history(user_id):
+    return _conversation_memory.setdefault(user_id, [])
+
+def _remember(user_id, user_message, assistant_reply):
+    history = _get_history(user_id)
+    history.append({"role": "user", "content": user_message})
+    history.append({"role": "assistant", "content": assistant_reply})
+    if len(history) > MEMORY_TURNS:
+        del history[:-MEMORY_TURNS]
+
+GROQ_SYSTEM_PROMPT = (
+    "You are JARVIS, a Discord bot for an AM4 (Airline Manager 4) game "
+    "alliance called AERO CROWN DYNASTY. ALWAYS reply in English only, "
+    "regardless of what language the user writes in. Keep replies short "
+    "(2-4 sentences), friendly, a little witty. You have tools to look "
+    "up REAL aircraft specs, route demand/distance, and airport info — "
+    "always use a tool instead of guessing when the user asks about "
+    "something a tool can answer. For full route profit/config "
+    "calculations, tell the user to run !route, !best_r, !compare, "
+    "!whatif, or !best_world instead — those use the real profit engine "
+    "and you don't have access to it directly."
+)
+
+GROQ_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_aircraft",
+            "description": "Get real specs for an aircraft: capacity, range, speed, fuel burn, CO2, purchase cost.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Aircraft name or shortcode, e.g. 'A380' or 'b744'"}
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_route",
+            "description": "Get real distance and passenger demand (Economy/Business/First) between two airports.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "frm": {"type": "string", "description": "Origin IATA code, e.g. DEL"},
+                    "to": {"type": "string", "description": "Destination IATA code, e.g. BOM"}
+                },
+                "required": ["frm", "to"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_airport",
+            "description": "Get real info about an airport: full name, city, country, runway length, hub cost.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "IATA code, ICAO code, or city name"}
+                },
+                "required": ["query"]
+            }
+        }
+    }
+]
+
+def _tool_lookup_aircraft(name):
+    p = get_plane(name)
+    if not p:
+        return {"error": f"No aircraft found matching '{name}'"}
+    return {
+        "name": p["name"], "shortcode": p["shortname"], "capacity_units": p["capacity"],
+        "range_km": p["range"], "speed_kmh": p["speed"], "fuel_per_km": p["fuel"],
+        "co2_per_km": p["co2"], "purchase_cost_usd": p["cost"]
+    }
+
+def _tool_lookup_route(frm, to):
+    r = get_route(frm, to)
+    if not r:
+        return {"error": f"No route on file between '{frm}' and '{to}'"}
+    return {"distance_km": r["distance"], "demand_economy": r["y"], "demand_business": r["j"], "demand_first": r["f"]}
+
+def _tool_lookup_airport(query):
+    raw = query.strip()
+    code_upper = raw.upper()
+    city_query = resolve_city_alias(raw)
+    with get_static_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM airports WHERE iata = ? OR icao = ? LIMIT 1", (code_upper, code_upper))
+        row = cursor.fetchone()
+        if not row:
+            cursor.execute("""
+                SELECT * FROM airports WHERE LOWER(name) LIKE ? OR LOWER(fullname) LIKE ?
+                ORDER BY market DESC LIMIT 1
+            """, (f"%{city_query}%", f"%{city_query}%"))
+            row = cursor.fetchone()
+    if not row:
+        return {"error": f"No airport found matching '{query}'"}
+    return {
+        "iata": row["iata"], "icao": row["icao"], "name": row["fullname"], "city": row["name"],
+        "country": row["country"], "runway_ft": row["rwy"], "hub_cost_usd": row["hub_cost"]
+    }
+
+def _execute_tool(name, args):
+    try:
+        if name == "lookup_aircraft":
+            return _tool_lookup_aircraft(args.get("name", ""))
+        elif name == "lookup_route":
+            return _tool_lookup_route(args.get("frm", ""), args.get("to", ""))
+        elif name == "lookup_airport":
+            return _tool_lookup_airport(args.get("query", ""))
+        return {"error": "unknown tool"}
+    except Exception as e:
+        return {"error": str(e)}
+
+async def get_groq_reply(user_id, user_message):
+    """Calls Groq with conversation memory + real-data tools. Runs
+    blocking API calls in a thread so it doesn't freeze the event loop."""
+    history = _get_history(user_id)
+    messages = [{"role": "system", "content": GROQ_SYSTEM_PROMPT}] + history + [{"role": "user", "content": user_message}]
+
     try:
         response = await asyncio.to_thread(
             groq.chat.completions.create,
             model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are JARVIS, a Discord bot for an AM4 (Airline Manager 4) "
-                        "game alliance called AERO CROWN DYNASTY. Keep replies short "
-                        "(2-4 sentences), friendly, a little witty. For route/profit/"
-                        "aircraft-specific numbers, tell the user to use a command "
-                        "like !route, !best_r, !compare, or !aircraft instead of "
-                        "guessing numbers yourself."
-                    )
-                },
-                {"role": "user", "content": user_message}
-            ],
-            max_tokens=200,
+            messages=messages,
+            tools=GROQ_TOOLS,
+            tool_choice="auto",
+            max_tokens=300,
             temperature=0.7
         )
-        return response.choices[0].message.content
+        reply_msg = response.choices[0].message
+
+        if reply_msg.tool_calls:
+            messages.append({
+                "role": "assistant",
+                "content": reply_msg.content or "",
+                "tool_calls": [
+                    {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in reply_msg.tool_calls
+                ]
+            })
+            for tc in reply_msg.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except Exception:
+                    args = {}
+                result = _execute_tool(tc.function.name, args)
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
+
+            follow_up = await asyncio.to_thread(
+                groq.chat.completions.create,
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                max_tokens=300,
+                temperature=0.7
+            )
+            final_text = follow_up.choices[0].message.content
+        else:
+            final_text = reply_msg.content
+
+        _remember(user_id, user_message, final_text)
+        return final_text
     except Exception as e:
         print(f"⚠️ Groq API error: {e}")
         return None
@@ -2266,219 +2411,13 @@ async def on_message(message):
         await message.channel.send(f"🧠 {message.author.mention} I can help with AM4 routes, aircraft data, comparisons, leaderboard, and system commands.")
     else:
         async with message.channel.typing():
-            ai_reply = await get_groq_reply(msg)
+            ai_reply = await get_groq_reply(message.author.id, msg)
         if ai_reply:
             await message.channel.send(f"{message.author.mention} {ai_reply}")
         else:
             replies = [f"{message.author.mention} I'm not fully sure, but I can try helping. Can you rephrase?", f"{message.author.mention} 🤔 I need a bit more context.", f"{message.author.mention} I don't have a direct match for that, but I'm listening."]
             await message.channel.send(random.choice(replies))
     await bot.process_commands(message)
-
-# =========================================================
-# GTTS VOICE SUMMARY - SAME TEXT CHANNEL
-# =========================================================
-# Queue system – multiple commands ke liye
-voice_queue = asyncio.Queue()
-is_voice_processing = False
-
-# Channel IDs where voice summary should NOT work (optional)
-VOICE_BLACKLIST = []
-
-def get_user_voice_preference(user_id):
-    """Check if user has voice summaries enabled. Default: True"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT voice_enabled FROM user_settings WHERE user_id = ?", (str(user_id),))
-        row = cursor.fetchone()
-        if row:
-            return bool(row[0])
-        # Default: ON
-        return True
-
-def set_user_voice_preference(user_id, enabled):
-    """Set user voice preference"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO user_settings (user_id, voice_enabled)
-            VALUES (?, ?)
-        """, (str(user_id), 1 if enabled else 0))
-        conn.commit()
-
-# Ensure table exists
-with get_db() as conn:
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_settings (
-            user_id TEXT PRIMARY KEY,
-            voice_enabled INTEGER DEFAULT 1
-        )
-    """)
-    conn.commit()
-
-def generate_voice_summary(content):
-    """
-    Generate a short voice summary from embed/response content
-    """
-    # Remove markdown, emojis, code blocks
-    clean_text = re.sub(r'```.*?```', '', content, flags=re.DOTALL)  # Remove code blocks
-    clean_text = re.sub(r'`[^`]+`', '', clean_text)                   # Remove inline code
-    clean_text = re.sub(r'[#*_~|]', '', clean_text)                  # Remove markdown
-    clean_text = re.sub(r'[\U0001F000-\U0001FFFF]', '', clean_text)  # Remove emojis
-    clean_text = re.sub(r'<t:[0-9]+:[A-Za-z]+>', '', clean_text)     # Remove Discord timestamps
-    clean_text = clean_text.strip()
-    
-    if not clean_text or len(clean_text) < 5:
-        return "Command completed successfully."
-    
-    # Extract key info for different command types
-    
-    # Route command
-    if "Profit" in clean_text and "Day" in clean_text:
-        match = re.search(r'\$([0-9,]+)', clean_text)
-        if match:
-            profit = match.group(1).replace(',', '')
-            return f"Route analysis complete. Daily profit is {profit} dollars."
-        return "Route analysis complete."
-    
-    # Best_r / Best_short / Best_long
-    if "Best" in clean_text and ("Routes" in clean_text or "Route" in clean_text):
-        # Count destinations
-        dest_count = clean_text.count("→")
-        if dest_count > 0:
-            return f"Found {dest_count} profitable routes."
-        return "Best routes analysis complete."
-    
-    # Airport command
-    if "Airport" in clean_text or "📍 Location" in clean_text:
-        return "Airport information displayed in the message above."
-    
-    # Aircraft command
-    if "✈️" in clean_text or "Capacity" in clean_text:
-        return "Aircraft specifications displayed."
-    
-    # Compare command
-    if "VS" in clean_text or "vs" in clean_text:
-        return "Aircraft comparison complete. Winner is shown above."
-    
-    # Leaderboard
-    if "Leaderboard" in clean_text:
-        return "Leaderboard displayed above."
-    
-    # Short summary
-    if len(clean_text) > 150:
-        clean_text = clean_text[:120] + "..."
-    
-    return clean_text
-
-async def process_voice_queue():
-    """Process queued voice messages one by one"""
-    global is_voice_processing
-    while True:
-        if voice_queue.empty():
-            is_voice_processing = False
-            await asyncio.sleep(0.5)
-            continue
-        
-        is_voice_processing = True
-        channel, text = await voice_queue.get()
-        
-        try:
-            summary = generate_voice_summary(text)
-            
-            # Generate audio
-            tts = gTTS(text=summary, lang='en', slow=False)
-            audio_file = "voice_summary.mp3"
-            tts.save(audio_file)
-            
-            # Send audio file to the same channel
-            if os.path.exists(audio_file):
-                await channel.send(file=discord.File(audio_file))
-                os.remove(audio_file)
-                
-        except Exception as e:
-            print(f"Voice summary error: {e}")
-            # Try to clean up
-            try:
-                if os.path.exists(audio_file):
-                    os.remove(audio_file)
-            except:
-                pass
-        
-        voice_queue.task_done()
-
-# Start queue processor
-async def start_voice_processor():
-    asyncio.create_task(process_voice_queue())
-
-# =========================================================
-# HOOK: Send voice summary after every command
-# =========================================================
-@bot.event
-async def on_command_completion(ctx):
-    """Send voice summary in the same channel after each command"""
-    
-    # Check blacklist
-    if ctx.channel.id in VOICE_BLACKLIST:
-        return
-    
-    # Check user preference
-    if not get_user_voice_preference(ctx.author.id):
-        return
-    
-    # Don't trigger for voice toggle command itself
-    if ctx.command and ctx.command.name == "voice_summary":
-        return
-    
-    try:
-        # Get the last bot response
-        async for msg in ctx.channel.history(limit=5):
-            if msg.author == bot.user:
-                # Get the content (embed description or text)
-                content = ""
-                if msg.embeds and len(msg.embeds) > 0:
-                    embed = msg.embeds[0]
-                    content = embed.title or ""
-                    content += " " + (embed.description or "")
-                    for field in embed.fields:
-                        content += " " + field.name + " " + field.value
-                else:
-                    content = msg.content
-                
-                if content.strip():
-                    await voice_queue.put((ctx.channel, content))
-                    break
-                
-    except Exception as e:
-        print(f"Voice summary hook error: {e}")
-
-# =========================================================
-# TOGGLE COMMAND (Optional)
-# =========================================================
-@bot.hybrid_command(description="Turn voice summaries ON/OFF for your commands")
-async def voice_summary(ctx, enable: str = None):
-    """Enable or disable voice summaries. Usage: /voice_summary on / off"""
-    if enable is None:
-        current = get_user_voice_preference(ctx.author.id)
-        return await ctx.send(f"🔊 Voice summaries: **{'✅ ON' if current else '❌ OFF'}**")
-    
-    enable_lower = enable.lower()
-    if enable_lower in ["on", "true", "1", "yes"]:
-        set_user_voice_preference(ctx.author.id, True)
-        await ctx.send("🔊 Voice summaries **enabled**! I'll read summaries after your commands.")
-    elif enable_lower in ["off", "false", "0", "no"]:
-        set_user_voice_preference(ctx.author.id, False)
-        await ctx.send("🔇 Voice summaries **disabled**.")
-    else:
-        await ctx.send("❌ Use `on` or `off`. Example: `/voice_summary on`")
-
-# =========================================================
-# START VOICE PROCESSOR ON BOT READY
-# =========================================================
-@bot.event
-async def on_ready():
-    print(f"✅ JARVIS online as {bot.user}")
-    await start_voice_processor()
 
 # =========================
 # RUN BOT
