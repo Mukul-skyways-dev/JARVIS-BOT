@@ -5,6 +5,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import Modal, TextInput, View, Button
 from typing import Literal
+from gtts import gTTS
 
 # =========================
 # MATPLOTLIB OPTIMIZE (Memory Fix)
@@ -1525,6 +1526,40 @@ def get_top_alternative_routes(origin, plane, user_id, exclude_dest=None, limit=
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:limit]
 
+def generate_voice_audio(text):
+    """Turns dynamic text into an in-memory MP3 (no disk writes, no
+    ffmpeg/voice-client needed — this is a standalone audio file
+    attached to the message, not a live voice-channel broadcast)."""
+    try:
+        tts = gTTS(text=text, lang="en")
+        buf = io.BytesIO()
+        tts.write_to_fp(buf)
+        buf.seek(0)
+        return buf
+    except Exception as e:
+        print(f"⚠️ Voice summary generation failed: {e}")
+        return None
+
+def build_route_voice_text(frm, to, plane, result, stop_airport=None):
+    """Builds a plain-language summary straight from the real calc()
+    result — every number here is read live from `result`, nothing
+    scripted or hardcoded."""
+    via = f" via {stop_airport}" if stop_airport else ""
+    parts = [
+        f"Route analysis for {frm.upper()} to {to.upper()}{via}, using the {plane['name']}.",
+        f"Distance is {result['distance']} kilometers, running {result['trips']} trips per day.",
+    ]
+    if result["profit_day"] > 0:
+        parts.append(
+            f"Daily profit comes to {result['profit_day']} dollars, "
+            f"with a cost index margin of {result['ci']} percent."
+        )
+    else:
+        parts.append("Warning — this route is currently running at a loss.")
+    if result.get("contribution_day"):
+        parts.append(f"Alliance contribution is about {round(result['contribution_day'])} dollars per day.")
+    return " ".join(parts)
+
 @bot.hybrid_command(description="Full route analysis — profit, demand, seat config, pricing, contribution")
 @app_commands.describe(frm="Origin airport", to="Destination airport", plane_name="Aircraft", ci="Cost Index 0-200 (default 200)")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete, plane_name=aircraft_autocomplete)
@@ -1678,9 +1713,17 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     }
     
     img_buf = draw_aircraft_card(plane, result, route, frm, to)
-    file = discord.File(img_buf, filename="route.png")
+    image_file = discord.File(img_buf, filename="route.png")
     embed.set_image(url="attachment://route.png")
-    await ctx.send(embed=embed, file=file, view=ExportView(report_data))
+
+    voice_text = build_route_voice_text(frm, to, plane, result, stop_airport=stop_airport)
+    voice_buf = generate_voice_audio(voice_text)
+
+    files = [image_file]
+    if voice_buf:
+        files.append(discord.File(voice_buf, filename="route_summary.mp3"))
+
+    await ctx.send(embed=embed, files=files, view=ExportView(report_data))
 
 # =========================
 # COMPARE VIEW
