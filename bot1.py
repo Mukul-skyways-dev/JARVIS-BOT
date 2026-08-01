@@ -738,7 +738,7 @@ def add_usage(user):
     now = time.time()
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (str(user.id),))
+        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
         row = cursor.fetchone()
         if row and now - row[0] < COOLDOWN:
             return
@@ -1837,104 +1837,55 @@ async def _best_world_scan(ctx, plane_name):
     embed.set_footer(text=f"Scanned {len(candidates):,} candidate routes (capped at 8,000 for performance) • JARVIS")
     await msg.edit(content=None, embed=embed)
 
-async def _best_world_specific(ctx, frm, to, plane_name, max_distance):
-    """New mode: check ONE specific route. If it's beyond the aircraft's
-    range (or beyond max_distance, if given), auto-search for the best
-    single stopover (same logic as !route) — and if even that can't
-    make it work, say so explicitly instead of silently computing a
-    nonsensical over-range result."""
+async def _best_world_from_origin(ctx, origin, plane_name, max_distance):
+    """New mode: !best_world <origin> <plane> [max_km] — scan every
+    route FROM this one origin (same engine as !best_r), optionally
+    capped by max_distance. If you already know both endpoints, use
+    !route instead — this is for 'where should I fly FROM here'."""
     plane = get_plane(plane_name)
     if not plane:
         return await ctx.send("❌ Plane not found")
 
-    route = get_route(frm, to)
-    if not route:
-        return await ctx.send(f"❌ Route not found: **{frm}** → **{to}**")
+    results, total_routes = scan_routes_from_origin(ctx, origin, plane, max_distance=max_distance)
 
-    distance_total = float(route["distance"])
-    effective_range = min(float(plane["range"]), max_distance) if max_distance else float(plane["range"])
+    if total_routes == 0:
+        return await ctx.send(f"❌ No routes found from **{origin}**")
 
-    if distance_total <= effective_range:
-        result = calc(route, plane, ctx.author.id)
-        embed = discord.Embed(
-            title=f"✅ Direct Route OK • {plane['name']}",
-            description=f"**{frm.upper()} → {to.upper()}**\n{int(distance_total):,} km — within range, no stopover needed",
-            color=route_health_color(result["ci"])
-        )
-        embed.add_field(name="💰 Profit/Day", value=f"${result['profit_day']:,}", inline=True)
-        embed.add_field(name="🔁 Trips/Day", value=str(result["trips"]), inline=True)
-        embed.add_field(name="📊 CI Margin", value=f"{result['ci']}%", inline=True)
-        return await ctx.send(embed=embed)
-
-    # Beyond range (or beyond the user's max_distance cap) — search for the
-    # best single stopover, same approach as the !route command.
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes
-            WHERE f_iata = ? AND CAST(distance AS REAL) <= ?
-            LIMIT 200
-        """, (frm.upper(), effective_range))
-        leg1_candidates = cursor.fetchall()
-
-    best_combined = -1
-    best_stop = None
-    best_leg1 = None
-    best_leg2 = None
-    for cand in leg1_candidates:
-        cand_iata, cand_dist, cy, cj, cf = cand
-        if int(cy) + int(cj) + int(cf) == 0:
-            continue
-        leg2_route = get_route(cand_iata, to)
-        if not leg2_route or leg2_route["distance"] > effective_range:
-            continue
-        leg1_route = {"distance": float(cand_dist), "y": int(cy), "j": int(cj), "f": int(cf), "cargo": 0}
-        try:
-            leg1_result = calc(leg1_route, plane, ctx.author.id)
-            leg2_result = calc(leg2_route, plane, ctx.author.id)
-            combined = leg1_result["profit_day"] + leg2_result["profit_day"]
-        except:
-            continue
-        if combined > best_combined:
-            best_combined = combined
-            best_stop = cand_iata
-            best_leg1 = leg1_result
-            best_leg2 = leg2_result
-
-    if not best_stop:
-        limit_note = f" (max distance limit: {max_distance:,} km)" if max_distance else ""
+    if not results:
+        limit_note = f" within your {max_distance:,} km limit" if max_distance else ""
         return await ctx.send(
-            f"❌ Route not found due to flight distance — **{frm.upper()} → {to.upper()}** "
-            f"is {int(distance_total):,} km, beyond **{plane['name']}**'s range "
-            f"({int(plane['range']):,} km){limit_note}, and no viable single stopover connects it either."
+            f"❌ No profitable routes found from **{origin}** with **{plane['name']}**{limit_note}."
         )
+
+    top = results[:10]
+    origin_txt = airport_name(origin)
+    text = ""
+    for i, res in enumerate(top, 1):
+        dest, dist, profit, trips, ci = res
+        dest_loc = airport_city_country(dest)
+        text += f"**{i}. {origin} → {dest}** ({dest_loc})\n${profit:,}/day  •  {dist:,} km  •  {trips} trips/day  •  CI margin {ci}%\n\n"
 
     embed = discord.Embed(
-        title=f"🔀 Stopover Required • {plane['name']}",
-        description=f"**{frm.upper()} → {to.upper()}** ({int(distance_total):,} km) exceeds range directly — best stopover found automatically:",
-        color=route_health_color(min(best_leg1["ci"], best_leg2["ci"]))
+        title=f"🌍 Best Routes from {origin} • {plane['name']}",
+        description=f"**From:** {origin_txt}\n\n{text}",
+        color=0x00e5ff
     )
-    embed.add_field(name=f"{frm.upper()} → {best_stop}", value=f"${best_leg1['profit_day']:,}/day", inline=True)
-    embed.add_field(name=f"{best_stop} → {to.upper()}", value=f"${best_leg2['profit_day']:,}/day", inline=True)
-    embed.add_field(name="Combined Profit", value=f"${best_combined:,}/day", inline=False)
+    limit_note = f" • Capped at {max_distance:,} km" if max_distance else ""
+    embed.set_footer(text=f"Scanned {total_routes:,} routes from {origin}{limit_note} • JARVIS")
     await ctx.send(embed=embed)
 
-@bot.hybrid_command(name="best_world", description="World-wide best routes for an aircraft, OR check one specific route with auto-stopover")
-@app_commands.describe(query="Just an aircraft (world-scan), OR 'FROM TO AIRCRAFT [max_km]' for a specific route")
+@bot.hybrid_command(name="best_world", description="World-wide best routes for an aircraft, OR best routes from one origin with a distance cap")
+@app_commands.describe(query="Just an aircraft (world-scan), OR 'ORIGIN AIRCRAFT [max_km]' for one origin")
 async def best_world(ctx, *, query: str):
     tokens = query.strip().split()
 
-    specific_mode = (
-        len(tokens) >= 3
-        and _looks_like_airport_code(tokens[0])
-        and _looks_like_airport_code(tokens[1])
-    )
+    specific_mode = len(tokens) >= 2 and _looks_like_airport_code(tokens[0])
 
     if not specific_mode:
         return await _best_world_scan(ctx, query)
 
-    frm, to = tokens[0].upper(), tokens[1].upper()
-    rest = tokens[2:]
+    origin = tokens[0].upper()
+    rest = tokens[1:]
     max_distance = None
     if rest and re.match(r"^\d+(km)?$", rest[-1], re.IGNORECASE):
         max_distance = int(re.sub(r"\D", "", rest[-1]))
@@ -1942,9 +1893,9 @@ async def best_world(ctx, *, query: str):
     plane_name = " ".join(rest).strip()
 
     if not plane_name:
-        return await ctx.send("❌ Give an aircraft name — e.g. `best_world DEL BOM A380` or `best_world DEL BOM A380 9999km`")
+        return await ctx.send("❌ Give an aircraft name — e.g. `best_world DEL A380` or `best_world DEL A380 9500km`")
 
-    await _best_world_specific(ctx, frm, to, plane_name, max_distance)
+    await _best_world_from_origin(ctx, origin, plane_name, max_distance)
 
 
 
@@ -2102,6 +2053,40 @@ async def routemap(ctx, airport: str, *, plane_name: str):
     embed.set_footer(text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT")
     await ctx.send(embed=embed, file=file)
 
+def scan_routes_from_origin(ctx, airport, plane, max_distance=None):
+    """Shared by !best_r and best_world's origin-mode: scans every route
+    from `airport` with `plane`, capped by the aircraft's real range
+    (and further capped by max_distance if given), returns results
+    sorted by profit/day descending. Each result:
+    (dest, distance_int, profit_day, trips, ci)."""
+    effective_range = min(float(plane["range"]), max_distance) if max_distance else float(plane["range"])
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes WHERE f_iata = ? LIMIT 300", (airport,))
+        routes = cursor.fetchall()
+
+    results = []
+    for r in routes:
+        try:
+            dest, dist, y, j, f = r
+            distance = float(dist)
+            if distance > effective_range:
+                continue
+            y, j, f = int(y), int(j), int(f)
+            if y + j + f == 0:
+                continue
+            route_dict = {"distance": distance, "y": y, "j": j, "f": f, "cargo": 0}
+            result = calc(route_dict, plane, ctx.author.id)
+            if result["profit_day"] <= 0:
+                continue
+            results.append((dest, int(distance), result["profit_day"], result["trips"], result["ci"]))
+        except:
+            continue
+
+    results.sort(key=lambda x: x[2], reverse=True)
+    return results, len(routes)
+
 @bot.hybrid_command(name="best_r", aliases=["bestr", "top"], description="Top 5 most profitable routes from an airport")
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
@@ -2112,35 +2097,10 @@ async def best_r(ctx, airport: str, *, plane_name: str):
         return await ctx.send("❌ Plane not found")
     mode = get_user_mode(ctx.author.id)
 
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes WHERE f_iata = ? LIMIT 300", (airport,))
-        routes = cursor.fetchall()
+    results, total_routes = scan_routes_from_origin(ctx, airport, plane)
 
-    if not routes:
+    if total_routes == 0:
         return await ctx.send(f"❌ No routes found from **{airport}**")
-
-    results = []
-    for r in routes:
-        try:
-            dest, dist, y, j, f = r
-            distance = float(dist)
-            if distance > float(plane["range"]):
-                continue
-            y, j, f = int(y), int(j), int(f)
-            if y + j + f == 0:
-                continue
-
-            # Uses the same calc() engine as !route — one formula,
-            # everywhere, so this can't drift out of sync again.
-            route_dict = {"distance": distance, "y": y, "j": j, "f": f, "cargo": 0}
-            result = calc(route_dict, plane, ctx.author.id)
-            if result["profit_day"] <= 0:
-                continue
-
-            results.append((dest, int(distance), result["profit_day"], result["trips"], result["ci"]))
-        except:
-            continue
 
     if not results:
         return await ctx.send(
@@ -2149,7 +2109,6 @@ async def best_r(ctx, airport: str, *, plane_name: str):
             f"Try a different aircraft, or check `!difficulty` — realism has higher costs than easy."
         )
 
-    results.sort(key=lambda x: x[2], reverse=True)
     top = results[:5]
 
     origin_txt = airport_name(airport)
