@@ -23,6 +23,9 @@ import os
 import requests
 from openai import OpenAI
 import pytz
+import asyncio
+from gtts import gTTS
+
 
 from export_view import ExportView
 
@@ -2270,6 +2273,212 @@ async def on_message(message):
             replies = [f"{message.author.mention} I'm not fully sure, but I can try helping. Can you rephrase?", f"{message.author.mention} 🤔 I need a bit more context.", f"{message.author.mention} I don't have a direct match for that, but I'm listening."]
             await message.channel.send(random.choice(replies))
     await bot.process_commands(message)
+
+# =========================================================
+# GTTS VOICE SUMMARY - SAME TEXT CHANNEL
+# =========================================================
+# Queue system – multiple commands ke liye
+voice_queue = asyncio.Queue()
+is_voice_processing = False
+
+# Channel IDs where voice summary should NOT work (optional)
+VOICE_BLACKLIST = []
+
+def get_user_voice_preference(user_id):
+    """Check if user has voice summaries enabled. Default: True"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT voice_enabled FROM user_settings WHERE user_id = ?", (str(user_id),))
+        row = cursor.fetchone()
+        if row:
+            return bool(row[0])
+        # Default: ON
+        return True
+
+def set_user_voice_preference(user_id, enabled):
+    """Set user voice preference"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO user_settings (user_id, voice_enabled)
+            VALUES (?, ?)
+        """, (str(user_id), 1 if enabled else 0))
+        conn.commit()
+
+# Ensure table exists
+with get_db() as conn:
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id TEXT PRIMARY KEY,
+            voice_enabled INTEGER DEFAULT 1
+        )
+    """)
+    conn.commit()
+
+def generate_voice_summary(content):
+    """
+    Generate a short voice summary from embed/response content
+    """
+    # Remove markdown, emojis, code blocks
+    clean_text = re.sub(r'```.*?```', '', content, flags=re.DOTALL)  # Remove code blocks
+    clean_text = re.sub(r'`[^`]+`', '', clean_text)                   # Remove inline code
+    clean_text = re.sub(r'[#*_~|]', '', clean_text)                  # Remove markdown
+    clean_text = re.sub(r'[\U0001F000-\U0001FFFF]', '', clean_text)  # Remove emojis
+    clean_text = re.sub(r'<t:[0-9]+:[A-Za-z]+>', '', clean_text)     # Remove Discord timestamps
+    clean_text = clean_text.strip()
+    
+    if not clean_text or len(clean_text) < 5:
+        return "Command completed successfully."
+    
+    # Extract key info for different command types
+    
+    # Route command
+    if "Profit" in clean_text and "Day" in clean_text:
+        match = re.search(r'\$([0-9,]+)', clean_text)
+        if match:
+            profit = match.group(1).replace(',', '')
+            return f"Route analysis complete. Daily profit is {profit} dollars."
+        return "Route analysis complete."
+    
+    # Best_r / Best_short / Best_long
+    if "Best" in clean_text and ("Routes" in clean_text or "Route" in clean_text):
+        # Count destinations
+        dest_count = clean_text.count("→")
+        if dest_count > 0:
+            return f"Found {dest_count} profitable routes."
+        return "Best routes analysis complete."
+    
+    # Airport command
+    if "Airport" in clean_text or "📍 Location" in clean_text:
+        return "Airport information displayed in the message above."
+    
+    # Aircraft command
+    if "✈️" in clean_text or "Capacity" in clean_text:
+        return "Aircraft specifications displayed."
+    
+    # Compare command
+    if "VS" in clean_text or "vs" in clean_text:
+        return "Aircraft comparison complete. Winner is shown above."
+    
+    # Leaderboard
+    if "Leaderboard" in clean_text:
+        return "Leaderboard displayed above."
+    
+    # Short summary
+    if len(clean_text) > 150:
+        clean_text = clean_text[:120] + "..."
+    
+    return clean_text
+
+async def process_voice_queue():
+    """Process queued voice messages one by one"""
+    global is_voice_processing
+    while True:
+        if voice_queue.empty():
+            is_voice_processing = False
+            await asyncio.sleep(0.5)
+            continue
+        
+        is_voice_processing = True
+        channel, text = await voice_queue.get()
+        
+        try:
+            summary = generate_voice_summary(text)
+            
+            # Generate audio
+            tts = gTTS(text=summary, lang='en', slow=False)
+            audio_file = "voice_summary.mp3"
+            tts.save(audio_file)
+            
+            # Send audio file to the same channel
+            if os.path.exists(audio_file):
+                await channel.send(file=discord.File(audio_file))
+                os.remove(audio_file)
+                
+        except Exception as e:
+            print(f"Voice summary error: {e}")
+            # Try to clean up
+            try:
+                if os.path.exists(audio_file):
+                    os.remove(audio_file)
+            except:
+                pass
+        
+        voice_queue.task_done()
+
+# Start queue processor
+async def start_voice_processor():
+    asyncio.create_task(process_voice_queue())
+
+# =========================================================
+# HOOK: Send voice summary after every command
+# =========================================================
+@bot.event
+async def on_command_completion(ctx):
+    """Send voice summary in the same channel after each command"""
+    
+    # Check blacklist
+    if ctx.channel.id in VOICE_BLACKLIST:
+        return
+    
+    # Check user preference
+    if not get_user_voice_preference(ctx.author.id):
+        return
+    
+    # Don't trigger for voice toggle command itself
+    if ctx.command and ctx.command.name == "voice_summary":
+        return
+    
+    try:
+        # Get the last bot response
+        async for msg in ctx.channel.history(limit=5):
+            if msg.author == bot.user:
+                # Get the content (embed description or text)
+                content = ""
+                if msg.embeds and len(msg.embeds) > 0:
+                    embed = msg.embeds[0]
+                    content = embed.title or ""
+                    content += " " + (embed.description or "")
+                    for field in embed.fields:
+                        content += " " + field.name + " " + field.value
+                else:
+                    content = msg.content
+                
+                if content.strip():
+                    await voice_queue.put((ctx.channel, content))
+                    break
+                
+    except Exception as e:
+        print(f"Voice summary hook error: {e}")
+
+# =========================================================
+# TOGGLE COMMAND (Optional)
+# =========================================================
+@bot.hybrid_command(description="Turn voice summaries ON/OFF for your commands")
+async def voice_summary(ctx, enable: str = None):
+    """Enable or disable voice summaries. Usage: /voice_summary on / off"""
+    if enable is None:
+        current = get_user_voice_preference(ctx.author.id)
+        return await ctx.send(f"🔊 Voice summaries: **{'✅ ON' if current else '❌ OFF'}**")
+    
+    enable_lower = enable.lower()
+    if enable_lower in ["on", "true", "1", "yes"]:
+        set_user_voice_preference(ctx.author.id, True)
+        await ctx.send("🔊 Voice summaries **enabled**! I'll read summaries after your commands.")
+    elif enable_lower in ["off", "false", "0", "no"]:
+        set_user_voice_preference(ctx.author.id, False)
+        await ctx.send("🔇 Voice summaries **disabled**.")
+    else:
+        await ctx.send("❌ Use `on` or `off`. Example: `/voice_summary on`")
+
+# =========================================================
+# START VOICE PROCESSOR ON BOT READY
+# =========================================================
+@bot.event
+async def on_ready():
+    print(f"✅ JARVIS online as {bot.user}")
+    await start_voice_processor()
 
 # =========================
 # RUN BOT
