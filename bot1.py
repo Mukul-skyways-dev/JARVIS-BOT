@@ -5,7 +5,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import Modal, TextInput, View, Button
 from typing import Literal
-from gtts import gTTS
+import edge_tts
 
 # =========================
 # MATPLOTLIB OPTIMIZE (Memory Fix)
@@ -1067,6 +1067,7 @@ def resolve_city_alias(query):
 @app_commands.describe(query="e.g. BOM, or 'bombay', or 'mumbai'")
 @app_commands.autocomplete(query=airport_autocomplete)
 async def airport(ctx, *, query: str):
+    await ctx.defer()
     raw = query.strip()
     code_upper = raw.upper()
     city_query = resolve_city_alias(raw)
@@ -1526,14 +1527,17 @@ def get_top_alternative_routes(origin, plane, user_id, exclude_dest=None, limit=
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:limit]
 
-def generate_voice_audio(text):
-    """Turns dynamic text into an in-memory MP3 (no disk writes, no
-    ffmpeg/voice-client needed — this is a standalone audio file
-    attached to the message, not a live voice-channel broadcast)."""
+async def generate_voice_audio(text, voice="en-US-ChristopherNeural"):
+    """Turns dynamic text into an in-memory MP3 using a male neural
+    voice (Microsoft Edge TTS — free, no ffmpeg/voice-client needed).
+    This is a standalone audio file attached to the message, not a
+    live voice-channel broadcast."""
     try:
-        tts = gTTS(text=text, lang="en")
         buf = io.BytesIO()
-        tts.write_to_fp(buf)
+        communicate = edge_tts.Communicate(text, voice=voice)
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                buf.write(chunk["data"])
         buf.seek(0)
         return buf
     except Exception as e:
@@ -1564,6 +1568,7 @@ def build_route_voice_text(frm, to, plane, result, stop_airport=None):
 @app_commands.describe(frm="Origin airport", to="Destination airport", plane_name="Aircraft", ci="Cost Index 0-200 (default 200)")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
+    await ctx.defer()
     route = get_route(frm, to)
     plane = get_plane(plane_name)
     if not route:
@@ -1717,7 +1722,7 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     embed.set_image(url="attachment://route.png")
 
     voice_text = build_route_voice_text(frm, to, plane, result, stop_airport=stop_airport)
-    voice_buf = generate_voice_audio(voice_text)
+    voice_buf = await generate_voice_audio(voice_text)
 
     files = [image_file]
     if voice_buf:
@@ -1855,6 +1860,7 @@ class CompareView(View):
 
 @bot.hybrid_command(description="Compare two aircraft head-to-head (e.g. 'A320 vs B737')")
 async def compare(ctx, *, planes_input: str):
+    await ctx.defer()
     try:
         p1_name, p2_name = planes_input.lower().split(" vs ")
     except:
@@ -1895,6 +1901,7 @@ async def best(ctx, frm: str, to: str):
     route = get_route(frm, to)
     if not route:
         return await ctx.send("Route not found")
+    await ctx.defer()
     best_plane = None
     best_calc = None
     best_score = -999999999
@@ -2068,6 +2075,7 @@ async def _best_world_from_origin(ctx, origin, plane_name, max_distance):
 @bot.hybrid_command(name="best_world", description="World-wide best routes for an aircraft, OR best routes from one origin with a distance cap")
 @app_commands.describe(query="Just an aircraft (world-scan), OR 'ORIGIN AIRCRAFT [max_km]' for one origin")
 async def best_world(ctx, *, query: str):
+    await ctx.defer()
     tokens = query.strip().split()
 
     specific_mode = len(tokens) >= 2 and _looks_like_airport_code(tokens[0])
@@ -2142,6 +2150,7 @@ def draw_whatif_heatmap(planes, ci_values, matrix, frm, to):
 @app_commands.describe(frm="Origin airport", to="Destination airport", planes="Comma-separated aircraft, e.g. 'a380, 777, 747'")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
 async def whatif(ctx, frm: str, to: str, *, planes: str):
+    await ctx.defer()
     route = get_route(frm, to)
     if not route:
         return await ctx.send("❌ Route not found")
@@ -2178,6 +2187,7 @@ async def whatif(ctx, frm: str, to: str, *, planes: str):
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def routemap(ctx, airport: str, *, plane_name: str):
+    await ctx.defer()
     airport = airport.upper()
     plane = get_plane(plane_name)
     if not plane:
@@ -2282,6 +2292,7 @@ def scan_routes_from_origin(ctx, airport, plane, max_distance=None):
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_r(ctx, airport: str, *, plane_name: str):
+    await ctx.defer()
     airport = airport.upper()
     plane = get_plane(plane_name)
     if not plane:
@@ -2331,6 +2342,7 @@ async def best_r(ctx, airport: str, *, plane_name: str):
 
 async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, label, emoji, color):
     """Shared engine for best_short / best_long — same calc() everyone else uses."""
+    await ctx.defer()
     airport = airport.upper()
     plane = get_plane(plane_name)
     if not plane:
