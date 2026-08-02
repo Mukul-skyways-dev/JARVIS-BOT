@@ -9,4 +9,4 @@ openai
 openpyxl
 python-docx
 reportlab
-gTTS>=2.5.1
+edge_tts
