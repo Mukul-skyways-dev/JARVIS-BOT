@@ -49,7 +49,7 @@ def keep_alive():
     t = Thread(target=run, daemon=True)
     t.start()
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 import time
 from PIL import Image, ImageDraw, ImageFont
@@ -985,12 +985,160 @@ class LeaderboardView(View):
         self.data = self.fetch()
         await interaction.response.edit_message(embed=self.build_embed(), attachments=[], view=self)
 
+# =========================================================
+# PORTAL LINKING + AERO POINTS (Supabase REST)
+# =========================================================
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+def _supabase_headers():
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+
+async def supabase_get(table, params):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    resp = await asyncio.to_thread(requests.get, url, headers=_supabase_headers(), params=params, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+async def supabase_patch(table, params, data):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    resp = await asyncio.to_thread(requests.patch, url, headers=_supabase_headers(), params=params, json=data, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+async def supabase_post(table, data):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    resp = await asyncio.to_thread(requests.post, url, headers=_supabase_headers(), json=data, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+# Which commands earn AERO points, and how many. Trivial commands
+# (menu, leaderboard, difficulty, airport/aircraft lookups) are
+# deliberately excluded so points can't be farmed by spamming cheap
+# commands.
+COMMAND_POINTS = {
+    "route": 3, "best_r": 2, "best_short": 2, "best_long": 2,
+    "best_world": 3, "best": 2, "compare": 2, "whatif": 3, "routemap": 2
+}
+POINT_COOLDOWN_SECONDS = 20
+_last_point_credit = {}  # discord_id (str) -> unix timestamp, simple anti-spam
+
+async def credit_aero_points(discord_id, command_name):
+    """Runs as a background task (fire-and-forget) so it never adds
+    latency to the command's actual response. Every outcome — success,
+    skip, or failure — is printed so Render logs show exactly what
+    happened and why."""
+    points = COMMAND_POINTS.get(command_name)
+    if not points:
+        return  # not a point-eligible command
+
+    now = time.time()
+    last = _last_point_credit.get(discord_id, 0)
+    if now - last < POINT_COOLDOWN_SECONDS:
+        print(f"[AERO POINTS] {discord_id} used '{command_name}' -> skipped (cooldown)")
+        return
+    _last_point_credit[discord_id] = now
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("[AERO POINTS] SUPABASE_URL/SUPABASE_KEY not set — skipping credit")
+        return
+
+    try:
+        rows = await supabase_get("share_users", {"discord_id": f"eq.{discord_id}", "select": "sts_id,aero_points"})
+        if not rows:
+            print(f"[AERO POINTS] {discord_id} used '{command_name}' -> not linked, no credit given")
+            return
+
+        sts_id = rows[0]["sts_id"]
+        current_points = rows[0].get("aero_points") or 0
+        new_points = current_points + points
+
+        await supabase_patch("share_users", {"sts_id": f"eq.{sts_id}"}, {"aero_points": new_points})
+        await supabase_post("point_transactions", {
+            "sts_id": sts_id,
+            "amount": points,
+            "reason": f"JARVIS command: {command_name}",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        print(f"[AERO POINTS] Discord {discord_id} used '{command_name}' -> +{points} points "
+              f"(STS: {sts_id}, new total: {new_points})")
+    except Exception as e:
+        print(f"[AERO POINTS] Credit failed for {discord_id} on '{command_name}': {e}")
+
+@bot.hybrid_command(name="link", description="Link your Discord account to your AERO portal profile using a one-time code")
+@app_commands.describe(code="The code shown on your portal profile (valid 10 minutes, single use)")
+async def link(ctx, code: str):
+    await ctx.defer(ephemeral=True)
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return await ctx.send("⚠️ Portal linking isn't configured on this bot yet.")
+
+    clean_code = code.strip().upper()
+    try:
+        rows = await supabase_get("discord_link_codes", {
+            "code": f"eq.{clean_code}",
+            "used": "eq.false",
+            "select": "*"
+        })
+    except Exception as e:
+        print(f"[LINK] Supabase lookup failed for code '{clean_code}': {e}")
+        return await ctx.send("⚠️ Couldn't reach the portal right now — try again shortly.")
+
+    if not rows:
+        print(f"[LINK] {ctx.author} ({ctx.author.id}) tried invalid/used code '{clean_code}'")
+        return await ctx.send("❌ Invalid or already-used code. Generate a new one on the portal.")
+
+    row = rows[0]
+    try:
+        created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+        if (datetime.now(timezone.utc) - created).total_seconds() > 600:
+            print(f"[LINK] {ctx.author} ({ctx.author.id}) tried expired code '{clean_code}'")
+            return await ctx.send("❌ Code expired — generate a new one on the portal (valid 10 minutes).")
+    except Exception:
+        pass  # if the timestamp can't be parsed, don't block linking over it
+
+    sts_id = row["sts_id"]
+    try:
+        await supabase_patch("share_users", {"sts_id": f"eq.{sts_id}"}, {"discord_id": str(ctx.author.id)})
+        await supabase_patch("discord_link_codes", {"id": f"eq.{row['id']}"}, {"used": True})
+    except Exception as e:
+        print(f"[LINK] Supabase update failed linking {ctx.author.id} -> {sts_id}: {e}")
+        return await ctx.send("⚠️ Linking failed — try again shortly.")
+
+    print(f"[LINK] Discord {ctx.author} ({ctx.author.id}) linked to STS {sts_id}")
+    await ctx.send(f"✅ Linked! Your JARVIS activity will now credit AERO points to **{sts_id}**.")
+
+@bot.hybrid_command(name="myaeropoints", description="Check your linked AERO portal points balance")
+async def myaeropoints(ctx):
+    await ctx.defer(ephemeral=True)
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return await ctx.send("⚠️ Portal linking isn't configured on this bot yet.")
+
+    try:
+        rows = await supabase_get("share_users", {"discord_id": f"eq.{ctx.author.id}", "select": "sts_id,aero_points,name"})
+    except Exception as e:
+        print(f"[AERO POINTS] Balance check failed for {ctx.author.id}: {e}")
+        return await ctx.send("⚠️ Couldn't reach the portal right now.")
+
+    if not rows:
+        return await ctx.send("❌ Your Discord isn't linked yet — generate a code on the portal, then use `/link <code>`.")
+
+    row = rows[0]
+    label = row.get("name") or row["sts_id"]
+    await ctx.send(f"💰 **{label}** — AERO Points: **{(row.get('aero_points') or 0):,}**")
+
 # =========================
 # AUTO TRACK
 # =========================
 @bot.event
 async def on_command(ctx):
     add_usage(ctx.author)
+    asyncio.create_task(credit_aero_points(str(ctx.author.id), ctx.command.name))
 
 @bot.hybrid_command(description="Show the JARVIS usage leaderboard")
 async def leaderboard(ctx):
@@ -1721,14 +1869,14 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     image_file = discord.File(img_buf, filename="route.png")
     embed.set_image(url="attachment://route.png")
 
+    await ctx.send(embed=embed, file=image_file, view=ExportView(report_data))
+
+    # Voice summary sent as a quick separate follow-up — this way the
+    # main result never waits on the edge-tts network round-trip.
     voice_text = build_route_voice_text(frm, to, plane, result, stop_airport=stop_airport)
     voice_buf = await generate_voice_audio(voice_text)
-
-    files = [image_file]
     if voice_buf:
-        files.append(discord.File(voice_buf, filename="route_summary.mp3"))
-
-    await ctx.send(embed=embed, files=files, view=ExportView(report_data))
+        await ctx.send(file=discord.File(voice_buf, filename="route_summary.mp3"))
 
 # =========================
 # COMPARE VIEW
