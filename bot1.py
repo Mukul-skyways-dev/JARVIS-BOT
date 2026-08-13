@@ -867,9 +867,123 @@ def find_optimal_ci(route, plane, user_id, mods=None, step=10):
     return best_profit_result, best_contribution_result
 
 # ========================
-# Leaderboard REMOVED
+# Leaderboard 
 # ========================
+with get_db() as conn:
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id TEXT PRIMARY KEY,
+        username TEXT,
+        points INTEGER DEFAULT 0,
+        last_used REAL DEFAULT 0
+    )
+    """)
+    conn.commit()
 
+COOLDOWN = 3
+
+def add_usage(user):
+    now = time.time()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
+        row = cursor.fetchone()
+        if row and now - row[0] < COOLDOWN:
+            return
+        cursor.execute("""
+        INSERT INTO users (user_id, username, points, last_used)
+        VALUES (?, ?, 1, ?)
+        ON CONFLICT(user_id)
+        DO UPDATE SET
+            points = points + 1,
+            username = excluded.username,
+            last_used = excluded.last_used
+        """, (str(user.id), user.name, now))
+        conn.commit()
+
+# =========================
+# LEADERBOARD VIEW
+# =========================
+class LeaderboardView(View):
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.page = 0
+        self.data = self.fetch()
+
+    def fetch(self):
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT username, points FROM users ORDER BY points DESC")
+            return cursor.fetchall()
+
+    def page_data(self):
+        start = self.page * 10
+        return self.data[start:start + 10]
+
+    def build_embed(self):
+        medals = ["🥇", "🥈", "🥉"]
+        text = ""
+        for i, (name, pts) in enumerate(self.page_data(), start=1):
+            rank = self.page * 10 + i
+            medal = medals[rank - 1] if rank <= 3 else "🔹"
+            text += f"{medal} **#{rank} {name}** — `{pts:,}` uses\n"
+        embed = discord.Embed(
+            title="📊 LIVE JARVIS USAGE LEADERBOARD",
+            description=text or "No data yet",
+            color=0x1e2b4a
+        )
+        embed.set_footer(text=f"Page {self.page + 1} • Live Tracking • AERO CROWN DYNASTY")
+        return embed
+
+    def build_graph(self):
+        top = self.data[:10]
+        names = [x[0][:8] for x in top]
+        values = [x[1] for x in top]
+        plt.figure(figsize=(6, 3))
+        plt.style.use("dark_background")
+        plt.gca().set_facecolor("#0b1a40")
+        plt.gcf().patch.set_facecolor("#0b1a40")
+        bars = plt.bar(names, values, color="#00e5ff")
+        for bar in bars:
+            bar.set_alpha(0.9)
+        plt.xticks(rotation=40)
+        plt.title("LIVE BOT USAGE RANKING", color="white")
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=80)
+        buf.seek(0)
+        plt.close()
+        return buf
+
+    @discord.ui.button(label="⬅ Prev", style=discord.ButtonStyle.secondary)
+    async def prev(self, interaction, button):
+        if self.page > 0:
+            self.page -= 1
+        await self.update(interaction)
+
+    @discord.ui.button(label="Next ➡", style=discord.ButtonStyle.primary)
+    async def next(self, interaction, button):
+        if (self.page + 1) * 10 < len(self.data):
+            self.page += 1
+        await self.update(interaction)
+
+    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.success)
+    async def refresh(self, interaction, button):
+        self.data = self.fetch()
+        self.page = 0
+        await self.update(interaction)
+
+    @discord.ui.button(label="📊 Graph", style=discord.ButtonStyle.grey)
+    async def graph(self, interaction, button):
+        buf = self.build_graph()
+        file = discord.File(buf, "leaderboard.png")
+        embed = discord.Embed(title="📊 Live Usage Graph", color=0x1e2b4a)
+        embed.set_image(url="attachment://leaderboard.png")
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+    async def update(self, interaction):
+        self.data = self.fetch()
+        await interaction.response.edit_message(embed=self.build_embed(), attachments=[], view=self)
 
 # =========================================================
 # PORTAL LINKING + AERO POINTS (Supabase REST)
