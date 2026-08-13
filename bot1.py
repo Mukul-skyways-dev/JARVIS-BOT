@@ -881,6 +881,15 @@ with get_db() as conn:
     """)
     conn.commit()
 
+with get_db() as conn:
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(users)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+    if "last_used" not in existing_columns:
+        print("🔧 Migrating 'users' table: adding missing last_used column")
+        cursor.execute("ALTER TABLE users ADD COLUMN last_used REAL DEFAULT 0")
+        conn.commit()
+
 COOLDOWN = 3
 
 def add_usage(user):
