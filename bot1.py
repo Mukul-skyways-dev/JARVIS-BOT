@@ -884,13 +884,22 @@ with get_db() as conn:
 COOLDOWN = 3
 
 def add_usage(user):
+    now = time.time()
     with get_db() as conn:
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA table_info(users)")
-    existing_columns = {row[1] for row in cursor.fetchall()}
-    if "last_used" not in existing_columns:
-        print("🔧 Migrating 'users' table: adding missing last_used column")
-        cursor.execute("ALTER TABLE users ADD COLUMN last_used REAL DEFAULT 0")
+        cursor = conn.cursor()
+        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
+        row = cursor.fetchone()
+        if row and now - row[0] < COOLDOWN:
+            return
+        cursor.execute("""
+        INSERT INTO users (user_id, username, points, last_used)
+        VALUES (?, ?, 1, ?)
+        ON CONFLICT(user_id)
+        DO UPDATE SET
+            points = points + 1,
+            username = excluded.username,
+            last_used = excluded.last_used
+        """, (str(user.id), user.name, now))
         conn.commit()
 
 # =========================
