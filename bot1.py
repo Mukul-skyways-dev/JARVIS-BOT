@@ -201,7 +201,7 @@ async def get_groq_reply(user_id, user_message):
     try:
         response = await asyncio.to_thread(
             groq.chat.completions.create,
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=messages,
             tools=GROQ_TOOLS,
             tool_choice="auto",
