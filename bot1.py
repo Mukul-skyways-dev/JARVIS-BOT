@@ -1036,8 +1036,20 @@ async def supabase_get(table, params):
 
 async def supabase_patch(table, params, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-    resp = await asyncio.to_thread(requests.patch, url, headers=_supabase_headers(), params=params, json=data, timeout=10)
+    resp = await asyncio.to_thread(
+        requests.patch,
+        url,
+        headers=_supabase_headers(),
+        params=params,
+        json=data,
+        timeout=10
+    )
     resp.raise_for_status()
+
+    # Supabase can return 204 No Content for a successful PATCH.
+    if resp.status_code == 204 or not resp.content:
+        return None
+
     return resp.json()
 
 async def supabase_post(table, data):
