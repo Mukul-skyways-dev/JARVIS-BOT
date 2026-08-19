@@ -28,9 +28,6 @@ import pytz
 
 from export_view import ExportView
 
-# Share module
-exec(open("share_module.py").read())
-
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
 # Web Service plans, or it times out waiting for one)
@@ -257,6 +254,11 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, max_messages=None)
+
+# ========================
+# Share Module import 
+# ========================
+exec(open("share_module.py").read())
 
 # =========================
 # DATABASE AUTO DOWNLOAD
@@ -2605,14 +2607,18 @@ _synced = False
 @bot.event
 async def on_ready():
     global _synced
+
     print(f"✅ JARVIS online as {bot.user}")
+
+    # Portal alert loop
+    if not getattr(bot, "_portal_alert_started", False):
+        bot._portal_alert_started = True
+        bot.loop.create_task(_portal_alert_loop())
+
     if not _synced:
         try:
             synced_cmds = await bot.tree.sync()
-            print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
-            _synced = True
-        except Exception as e:
-            print(f"⚠️ Slash command sync failed: {e}")
+        
 
 # =========================
 # WELCOME + CHAT
@@ -2658,7 +2664,6 @@ async def on_message(message):
             await message.channel.send(random.choice(replies))
     await bot.process_commands(message)
 
-bot.loop.create_task(_portal_alert_loop())
 
 # =========================
 # RUN BOT
