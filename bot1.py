@@ -2607,19 +2607,15 @@ _synced = False
 @bot.event
 async def on_ready():
     global _synced
-
     print(f"✅ JARVIS online as {bot.user}")
-
-    # Portal alert loop
-    if not getattr(bot, "_portal_alert_started", False):
-        bot._portal_alert_started = True
-        bot.loop.create_task(_portal_alert_loop())
-
     if not _synced:
         try:
             synced_cmds = await bot.tree.sync()
-        
-
+            print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
+            _synced = True
+        except Exception as e:
+            print(f"⚠️ Slash command sync failed: {e}")
+            
 # =========================
 # WELCOME + CHAT
 # =========================
