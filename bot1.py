@@ -895,39 +895,58 @@ with get_db() as conn:
 
 COOLDOWN = 3
 
-def add_usage(user):
-    now = time.time()
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT last_used FROM users WHERE user_id=?", (str(user.id),))
-        row = cursor.fetchone()
-        if row and now - row[0] < COOLDOWN:
-            return
-        cursor.execute("""
-        INSERT INTO users (user_id, username, points, last_used)
-        VALUES (?, ?, 1, ?)
-        ON CONFLICT(user_id)
-        DO UPDATE SET
-            points = points + 1,
-            username = excluded.username,
-            last_used = excluded.last_used
-        """, (str(user.id), user.name, now))
-        conn.commit()
+async def add_usage(user):
+    """Runs as a background task (fire-and-forget from on_command) so
+    it never adds latency to any command's response."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    discord_id = str(user.id)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        rows = await supabase_get("bot_usage_leaderboard", {
+            "discord_id": f"eq.{discord_id}",
+            "select": "last_used,points"
+        })
+        if rows:
+            last_used_raw = rows[0].get("last_used")
+            if last_used_raw:
+                last_used_dt = datetime.fromisoformat(last_used_raw.replace("Z", "+00:00"))
+                if (datetime.now(timezone.utc) - last_used_dt).total_seconds() < COOLDOWN:
+                    return
+            new_points = (rows[0].get("points") or 0) + 1
+            await supabase_patch("bot_usage_leaderboard", {"discord_id": f"eq.{discord_id}"}, {
+                "points": new_points, "username": user.name, "last_used": now_iso
+            })
+        else:
+            await supabase_post("bot_usage_leaderboard", {
+                "discord_id": discord_id, "username": user.name, "points": 1, "last_used": now_iso
+            })
+    except Exception as e:
+        print(f"[USAGE] Failed to record usage for {discord_id} ({user}): {e}")
 
-# =========================
+# =========================================================
 # LEADERBOARD VIEW
-# =========================
+# =========================================================
 class LeaderboardView(View):
-    def __init__(self):
+    def __init__(self, data):
         super().__init__(timeout=180)
         self.page = 0
-        self.data = self.fetch()
+        self.data = data
 
-    def fetch(self):
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT username, points FROM users ORDER BY points DESC")
-            return cursor.fetchall()
+    @staticmethod
+    async def fetch_data():
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            return []
+        try:
+            rows = await supabase_get("bot_usage_leaderboard", {
+                "select": "username,points",
+                "order": "points.desc",
+                "limit": "100"
+            })
+            return [(r.get("username") or "Unknown", r.get("points") or 0) for r in rows]
+        except Exception as e:
+            print(f"[LEADERBOARD] Fetch failed: {e}")
+            return []
 
     def page_data(self):
         start = self.page * 10
@@ -981,7 +1000,7 @@ class LeaderboardView(View):
 
     @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.success)
     async def refresh(self, interaction, button):
-        self.data = self.fetch()
+        self.data = await LeaderboardView.fetch_data()
         self.page = 0
         await self.update(interaction)
 
@@ -994,9 +1013,8 @@ class LeaderboardView(View):
         await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
     async def update(self, interaction):
-        self.data = self.fetch()
         await interaction.response.edit_message(embed=self.build_embed(), attachments=[], view=self)
-
+        
 # =========================================================
 # PORTAL LINKING + AERO POINTS (Supabase REST)
 # =========================================================
@@ -1145,30 +1163,21 @@ async def myaeropoints(ctx):
     await ctx.send(f"💰 **{label}** — AERO Points: **{(row.get('aero_points') or 0):,}**")
 
 # =========================
-# AUTO TRACK
+# AUTO TRACK - NEW
 # =========================
 @bot.event
 async def on_command(ctx):
-    add_usage(ctx.author)
+    asyncio.create_task(add_usage(ctx.author))
     asyncio.create_task(credit_aero_points(str(ctx.author.id), ctx.command.name))
 
 @bot.hybrid_command(description="Show the JARVIS usage leaderboard")
 async def leaderboard(ctx):
-    view = LeaderboardView()
-    if not view.data:
+    await ctx.defer()
+    data = await LeaderboardView.fetch_data()
+    if not data:
         return await ctx.send("❌ No usage data yet")
+    view = LeaderboardView(data)
     await ctx.send(embed=view.build_embed(), view=view)
-
-@bot.hybrid_command(description="View or set your calculation difficulty (easy / realism)")
-async def difficulty(ctx, mode: Literal["easy", "realism"] = None):
-    if not mode:
-        current = get_user_mode(ctx.author.id)
-        return await ctx.send(f"⚙ Your difficulty: **{current.upper()}**")
-    mode = mode.lower()
-    if mode not in ["easy", "realism"]:
-        return await ctx.send("❌ Use: easy / realism")
-    set_user_mode(ctx.author.id, mode)
-    await ctx.send(f"✅ Difficulty set to **{mode.upper()}**")
 
 # =========================================================
 # AIRPORT HELPER
