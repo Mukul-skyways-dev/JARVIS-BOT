@@ -28,6 +28,9 @@ import pytz
 
 from export_view import ExportView
 
+# Share module
+exec(open("share_module.py").read())
+
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
 # Web Service plans, or it times out waiting for one)
@@ -2654,6 +2657,8 @@ async def on_message(message):
             replies = [f"{message.author.mention} I'm not fully sure, but I can try helping. Can you rephrase?", f"{message.author.mention} 🤔 I need a bit more context.", f"{message.author.mention} I don't have a direct match for that, but I'm listening."]
             await message.channel.send(random.choice(replies))
     await bot.process_commands(message)
+
+bot.loop.create_task(_portal_alert_loop())
 
 # =========================
 # RUN BOT
