@@ -27,6 +27,7 @@ from openai import OpenAI
 import pytz
 
 from export_view import ExportView
+from am4_agent import setup_agent
 
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
@@ -2615,6 +2616,8 @@ async def on_ready():
             _synced = True
         except Exception as e:
             print(f"⚠️ Slash command sync failed: {e}")
+
+     setup_agent(bot, supabase_get, supabase_post)
             
 # =========================
 # WELCOME + CHAT
