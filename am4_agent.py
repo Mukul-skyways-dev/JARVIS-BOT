@@ -209,7 +209,8 @@ async def _login(page) -> bool:
     email    = _env("AM4_EMAIL")
     password = _env("AM4_PASSWORD")
 
-    print("[AGENT] Opening AM4...")
+    # ── Step 1: Open AM4 landing page ─────────────────────
+    print("[AGENT] Opening AM4 landing page...")
     await page.goto(
         "https://www.airlinemanager.com",
         wait_until="domcontentloaded",
@@ -218,102 +219,201 @@ async def _login(page) -> bool:
     await asyncio.sleep(3)
     await _screenshot(page, "01_landing")
 
-    # Dismiss any consent/cookie banner
-    for txt in ["Accept","I agree","OK","Allow","Accept all","Got it"]:
+    # ── Step 2: Dismiss cookie/consent banner if present ──
+    for txt in ["Accept","I agree","OK","Allow","Accept all","Got it","Close"]:
         try:
             await page.click(f"text={txt}", timeout=1500)
             await asyncio.sleep(0.5)
             break
         except: pass
 
-    # Click "Play Free Now" or "Login" if on marketing page
-    for sel in [
-        "text=Play Free Now", "text=Log In", "text=Login",
-        "text=Sign In", ".play-btn", "#loginBtn", ".login-link",
-        "a[href*='login']", "a[href*='play']",
-    ]:
+    # ── Step 3: Click LOGIN button (NOT register/play) ────
+    # AM4 landing page has "Login" link in top nav or hero section
+    # We must click this BEFORE filling any form
+    print("[AGENT] Looking for Login button on landing page...")
+    login_btn_clicked = False
+
+    # Priority order: most specific → least specific
+    login_btn_selectors = [
+        # Exact text matches (most reliable)
+        "a:has-text('Login')",
+        "a:has-text('Log In')",
+        "a:has-text('Log in')",
+        "button:has-text('Login')",
+        "button:has-text('Log In')",
+        # Nav bar login links
+        "nav a[href*='login']",
+        "header a[href*='login']",
+        ".navbar a[href*='login']",
+        ".nav a[href*='login']",
+        # ID / class based
+        "#loginBtn","#login-btn","#btnLogin",
+        ".login-btn",".btn-login",".login-link",
+        "[class*='login'][class*='btn']",
+        "[class*='btn'][class*='login']",
+        # Data attributes
+        "[data-action='login']",
+        "[data-target='#loginModal']",
+        "[data-toggle='modal'][href*='login']",
+        # Generic fallbacks
+        "a[href*='login']",
+        "a[href*='signin']",
+    ]
+
+    for sel in login_btn_selectors:
         try:
-            await page.click(sel, timeout=2000)
-            await asyncio.sleep(2)
-            break
+            el = await page.query_selector(sel)
+            if el:
+                await el.click(timeout=3000)
+                login_btn_clicked = True
+                print(f"[AGENT] Login button clicked: {sel}")
+                await asyncio.sleep(2)
+                break
         except: pass
 
-    await _screenshot(page, "02_after_play_click")
+    await _screenshot(page, "02_after_login_btn_click")
 
-    # Fill credentials
-    await _try_fill(page, [
-        "input[name='email']","input[type='email']",
-        "#email","#login-email","[placeholder*='mail' i]",
-        "input[name='username']","#username",
-    ], email)
+    if not login_btn_clicked:
+        print("[AGENT] ⚠️ Login button not found via selectors — trying JS search")
+        try:
+            await page.evaluate("""
+                () => {
+                    // Find any link/button with 'login' or 'log in' text
+                    const all = [...document.querySelectorAll('a, button, span')];
+                    for (const el of all) {
+                        const t = el.textContent.trim().toLowerCase();
+                        if ((t === 'login' || t === 'log in' || t === 'sign in')
+                             && el.offsetParent !== null) {
+                            el.click();
+                            return el.textContent;
+                        }
+                    }
+                    return null;
+                }
+            """)
+            await asyncio.sleep(2)
+            login_btn_clicked = True
+        except Exception as e:
+            print(f"[AGENT] JS login click error: {e}")
 
-    await _try_fill(page, [
-        "input[name='password']","input[type='password']",
-        "#password","#login-password","[placeholder*='password' i]",
-    ], password)
-
-    await _screenshot(page, "03_credentials_filled")
-
-    # Submit
-    await _try_click(page, [
-        "button[type='submit']","input[type='submit']",
-        "#loginBtn","#submitBtn",".login-btn",".submit-btn",
-        "text=Login","text=Log In","text=Sign In","text=Enter",
-    ])
-
-    # Wait for game to load
-    print("[AGENT] Waiting for game to load...")
-    await asyncio.sleep(5)
-    await page.wait_for_load_state("networkidle", timeout=30_000)
-    await asyncio.sleep(3)
-    await _screenshot(page, "04_post_login")
-
-    url = page.url.lower()
-    print(f"[AGENT] URL after login: {page.url}")
-
-    # Check if still on login/landing
-    if any(x in url for x in ["login","signin","airlinemanager.com/#","landing"]):
-        # Try direct game URL
-        for game_url in [
-            "https://www.airlinemanager.com/game",
-            "https://web.airlinemanager.com",
-            "https://www.airlinemanager.com/play",
-            "https://www.airlinemanager.com/#game",
-        ]:
-            try:
-                await page.goto(game_url, wait_until="domcontentloaded",
-                                timeout=15_000)
-                await asyncio.sleep(3)
-                await _screenshot(page, "05_game_direct")
-                if not any(x in page.url.lower() for x in ["login","signin"]):
-                    break
-            except: pass
-
-    # Final check — look for any game UI element
-    game_loaded = await _wait_any(page, [
-        "#sidebar","#main-nav",".sidebar",".game-ui",
-        ".nav-tabs","#navBar","[class*='sidebar']",
-        "[class*='navbar']","[class*='menu']",
-        "#airport","#dashboard",".dashboard",
-        # AM4 specific possible elements
-        "[class*='tab']","[id*='tab']",".bottom-nav",
-        "#game","[id*='game']",".game-container",
+    # ── Step 4: Wait for login FORM to appear ─────────────
+    print("[AGENT] Waiting for login form...")
+    form_appeared = await _wait_any(page, [
+        "input[type='email']",
+        "input[type='password']",
+        "input[name='email']",
+        "input[name='password']",
+        "#email","#login-email",
+        "[placeholder*='email' i]",
+        "[placeholder*='mail' i]",
+        "#loginModal","#login-modal",
+        ".login-form","[class*='login'][class*='form']",
     ], timeout=8000)
 
-    await _screenshot(page, "06_game_check")
+    await _screenshot(page, "03_login_form")
 
-    if game_loaded:
-        print("[AGENT] Game UI detected ✅")
+    if not form_appeared:
+        print("[AGENT] Login form not visible after button click — screenshot saved")
+
+    # ── Step 5: Fill Email ─────────────────────────────────
+    print("[AGENT] Filling email...")
+    email_filled = await _try_fill(page, [
+        "input[name='email']",
+        "input[type='email']",
+        "#email",
+        "#login-email",
+        "[placeholder*='email' i]",
+        "[placeholder*='mail' i]",
+        ".login-form input[type='text']",
+        "form input:nth-child(1)",
+    ], email)
+    print(f"[AGENT] Email filled: {email_filled}")
+
+    # ── Step 6: Fill Password ──────────────────────────────
+    print("[AGENT] Filling password...")
+    pass_filled = await _try_fill(page, [
+        "input[name='password']",
+        "input[type='password']",
+        "#password",
+        "#login-password",
+        "[placeholder*='password' i]",
+        ".login-form input[type='password']",
+        "form input[type='password']",
+    ], password)
+    print(f"[AGENT] Password filled: {pass_filled}")
+
+    await _screenshot(page, "04_credentials_filled")
+
+    # ── Step 7: Click SUBMIT / Login button in form ────────
+    print("[AGENT] Submitting login form...")
+    await _try_click(page, [
+        # Inside modal / form — most specific first
+        "#loginModal button[type='submit']",
+        ".login-form button[type='submit']",
+        "form button[type='submit']",
+        "button[type='submit']",
+        "input[type='submit']",
+        # Text-based
+        "button:has-text('Login')",
+        "button:has-text('Log In')",
+        "button:has-text('Sign In')",
+        "button:has-text('Enter')",
+        # ID / class
+        "#loginSubmit","#submitLogin","#btnSubmit",
+        ".btn-submit",".submit-btn",".login-submit",
+        "[class*='submit']","[class*='login'][class*='btn']",
+    ])
+
+    # ── Step 8: Wait for game to load ─────────────────────
+    print("[AGENT] Waiting for game UI to load...")
+    await asyncio.sleep(5)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=25_000)
+    except: pass
+    await asyncio.sleep(3)
+    await _screenshot(page, "05_post_submit")
+    print(f"[AGENT] URL after submit: {page.url}")
+
+    # ── Step 9: Verify game loaded ─────────────────────────
+    # Look for any game UI element that confirms we are inside the game
+    game_el = await _wait_any(page, [
+        "#sidebar", ".sidebar",
+        "#main-nav", ".main-nav",
+        "#navBar", ".navbar",
+        ".game-ui", ".game-container",
+        "#game", "[id*='game']",
+        "[class*='sidebar']",
+        "[class*='game-']",
+        "#dashboard", ".dashboard",
+        ".bottom-nav", ".nav-tabs",
+        "[class*='tab-bar']",
+        # AM4 might use canvas for game
+        "canvas",
+        # Or an iframe
+        "iframe#gameFrame", "iframe[src*='game']",
+    ], timeout=10000)
+
+    await _screenshot(page, "06_game_verify")
+
+    if game_el:
+        print("[AGENT] ✅ Game UI confirmed")
         return True
 
-    # Last resort: check title/content changed from marketing page
+    # Title/URL fallback check
     title = await page.title()
-    print(f"[AGENT] Page title: {title}")
-    if "airline manager" in title.lower() and "build" not in title.lower():
-        print("[AGENT] Assuming logged in (title check)")
+    url   = page.url.lower()
+    print(f"[AGENT] Title: {title} | URL: {url}")
+
+    # If we are no longer on landing/login, assume success
+    still_on_landing = any(x in url for x in [
+        "login","signin","register","signup",
+    ]) or ("build" in title.lower() and "airline" in title.lower())
+
+    if not still_on_landing:
+        print("[AGENT] ✅ URL/title suggests logged in")
         return True
 
-    print("[AGENT] Could not confirm login ❌")
+    print("[AGENT] ❌ Still on login/landing page")
     return False
 
 
