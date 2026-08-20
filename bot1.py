@@ -2608,16 +2608,21 @@ _synced = False
 @bot.event
 async def on_ready():
     global _synced
+
     print(f"✅ JARVIS online as {bot.user}")
+
     if not _synced:
         try:
             synced_cmds = await bot.tree.sync()
             print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
-            _synced = True
-        except Exception as e:
-            print(f"⚠️ Slash command sync failed: {e}")
 
-     setup_agent(bot, supabase_get, supabase_post)
+            setup_agent(bot, supabase_get, supabase_post)
+
+            _synced = True
+            print("✅ Portal agent initialized successfully.")
+
+        except Exception as e:
+            print(f"⚠️ Startup setup failed: {e}")
             
 # =========================
 # WELCOME + CHAT
