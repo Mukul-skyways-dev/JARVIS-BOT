@@ -2604,25 +2604,30 @@ async def best_long(ctx, airport: str, *, plane_name: str):
 # ON READY — sync slash commands
 # =========================
 _synced = False
+_agent_loaded = False
 
 @bot.event
 async def on_ready():
-    global _synced
+    global _synced, _agent_loaded
 
     print(f"✅ JARVIS online as {bot.user}")
+
+    if not _agent_loaded:
+        try:
+            setup_agent(bot, supabase_get, supabase_post)
+            _agent_loaded = True
+            print("🤖 AM4 Agent loaded successfully.")
+        except Exception as e:
+            print(f"❌ AM4 Agent setup failed: {e}")
+            return
 
     if not _synced:
         try:
             synced_cmds = await bot.tree.sync()
             print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
-
-            setup_agent(bot, supabase_get, supabase_post)
-
             _synced = True
-            print("✅ Portal agent initialized successfully.")
-
         except Exception as e:
-            print(f"⚠️ Startup setup failed: {e}")
+            print(f"⚠️ Slash command sync failed: {e}")
             
 # =========================
 # WELCOME + CHAT
