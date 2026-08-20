@@ -10,3 +10,4 @@ openpyxl
 python-docx
 reportlab
 edge_tts
+playwright
