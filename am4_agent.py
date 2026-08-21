@@ -1,16 +1,15 @@
 # =========================================================
-#  am4_agent.py  —  JARVIS AM4 Automation Module  v2
+#  am4_agent.py  —  JARVIS AM4 Automation Module  v3
 #
-#  USAGE in bot:
+#  USAGE:
 #    from am4_agent import setup_agent
-#    # inside on_ready():
 #    setup_agent(bot, supabase_get, supabase_post)
 #
 #  ENV VARS:
-#    AM4_EMAIL        — AM4 login email
-#    AM4_PASSWORD     — AM4 login password
-#    AM4_ALLIANCE     — Exact alliance name to search (e.g. "Eternal Shadow")
-#    AGENT_CHANNEL    — Discord channel ID for results
+#    AM4_EMAIL      — AM4 login email
+#    AM4_PASSWORD   — AM4 login password
+#    AM4_ALLIANCE   — Alliance name to search (e.g. "Eternal Shadow")
+#    AGENT_CHANNEL  — Discord channel ID for results
 # =========================================================
 
 import os, re, json, asyncio, subprocess, sys
@@ -21,30 +20,56 @@ import pytz
 
 _IST = pytz.timezone("Asia/Kolkata")
 
-# ── Auto-install Playwright browsers if missing ───────────
+# ── Marketing page words to IGNORE in scraper ─────────────
+# These appear on AM4 landing page — never actual airline names
+_IGNORE_WORDS = {
+    "build your airline empire", "play free now", "watch trailer",
+    "real planes", "maintain", "modify", "play with", "400+",
+    "download on the", "get it on", "app store", "google play",
+    "airline manager", "build", "empire", "trailer", "free now",
+    "download", "install", "copyright", "privacy", "terms",
+    "contact", "about", "home", "menu", "navigation",
+}
+
+def _is_junk_name(name: str) -> bool:
+    """Return True if this looks like marketing/UI text, not an airline name."""
+    n = name.strip().lower()
+    if len(n) < 2 or len(n) > 60:
+        return True
+    # Contains common marketing words
+    for word in _IGNORE_WORDS:
+        if word in n:
+            return True
+    # All caps short words = UI buttons
+    if name.isupper() and len(name.split()) <= 3:
+        return True
+    # Starts with symbols
+    if name[0] in "•●■▶►◄◀▼▲→←":
+        return True
+    return False
+
+# ── Auto-install Playwright if missing ────────────────────
 def _ensure_playwright():
     try:
-        from playwright.async_api import async_playwright
-        # Quick check: try importing without launching
-        return True
+        import playwright
     except ImportError:
         print("[AGENT] Installing playwright...")
         subprocess.run([sys.executable, "-m", "pip", "install", "playwright"],
                        check=True, capture_output=True)
-    # Install browsers
-    print("[AGENT] Installing Chromium browser...")
-    result = subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium",
-         "--with-deps"],
+    try:
+        from playwright.async_api import async_playwright
+    except:
+        pass
+    print("[AGENT] Installing Chromium browser binaries...")
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
         capture_output=True, text=True
     )
-    print("[AGENT] Browser install:", result.stdout[-300:] if result.stdout else result.stderr[-300:])
-    return True
 
 _ensure_playwright()
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
-# ── State ─────────────────────────────────────────────────
+# ── Module state ──────────────────────────────────────────
 _state = {
     "running":    False,
     "last_run":   None,
@@ -52,7 +77,6 @@ _state = {
     "schedule_h": 0,
 }
 
-# ── Injected refs ─────────────────────────────────────────
 _bot           = None
 _supabase_get  = None
 _supabase_post = None
@@ -64,12 +88,12 @@ def setup_agent(bot_instance, supa_get_fn, supa_post_fn):
     _supabase_post = supa_post_fn
     _register_commands(bot_instance)
     bot_instance.loop.create_task(_auto_loop())
-    print("[AM4 AGENT] Ready — commands registered, loop started")
+    print("[AM4 AGENT] Ready")
 
-# ── Tiny helpers ──────────────────────────────────────────
-def _now_ist():    return datetime.now(_IST)
-def _today_ist():  return _now_ist().strftime("%Y-%m-%d")
-def _env(k):       return os.getenv(k, "")
+# ── Helpers ───────────────────────────────────────────────
+def _now_ist():   return datetime.now(_IST)
+def _today_ist(): return _now_ist().strftime("%Y-%m-%d")
+def _env(k):      return os.getenv(k, "")
 
 def _fmt(v):
     try:
@@ -89,51 +113,61 @@ def _parse(s):
         return float(s)
     except: return 0.0
 
-# ─────────────────────────────────────────────────────────
-#  SUPABASE  
-# ─────────────────────────────────────────────────────────
-async def _fetch_portal_airlines() -> dict:
-    """
-    Fetch ALL players from share_users.
-    Returns dict: { airline_name_lower: {sts_id, name, alliance, discord_id} }
-    """
+async def _ss(page, name):
+    try: await page.screenshot(path=f"/tmp/am4_{name}.png")
+    except: pass
+
+async def _click(page, sels, timeout=3000):
+    for s in sels:
+        try:
+            await page.click(s, timeout=timeout)
+            return True
+        except: pass
+    return False
+
+async def _fill(page, sels, val, timeout=4000):
+    for s in sels:
+        try:
+            await page.fill(s, val, timeout=timeout)
+            return True
+        except: pass
+    return False
+
+async def _wait(page, sels, timeout=10000):
+    for s in sels:
+        try:
+            el = await page.wait_for_selector(s, timeout=timeout)
+            if el: return el
+        except: pass
+    return None
+
+# ── Supabase ──────────────────────────────────────────────
+async def _fetch_portal_airlines():
     try:
-        rows = await _supabase_get("share_users", {
-            "select": "sts_id,name,airline,alliance,discord_id",
-        })
+        rows = await _supabase_get("share_users",
+            {"select": "sts_id,name,airline,alliance,discord_id"})
         result = {}
         for r in rows:
             airline = (r.get("airline") or "").strip()
             if airline:
                 result[airline.lower()] = r
-        print(f"[AGENT] Portal players loaded: {len(result)}")
+        print(f"[AGENT] Portal players: {len(result)}")
         return result
     except Exception as e:
-        print(f"[AGENT] fetch_portal_airlines error: {e}")
+        print(f"[AGENT] fetch error: {e}")
         return {}
 
-def _match_airline(am4_name: str, portal_map: dict):
-    """
-    Match AM4 airline name to portal player.
-    Tries: exact → contains → partial word match.
-    """
+def _match(am4_name, portal_map):
     key = am4_name.strip().lower()
-    # Exact
-    if key in portal_map:
-        return portal_map[key]
-    # Contains either way
+    if key in portal_map: return portal_map[key]
     for pk, pv in portal_map.items():
-        if key in pk or pk in key:
-            return pv
-    # Word-level partial
-    key_words = set(key.split())
+        if key in pk or pk in key: return pv
+    kw = set(key.split())
     for pk, pv in portal_map.items():
-        pk_words = set(pk.split())
-        if key_words & pk_words:  # any word in common
-            return pv
+        if kw & set(pk.split()): return pv
     return None
 
-async def _already_submitted(sts_id: str, alliance: str) -> bool:
+async def _already_submitted(sts_id, alliance):
     try:
         rows = await _supabase_get("share_entries", {
             "sts_id":   f"eq.{sts_id}",
@@ -149,7 +183,7 @@ async def _already_submitted(sts_id: str, alliance: str) -> bool:
         return False
     except: return False
 
-async def _do_submit(sts_id: str, alliance: str, value: float):
+async def _submit(sts_id, alliance, value):
     await _supabase_post("share_entries", {
         "sts_id":     sts_id,
         "alliance":   alliance,
@@ -157,529 +191,519 @@ async def _do_submit(sts_id: str, alliance: str, value: float):
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
-async def _dm_player(discord_id, alliance, value):
+async def _dm(discord_id, alliance, value):
     if not discord_id or not _bot: return
     try:
         u = await _bot.fetch_user(int(discord_id))
         await u.send(
-            f"📤 **JARVIS Auto-Submitted** your share entry!\n"
+            f"📤 **JARVIS Auto-Submit** — share entry posted!\n"
             f"Alliance : **{alliance}**\n"
             f"Value    : **{_fmt(value)}**\n"
             f"`{_now_ist().strftime('%d %b %Y  %I:%M %p IST')}`"
         )
-    except Exception as e:
-        print(f"[AGENT] DM failed {discord_id}: {e}")
-
-# ─────────────────────────────────────────────────────────
-#  PLAYWRIGHT HELPERS
-# ─────────────────────────────────────────────────────────
-async def _screenshot(page, name: str):
-    try:
-        await page.screenshot(path=f"/tmp/am4_{name}.png", full_page=False)
     except: pass
 
-async def _try_click(page, selectors: list, timeout=3000) -> bool:
-    for sel in selectors:
-        try:
-            await page.click(sel, timeout=timeout)
-            return True
-        except: pass
-    return False
-
-async def _try_fill(page, selectors: list, value: str, timeout=4000) -> bool:
-    for sel in selectors:
-        try:
-            await page.fill(sel, value, timeout=timeout)
-            return True
-        except: pass
-    return False
-
-async def _wait_any(page, selectors: list, timeout=10000):
-    for sel in selectors:
-        try:
-            el = await page.wait_for_selector(sel, timeout=timeout)
-            if el: return el
-        except: pass
-    return None
-
 # ─────────────────────────────────────────────────────────
-#  STEP 1 — LOGIN
+#  LOGIN  —  Direct /login URL approach
 # ─────────────────────────────────────────────────────────
 async def _login(page) -> bool:
-    email    = _env("AM4_EMAIL")
-    password = _env("AM4_PASSWORD")
+    """
+    Login strategy (priority order):
+      1. Magic/Activation link  (fastest — direct game access)
+      2. Direct /login URL      (no button hunting needed)
+      3. Homepage → find Login button → fill form
+    """
+    email      = _env("AM4_EMAIL")
+    password   = _env("AM4_PASSWORD")
+    magic_link = _env("AM4_MAGIC_LINK").strip()
 
-    # ── Step 1: Open AM4 landing page ─────────────────────
-    print("[AGENT] Opening AM4 landing page...")
-    await page.goto(
-        "https://www.airlinemanager.com",
-        wait_until="domcontentloaded",
-        timeout=30_000
-    )
-    await asyncio.sleep(3)
-    await _screenshot(page, "01_landing")
-
-    # ── Step 2: Dismiss cookie/consent banner if present ──
-    for txt in ["Accept","I agree","OK","Allow","Accept all","Got it","Close"]:
+    # ─────────────────────────────────────────────────────
+    # STRATEGY 1 — Magic / Activation link
+    # ─────────────────────────────────────────────────────
+    if magic_link:
+        print(f"[AGENT] Trying magic link: {magic_link[:60]}...")
         try:
-            await page.click(f"text={txt}", timeout=1500)
-            await asyncio.sleep(0.5)
-            break
-        except: pass
+            await page.goto(magic_link, wait_until="domcontentloaded",
+                            timeout=25_000)
+            await asyncio.sleep(4)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15_000)
+            except: pass
+            await asyncio.sleep(3)
+            await _ss(page, "01_magic_link")
+            print(f"[AGENT] Magic link URL: {page.url}")
 
-    # ── Step 3: Click LOGIN button (NOT register/play) ────
-    # AM4 landing page has "Login" link in top nav or hero section
-    # We must click this BEFORE filling any form
-    print("[AGENT] Looking for Login button on landing page...")
-    login_btn_clicked = False
+            # Check if game loaded
+            if await _game_loaded(page):
+                print("[AGENT] ✅ Magic link worked — game open!")
+                return True
 
-    # Priority order: most specific → least specific
-    login_btn_selectors = [
-        # Exact text matches (most reliable)
-        "a:has-text('Login')",
-        "a:has-text('Log In')",
-        "a:has-text('Log in')",
-        "button:has-text('Login')",
-        "button:has-text('Log In')",
-        # Nav bar login links
-        "nav a[href*='login']",
-        "header a[href*='login']",
-        ".navbar a[href*='login']",
-        ".nav a[href*='login']",
-        # ID / class based
-        "#loginBtn","#login-btn","#btnLogin",
-        ".login-btn",".btn-login",".login-link",
-        "[class*='login'][class*='btn']",
-        "[class*='btn'][class*='login']",
-        # Data attributes
-        "[data-action='login']",
-        "[data-target='#loginModal']",
-        "[data-toggle='modal'][href*='login']",
-        # Generic fallbacks
-        "a[href*='login']",
-        "a[href*='signin']",
+            print("[AGENT] Magic link didn't open game — trying login flow")
+        except Exception as e:
+            print(f"[AGENT] Magic link error: {e}")
+    else:
+        print("[AGENT] No AM4_MAGIC_LINK set — skipping to login flow")
+
+    # ─────────────────────────────────────────────────────
+    # STRATEGY 2 — Direct /login URL
+    # ─────────────────────────────────────────────────────
+    direct_login_urls = [
+        "https://www.airlinemanager.com/login",
+        "https://www.airlinemanager.com/auth/login",
+        "https://www.airlinemanager.com/signin",
+        "https://www.airlinemanager.com/auth",
+        "https://www.airlinemanager.com/user/login",
     ]
 
-    for sel in login_btn_selectors:
+    form_found = False
+    for url in direct_login_urls:
+        print(f"[AGENT] Trying: {url}")
         try:
-            el = await page.query_selector(sel)
+            await page.goto(url, wait_until="domcontentloaded", timeout=12_000)
+            await asyncio.sleep(2)
+            el = await _wait(page, [
+                "input[type='email']", "input[type='password']",
+                "input[name='email']", "input[name='password']",
+                "#email", "#password",
+                "[placeholder*='email' i]", "[placeholder*='password' i]",
+            ], timeout=4000)
             if el:
-                await el.click(timeout=3000)
-                login_btn_clicked = True
-                print(f"[AGENT] Login button clicked: {sel}")
-                await asyncio.sleep(2)
+                print(f"[AGENT] ✅ Login form at: {url}")
+                form_found = True
                 break
         except: pass
 
-    await _screenshot(page, "02_after_login_btn_click")
+    await _ss(page, "02_direct_url_attempt")
 
-    if not login_btn_clicked:
-        print("[AGENT] ⚠️ Login button not found via selectors — trying JS search")
+    # ─────────────────────────────────────────────────────
+    # STRATEGY 3 — Homepage → click Login button
+    # ─────────────────────────────────────────────────────
+    if not form_found:
+        print("[AGENT] Direct URL failed — opening homepage")
+        await page.goto("https://www.airlinemanager.com",
+                        wait_until="domcontentloaded", timeout=25_000)
+        await asyncio.sleep(4)
+        await _ss(page, "03_homepage")
+
+        # Dismiss consent banner
+        for txt in ["Accept","I agree","OK","Allow","Accept all","Got it"]:
+            try:
+                await page.click(f"text={txt}", timeout=1500)
+                await asyncio.sleep(0.5)
+                break
+            except: pass
+
+        # Dump all interactive elements so Render logs show exact selectors
         try:
-            await page.evaluate("""
-                () => {
-                    // Find any link/button with 'login' or 'log in' text
-                    const all = [...document.querySelectorAll('a, button, span')];
-                    for (const el of all) {
-                        const t = el.textContent.trim().toLowerCase();
-                        if ((t === 'login' || t === 'log in' || t === 'sign in')
-                             && el.offsetParent !== null) {
-                            el.click();
-                            return el.textContent;
-                        }
-                    }
-                    return null;
-                }
+            els_info = await page.evaluate("""
+                () => [...document.querySelectorAll('a, button, input')]
+                      .slice(0, 50)
+                      .map(el => ({
+                          tag:  el.tagName,
+                          text: el.textContent.trim().slice(0,40),
+                          href: el.href  || '',
+                          id:   el.id    || '',
+                          cls:  el.className.toString().slice(0,60),
+                          type: el.type  || '',
+                          ph:   el.placeholder || '',
+                      }))
             """)
-            await asyncio.sleep(2)
-            login_btn_clicked = True
+            print("[AGENT] === Homepage interactive elements ===")
+            for el in els_info:
+                print(f"  {el['tag']:6} | text='{el['text']:25}' | "
+                      f"id='{el['id']:15}' | href='{el['href'][:40]}' | "
+                      f"cls='{el['cls'][:40]}'")
         except Exception as e:
-            print(f"[AGENT] JS login click error: {e}")
+            print(f"[AGENT] Element dump error: {e}")
 
-    # ── Step 4: Wait for login FORM to appear ─────────────
-    print("[AGENT] Waiting for login form...")
-    form_appeared = await _wait_any(page, [
-        "input[type='email']",
-        "input[type='password']",
-        "input[name='email']",
-        "input[name='password']",
-        "#email","#login-email",
-        "[placeholder*='email' i]",
-        "[placeholder*='mail' i]",
-        "#loginModal","#login-modal",
-        ".login-form","[class*='login'][class*='form']",
-    ], timeout=8000)
+        await _ss(page, "04_homepage_rendered")
 
-    await _screenshot(page, "03_login_form")
+        # JS click: find element with login text
+        clicked = await page.evaluate("""
+            () => {
+                const loginTexts = ['log in', 'login', 'sign in', 'signin'];
+                const all = [...document.querySelectorAll('a, button, span, li, div')];
+                // Exact match first
+                for (const el of all) {
+                    const txt = el.textContent.trim().toLowerCase();
+                    if (loginTexts.includes(txt) && el.offsetParent !== null) {
+                        el.click();
+                        return `exact: <${el.tagName}> "${el.textContent.trim()}" id="${el.id}"`;
+                    }
+                }
+                // Partial match (text length < 20 to avoid matching paragraphs)
+                for (const el of all) {
+                    const txt = el.textContent.trim().toLowerCase();
+                    if (txt.length < 20
+                        && (txt.includes('log in') || txt.includes('login'))
+                        && el.offsetParent !== null) {
+                        el.click();
+                        return `partial: <${el.tagName}> "${el.textContent.trim()}" id="${el.id}"`;
+                    }
+                }
+                return null;
+            }
+        """)
+        print(f"[AGENT] Login btn JS result: {clicked}")
+        await asyncio.sleep(3)
+        await _ss(page, "05_after_login_btn")
 
-    if not form_appeared:
-        print("[AGENT] Login form not visible after button click — screenshot saved")
+        # Check form appeared
+        el = await _wait(page, [
+            "input[type='email']", "input[type='password']",
+            "input[name='email']", "input[name='password']",
+            "#email", "#password",
+            "[placeholder*='email' i]", "[placeholder*='password' i]",
+        ], timeout=6000)
+        form_found = el is not None
 
-    # ── Step 5: Fill Email ─────────────────────────────────
-    print("[AGENT] Filling email...")
-    email_filled = await _try_fill(page, [
-        "input[name='email']",
-        "input[type='email']",
-        "#email",
-        "#login-email",
-        "[placeholder*='email' i]",
-        "[placeholder*='mail' i]",
-        ".login-form input[type='text']",
-        "form input:nth-child(1)",
+    # ─────────────────────────────────────────────────────
+    # FILL FORM (Strategies 2 & 3)
+    # ─────────────────────────────────────────────────────
+    if not form_found:
+        await _ss(page, "06_form_not_found")
+        print("[AGENT] ❌ No login form found via any strategy")
+        return False
+
+    print("[AGENT] Filling credentials...")
+    await asyncio.sleep(1)
+
+    # Email
+    await _fill(page, [
+        "input[name='email']", "input[type='email']",
+        "#email", "#login-email", "#inputEmail",
+        "[placeholder*='email' i]", "[placeholder*='mail' i]",
+        "form input:first-of-type",
     ], email)
-    print(f"[AGENT] Email filled: {email_filled}")
 
-    # ── Step 6: Fill Password ──────────────────────────────
-    print("[AGENT] Filling password...")
-    pass_filled = await _try_fill(page, [
-        "input[name='password']",
-        "input[type='password']",
-        "#password",
-        "#login-password",
+    # Password
+    await _fill(page, [
+        "input[name='password']", "input[type='password']",
+        "#password", "#login-password", "#inputPassword",
         "[placeholder*='password' i]",
-        ".login-form input[type='password']",
         "form input[type='password']",
     ], password)
-    print(f"[AGENT] Password filled: {pass_filled}")
 
-    await _screenshot(page, "04_credentials_filled")
+    await _ss(page, "07_form_filled")
 
-    # ── Step 7: Click SUBMIT / Login button in form ────────
-    print("[AGENT] Submitting login form...")
-    await _try_click(page, [
-        # Inside modal / form — most specific first
-        "#loginModal button[type='submit']",
-        ".login-form button[type='submit']",
-        "form button[type='submit']",
+    # Submit
+    submitted = await _click(page, [
         "button[type='submit']",
         "input[type='submit']",
-        # Text-based
+        "#loginBtn", "#btnLogin", "#submitBtn",
         "button:has-text('Login')",
         "button:has-text('Log In')",
         "button:has-text('Sign In')",
-        "button:has-text('Enter')",
-        # ID / class
-        "#loginSubmit","#submitLogin","#btnSubmit",
-        ".btn-submit",".submit-btn",".login-submit",
-        "[class*='submit']","[class*='login'][class*='btn']",
+        ".login-btn", ".btn-login", ".btn-submit",
+        "[class*='login'][class*='btn']",
+        "[class*='submit']",
     ])
 
-    # ── Step 8: Wait for game to load ─────────────────────
-    print("[AGENT] Waiting for game UI to load...")
-    await asyncio.sleep(5)
+    if not submitted:
+        try:
+            await page.keyboard.press("Enter")
+        except: pass
+
+    # Wait for game
+    print("[AGENT] Waiting for game to load...")
+    await asyncio.sleep(6)
     try:
         await page.wait_for_load_state("networkidle", timeout=25_000)
     except: pass
     await asyncio.sleep(3)
-    await _screenshot(page, "05_post_submit")
+    await _ss(page, "08_post_submit")
     print(f"[AGENT] URL after submit: {page.url}")
 
-    # ── Step 9: Verify game loaded ─────────────────────────
-    # Look for any game UI element that confirms we are inside the game
-    game_el = await _wait_any(page, [
+    if await _game_loaded(page):
+        print("[AGENT] ✅ Logged in via email/password!")
+        return True
+
+    print("[AGENT] ❌ Login failed via all strategies")
+    return False
+
+
+async def _game_loaded(page) -> bool:
+    """
+    Check if AM4 game UI is visible.
+    Returns True if we are inside the game (not on marketing/login page).
+    """
+    # Check for known game UI elements
+    for sel in [
         "#sidebar", ".sidebar",
         "#main-nav", ".main-nav",
         "#navBar", ".navbar",
         ".game-ui", ".game-container",
         "#game", "[id*='game']",
-        "[class*='sidebar']",
-        "[class*='game-']",
-        "#dashboard", ".dashboard",
         ".bottom-nav", ".nav-tabs",
         "[class*='tab-bar']",
-        # AM4 might use canvas for game
         "canvas",
-        # Or an iframe
-        "iframe#gameFrame", "iframe[src*='game']",
-    ], timeout=10000)
+        "iframe#gameFrame",
+    ]:
+        try:
+            el = await page.query_selector(sel)
+            if el:
+                print(f"[AGENT] Game UI element found: {sel}")
+                return True
+        except: pass
 
-    await _screenshot(page, "06_game_verify")
-
-    if game_el:
-        print("[AGENT] ✅ Game UI confirmed")
-        return True
-
-    # Title/URL fallback check
-    title = await page.title()
+    # URL / title check
     url   = page.url.lower()
-    print(f"[AGENT] Title: {title} | URL: {url}")
+    title = await page.title()
+    print(f"[AGENT] _game_loaded check — url:{url} title:{title}")
 
-    # If we are no longer on landing/login, assume success
-    still_on_landing = any(x in url for x in [
-        "login","signin","register","signup",
-    ]) or ("build" in title.lower() and "airline" in title.lower())
+    # Not on marketing/auth pages = likely in game
+    is_auth = any(x in url for x in ["login","signin","register","activate"])
+    if is_auth:
+        return False
 
-    if not still_on_landing:
-        print("[AGENT] ✅ URL/title suggests logged in")
+    # Marketing page detection: body has "Build Your Airline Empire"
+    try:
+        body = await page.evaluate(
+            "() => document.body?.innerText?.toLowerCase() || ''"
+        )
+        if "build your airline empire" in body and len(body) < 5000:
+            return False
+    except: pass
+
+    # If URL changed from original and not on auth page → assume game
+    if "airlinemanager.com" in url and not is_auth:
         return True
 
-    print("[AGENT] ❌ Still on login/landing page")
     return False
 
 
-# ─────────────────────────────────────────────────────────
-#  STEP 2 — OPEN ALLIANCE TAB (⭐ star icon in sidebar)
-# ─────────────────────────────────────────────────────────
 async def _open_alliance_tab(page) -> bool:
     alliance_name = _env("AM4_ALLIANCE") or "Eternal Shadow"
-    print(f"[AGENT] Opening alliance tab, searching: '{alliance_name}'")
+    print(f"[AGENT] Opening alliance: '{alliance_name}'")
 
-    await asyncio.sleep(2)
-
-    # Try clicking the star / alliance tab in sidebar
-    # AM4 uses various selectors for alliance tab
-    clicked = await _try_click(page, [
-        # Star icon variations
-        "[title*='Alliance' i]",
-        "[alt*='Alliance' i]",
-        "[class*='alliance' i]",
-        "[id*='alliance' i]",
-        "[href*='alliance' i]",
-        # Star shape / icon
-        "[class*='star' i]",
-        "[id*='star' i]",
-        "img[src*='star']",
-        "img[src*='alliance']",
-        # Text
-        "text=Alliance",
-        "text=My Alliance",
-        ".alliance-tab",
-        "#allianceTab",
-        "#btnAlliance",
-        # Nav items - AM4 sidebar tabs are often nth-child
-        ".sidebar li:nth-child(4) a",
-        ".sidebar li:nth-child(5) a",
-        ".nav-item:nth-child(4)",
-        ".tab:nth-child(4)",
-        ".bottom-nav li:nth-child(4)",
-        "#tab4","#tab5",
-    ], timeout=3000)
-
-    await asyncio.sleep(2)
-    await _screenshot(page, "07_alliance_tab")
-
-    if not clicked:
-        # Try by evaluating JS — find element containing star SVG or alliance keyword
-        try:
-            await page.evaluate("""
-                () => {
-                    const els = document.querySelectorAll('*');
-                    for (const el of els) {
-                        const txt = (el.textContent || el.title || el.alt || '').toLowerCase();
-                        const cls = (el.className || '').toLowerCase();
-                        const id  = (el.id || '').toLowerCase();
-                        if ((txt.includes('alliance') || cls.includes('alliance') || id.includes('alliance'))
-                            && el.tagName !== 'BODY' && el.tagName !== 'HTML') {
-                            el.click();
-                            break;
-                        }
-                    }
+    # Dump sidebar elements first
+    try:
+        sidebar_info = await page.evaluate("""
+            () => {
+                const sels = ['#sidebar','nav','[class*="sidebar"]',
+                              '[class*="nav"]','[class*="menu"]',
+                              '[class*="bottom"]','[class*="tab"]'];
+                for (const sel of sels) {
+                    const el = document.querySelector(sel);
+                    if (el) return {
+                        sel: sel,
+                        html: el.innerHTML.slice(0, 800),
+                        children: [...el.querySelectorAll('*')].slice(0,20)
+                                  .map(c=>({tag:c.tagName,id:c.id,
+                                            cls:c.className.toString().slice(0,60),
+                                            txt:c.textContent.trim().slice(0,30)}))
+                    };
                 }
-            """)
-            await asyncio.sleep(2)
-        except Exception as e:
-            print(f"[AGENT] JS alliance click error: {e}")
+                return null;
+            }
+        """)
+        if sidebar_info:
+            print(f"[AGENT] Sidebar ({sidebar_info['sel']}) children:")
+            for c in sidebar_info.get('children', []):
+                print(f"  {c['tag']} id='{c['id']}' cls='{c['cls']}' txt='{c['txt']}'")
+    except Exception as e:
+        print(f"[AGENT] Sidebar dump error: {e}")
 
-    # Now search for the alliance
-    await _screenshot(page, "08_alliance_search_before")
+    await _ss(page, "09_before_alliance_click")
 
-    # Find search box and type alliance name
-    searched = await _try_fill(page, [
+    # Click alliance/star tab
+    clicked = await page.evaluate(f"""
+        () => {{
+            // Search for star icon or alliance tab
+            const keywords = ['alliance','star','guild','club'];
+            const all = [...document.querySelectorAll('a,button,li,div,span,img')];
+            for (const el of all) {{
+                const txt  = (el.textContent || '').trim().toLowerCase();
+                const id   = (el.id || '').toLowerCase();
+                const cls  = (el.className || '').toString().toLowerCase();
+                const src  = (el.src || el.href || '').toLowerCase();
+                const title= (el.title || el.alt || '').toLowerCase();
+
+                for (const kw of keywords) {{
+                    if ((txt === kw || id.includes(kw) || cls.includes(kw)
+                         || src.includes(kw) || title.includes(kw))
+                        && el.offsetParent !== null) {{
+                        el.click();
+                        return 'clicked: ' + el.tagName + ' id=' + el.id
+                               + ' cls=' + el.className.toString().slice(0,40)
+                               + ' txt=' + el.textContent.trim().slice(0,20);
+                    }}
+                }}
+            }}
+            return null;
+        }}
+    """)
+    print(f"[AGENT] Alliance tab click: {clicked}")
+
+    await asyncio.sleep(3)
+    await _ss(page, "10_after_alliance_click")
+
+    # Search for the specific alliance
+    filled = await _fill(page, [
         "input[placeholder*='search' i]",
         "input[placeholder*='alliance' i]",
-        "input[placeholder*='find' i]",
         "input[placeholder*='name' i]",
-        "#allianceSearch","#searchAlliance",
-        ".alliance-search input",
+        "input[placeholder*='find' i]",
+        "#allianceSearch", "#searchInput", "#search",
         "[class*='search'] input",
         "[id*='search'] input",
         "input[type='text']",
         "input[type='search']",
     ], alliance_name, timeout=4000)
 
-    if searched:
+    if filled:
         await asyncio.sleep(1)
-        # Press Enter or click search button
-        try:
-            await page.keyboard.press("Enter")
-        except: pass
-        await _try_click(page, [
-            "button[type='submit']", ".search-btn", "#searchBtn",
-            "text=Search", "text=Find", ".btn-search",
-        ], timeout=2000)
+        await page.keyboard.press("Enter")
         await asyncio.sleep(2)
-        await _screenshot(page, "09_alliance_searched")
+        await _ss(page, "11_after_search")
 
-    # Try clicking on the alliance result
-    await _try_click(page, [
-        f"text={alliance_name}",
-        ".alliance-result",".search-result",
-        ".result-item",".alliance-item",
-        "[class*='result']",
-    ], timeout=3000)
+        # Click the alliance from results
+        await _click(page, [
+            f"text={alliance_name}",
+            ".result-item", ".search-result", ".alliance-result",
+            "[class*='result']", "[class*='item']",
+        ], timeout=3000)
+        await asyncio.sleep(2)
 
-    await asyncio.sleep(2)
-    await _screenshot(page, "10_alliance_opened")
-
-    # Navigate to Members tab within alliance
-    await _try_click(page, [
-        "text=Members","text=MEMBERS",
-        "#membersTab","[href*='member']",
+    # Click Members tab
+    await _click(page, [
+        "text=Members", "text=MEMBERS", "text=Roster",
+        "#membersTab", "[href*='member']",
         "[class*='member'][class*='tab']",
-        ".tab:contains('Member')",
-        "text=Players","text=Roster",
     ], timeout=3000)
 
     await asyncio.sleep(2)
-    await _screenshot(page, "11_members_tab")
+    await _ss(page, "12_members_page")
 
-    # Check if any member-like content appeared
-    content = await page.content()
-    has_members = any(x in content.lower() for x in
-                      ["airline","member","player","roster"])
-    print(f"[AGENT] Alliance/members content found: {has_members}")
-    return has_members
+    html = await page.content()
+    print(f"[AGENT] Members page content length: {len(html)}")
+    return len(html) > 500
 
 
 # ─────────────────────────────────────────────────────────
-#  STEP 3 — SCRAPE MEMBERS
+#  SCRAPE MEMBERS  (with marketing text filter)
 # ─────────────────────────────────────────────────────────
-async def _scrape_members(page) -> list:
-    """
-    Returns list of { airline, share_value }.
-    Tries DOM rows → JSON in source → page text parsing.
-    """
+async def _scrape_members(page, portal_map: dict) -> list:
     members = []
 
     # ── DOM rows ──────────────────────────────────────────
-    row_sels = [
-        "table tbody tr",
-        ".member-row",".alliance-member",
-        ".player-row",".roster-row",
-        "[class*='member']","[class*='player']",
-        "ul.members li","ol.members li",
-        ".list-item","[class*='list'] [class*='item']",
-    ]
-    rows = []
-    for sel in row_sels:
+    for row_sel in [
+        "table tbody tr", ".member-row", ".alliance-member",
+        ".player-row", ".roster-row", "[class*='member']",
+        "ul li", "ol li",
+    ]:
         try:
-            found = await page.query_selector_all(sel)
-            if len(found) > 0:
-                rows = found
-                print(f"[AGENT] Rows found with selector '{sel}': {len(found)}")
+            rows = await page.query_selector_all(row_sel)
+            if len(rows) < 2: continue
+            print(f"[AGENT] Trying selector '{row_sel}': {len(rows)} rows")
+
+            for row in rows:
+                try:
+                    text = (await row.inner_text()).strip()
+                    if not text or len(text) < 2: continue
+
+                    # Get airline name from first meaningful cell
+                    airline = ""
+                    for ns in [
+                        ".airline-name",".name",".player-name",".airline",
+                        "td:nth-child(1)","td:nth-child(2)",
+                        "[class*='name']","[class*='airline']",
+                        "strong","b","span:first-child",
+                    ]:
+                        try:
+                            el = await row.query_selector(ns)
+                            if el:
+                                t = (await el.inner_text()).strip()
+                                if t and len(t) > 1:
+                                    airline = t
+                                    break
+                        except: pass
+
+                    if not airline:
+                        airline = text.split("\n")[0].strip()
+
+                    # Skip marketing/junk text
+                    if _is_junk_name(airline):
+                        continue
+
+                    # Get share value
+                    sv = 0.0
+                    for vs in [
+                        ".share-value",".shares",".stock",".value",
+                        "td:nth-child(3)","td:nth-child(4)","td:nth-child(5)",
+                        "[class*='share']","[class*='stock']",
+                    ]:
+                        try:
+                            el = await row.query_selector(vs)
+                            if el:
+                                v = _parse((await el.inner_text()).strip())
+                                if v > 0: sv = v; break
+                        except: pass
+
+                    # Scan cells for money pattern
+                    if sv == 0:
+                        for cs in ["td","span","[class*='col']"]:
+                            cells = await row.query_selector_all(cs)
+                            for c in cells:
+                                ct = (await c.inner_text()).strip()
+                                if re.search(r"\d[\d,\.]*\s*[BMK$]|\$[\d,\.]+", ct, re.I):
+                                    v = _parse(ct)
+                                    if v > 0: sv = v; break
+                            if sv > 0: break
+
+                    members.append({"airline": airline, "share_value": sv})
+                except: continue
+
+            if members:
+                print(f"[AGENT] DOM: {len(members)} members via '{row_sel}'")
                 break
-        except: pass
-
-    for row in rows:
-        try:
-            text = (await row.inner_text()).strip()
-            if not text or len(text) < 2: continue
-
-            # Airline name
-            airline = ""
-            for sel in [
-                ".airline-name",".name",".player-name",".airline",
-                "td:nth-child(1)","td:nth-child(2)",
-                "[class*='name']","[class*='airline']",
-                "span:first-child","strong","b",
-            ]:
-                try:
-                    el = await row.query_selector(sel)
-                    if el:
-                        t = (await el.inner_text()).strip()
-                        if t and len(t) > 1:
-                            airline = t
-                            break
-                except: pass
-
-            if not airline:
-                # First non-empty line of row text
-                lines = [l.strip() for l in text.split("\n") if l.strip()]
-                if lines: airline = lines[0]
-
-            if not airline or len(airline) < 2: continue
-
-            # Share value — look for money pattern
-            share_val = 0.0
-            for sel in [
-                ".share-value",".shares",".stock",".value",
-                "td:nth-child(3)","td:nth-child(4)","td:nth-child(5)",
-                "[class*='share']","[class*='stock']","[class*='value']",
-            ]:
-                try:
-                    el = await row.query_selector(sel)
-                    if el:
-                        sv = _parse((await el.inner_text()).strip())
-                        if sv > 0: share_val = sv; break
-                except: pass
-
-            # Scan all cells for money pattern
-            if share_val == 0:
-                for cell_sel in ["td","span","div","[class*='col']"]:
-                    cells = await row.query_selector_all(cell_sel)
-                    for cell in cells:
-                        ct = (await cell.inner_text()).strip()
-                        if re.search(r"\d[\d,\.]*\s*[BMK$]|\$[\d,\.]+", ct, re.I):
-                            sv = _parse(ct)
-                            if sv > 0: share_val = sv; break
-                    if share_val > 0: break
-
-            members.append({"airline": airline, "share_value": share_val})
         except: continue
 
-    if members:
-        print(f"[AGENT] DOM extracted {len(members)} members")
-        return members
-
     # ── JSON in page source ───────────────────────────────
-    try:
-        html = await page.content()
-        for pat in [
-            r'members\s*[=:]\s*(\[[\s\S]*?\])',
-            r'players\s*[=:]\s*(\[[\s\S]*?\])',
-            r'roster\s*[=:]\s*(\[[\s\S]*?\])',
-            r'allianceMembers\s*=\s*(\[[\s\S]*?\]);',
-        ]:
-            m = re.search(pat, html, re.DOTALL)
-            if m:
-                try:
-                    data = json.loads(m.group(1))
-                    for item in data:
-                        airline = (
-                            item.get("name") or item.get("airline") or
-                            item.get("airlineName") or item.get("companyName","")
-                        ).strip()
-                        sv = float(
-                            item.get("shareValue") or item.get("share_value") or
-                            item.get("shares") or item.get("stockValue") or 0
-                        )
-                        if airline:
-                            members.append({"airline":airline,"share_value":sv})
-                    if members:
-                        print(f"[AGENT] JSON extracted {len(members)} members")
-                        return members
-                except: pass
-    except Exception as e:
-        print(f"[AGENT] JSON parse error: {e}")
+    if not members:
+        try:
+            html = await page.content()
+            for pat in [
+                r'members\s*[=:]\s*(\[[\s\S]*?\])',
+                r'players\s*[=:]\s*(\[[\s\S]*?\])',
+                r'allianceMembers\s*=\s*(\[[\s\S]*?\]);',
+                r'roster\s*[=:]\s*(\[[\s\S]*?\])',
+            ]:
+                m = re.search(pat, html, re.DOTALL)
+                if m:
+                    try:
+                        data = json.loads(m.group(1))
+                        for item in data:
+                            airline = (
+                                item.get("name") or item.get("airline") or
+                                item.get("airlineName") or ""
+                            ).strip()
+                            sv = float(
+                                item.get("shareValue") or item.get("shares") or 0
+                            )
+                            if airline and not _is_junk_name(airline):
+                                members.append({"airline":airline,"share_value":sv})
+                        if members:
+                            print(f"[AGENT] JSON: {len(members)} members")
+                            return members
+                    except: pass
+        except: pass
 
-    # ── Plain text fallback — read visible page text ───────
-    try:
-        body_text = await page.evaluate("() => document.body.innerText")
-        lines = [l.strip() for l in body_text.split("\n") if l.strip()]
-        # Look for lines that look like airline names near money values
-        for i, line in enumerate(lines):
-            if len(line) > 50 or len(line) < 2: continue
-            # Check next few lines for money value
-            sv = 0.0
-            for j in range(i+1, min(i+5, len(lines))):
-                sv = _parse(lines[j])
-                if sv > 0: break
-            if len(line) > 2:
-                members.append({"airline": line, "share_value": sv})
-        if members:
-            print(f"[AGENT] Text fallback extracted {len(members)} lines")
-    except Exception as e:
-        print(f"[AGENT] Text fallback error: {e}")
+    # ── Smart text fallback — only include names that match portal ──
+    # This avoids picking up marketing text
+    if not members:
+        print("[AGENT] Using portal-matched text fallback")
+        try:
+            body = await page.evaluate("() => document.body.innerText")
+            lines = [l.strip() for l in body.split("\n")
+                     if l.strip() and not _is_junk_name(l.strip())]
+            for line in lines:
+                # Only include if it matches a portal player
+                if _match(line, portal_map):
+                    members.append({"airline": line, "share_value": 0.0})
+            if members:
+                print(f"[AGENT] Portal-matched text: {len(members)} members")
+        except: pass
 
     return members
 
@@ -688,9 +712,7 @@ async def _scrape_members(page) -> list:
 #  CORE RUN
 # ─────────────────────────────────────────────────────────
 async def run_agent() -> list:
-    if _state["running"]:
-        return []
-
+    if _state["running"]: return []
     _state["running"] = True
     results = []
 
@@ -698,16 +720,12 @@ async def run_agent() -> list:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
                 headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                ],
+                args=["--no-sandbox","--disable-setuid-sandbox",
+                      "--disable-blink-features=AutomationControlled",
+                      "--disable-dev-shm-usage","--disable-gpu"],
             )
             ctx = await browser.new_context(
-                viewport={"width": 1280, "height": 800},
+                viewport={"width":1280,"height":800},
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -717,99 +735,70 @@ async def run_agent() -> list:
             )
             page = await ctx.new_page()
 
-            # ── 0. Pre-fetch all portal players ───────────
+            # Pre-fetch portal players
             portal_map = await _fetch_portal_airlines()
             if not portal_map:
-                results.append({
-                    "airline":"—","sts_id":"—","value":0,
-                    "status":"FATAL: No players in portal share_users table yet.",
-                })
+                results.append({"airline":"—","sts_id":"—","value":0,
+                    "status":"FATAL: No players in portal share_users table"})
                 await browser.close(); return results
 
             alliance_name = _env("AM4_ALLIANCE") or "Eternal Shadow"
 
-            # ── 1. Login ───────────────────────────────────
+            # Login
             login_ok = await _login(page)
             if not login_ok:
-                results.append({
-                    "airline":"—","sts_id":"—","value":0,
-                    "status":(
-                        "FATAL: Login failed.\n"
-                        "→ Check AM4_EMAIL / AM4_PASSWORD in Render env vars.\n"
-                        "→ Use /agentdebug to view screenshots."
-                    ),
-                })
+                results.append({"airline":"—","sts_id":"—","value":0,
+                    "status":"FATAL: Login failed — use /agentdebug for screenshots"})
                 await browser.close(); return results
 
-            # ── 2. Open Alliance tab ───────────────────────
-            alliance_ok = await _open_alliance_tab(page)
-            await _screenshot(page, "12_final_state")
+            # Open alliance tab
+            await _open_alliance_tab(page)
 
-            members = await _scrape_members(page)
-            print(f"[AGENT] Members scraped: {len(members)}")
+            # Scrape (pass portal_map for smart fallback)
+            members = await _scrape_members(page, portal_map)
+            print(f"[AGENT] Total members found: {len(members)}")
 
             if not members:
-                results.append({
-                    "airline":"—","sts_id":"—","value":0,
-                    "status":(
-                        "FATAL: No members found on alliance page.\n"
-                        "→ Use /agentdebug — send screenshots 07-12 to Skyways.\n"
-                        "→ Selectors need update based on actual AM4 game HTML."
-                    ),
-                })
+                results.append({"airline":"—","sts_id":"—","value":0,
+                    "status":"FATAL: No members found — use /agentdebug"})
                 await browser.close(); return results
 
-            # ── 3. Match + Submit ──────────────────────────
+            # Match + submit
             for m in members:
-                airline   = (m.get("airline") or "").strip()
+                airline = (m.get("airline") or "").strip()
                 share_val = m.get("share_value", 0.0)
                 if not airline: continue
 
-                # Match to portal player
-                portal_user = _match_airline(airline, portal_map)
-
+                portal_user = _match(airline, portal_map)
                 if not portal_user:
-                    results.append({
-                        "airline":airline,"sts_id":"—",
-                        "value":share_val,"status":"no_match",
-                    })
+                    results.append({"airline":airline,"sts_id":"—",
+                        "value":share_val,"status":"no_match"})
                     continue
 
                 sts_id       = portal_user["sts_id"]
                 player_allia = portal_user.get("alliance") or alliance_name
 
-                # Duplicate check
                 if await _already_submitted(sts_id, player_allia):
-                    results.append({
-                        "airline":airline,"sts_id":sts_id,
-                        "value":share_val,"status":"already_done",
-                    })
+                    results.append({"airline":airline,"sts_id":sts_id,
+                        "value":share_val,"status":"already_done"})
                     continue
 
-                # Submit
                 try:
-                    await _do_submit(sts_id, player_allia, share_val)
-                    results.append({
-                        "airline":airline,"sts_id":sts_id,
-                        "value":share_val,"status":"submitted",
-                    })
+                    await _submit(sts_id, player_allia, share_val)
+                    results.append({"airline":airline,"sts_id":sts_id,
+                        "value":share_val,"status":"submitted"})
                     print(f"[AGENT] ✅ {airline} → {sts_id} → {_fmt(share_val)}")
-                    await _dm_player(portal_user.get("discord_id"),
-                                     player_allia, share_val)
-                except Exception as sub_e:
-                    results.append({
-                        "airline":airline,"sts_id":sts_id,
-                        "value":share_val,"status":f"error:{sub_e}",
-                    })
+                    await _dm(portal_user.get("discord_id"), player_allia, share_val)
+                except Exception as e:
+                    results.append({"airline":airline,"sts_id":sts_id,
+                        "value":share_val,"status":f"error:{e}"})
 
             await browser.close()
 
-    except Exception as fatal:
-        print(f"[AGENT] FATAL: {fatal}")
-        results.append({
-            "airline":"—","sts_id":"—","value":0,
-            "status":f"FATAL:{fatal}",
-        })
+    except Exception as e:
+        print(f"[AGENT] FATAL: {e}")
+        results.append({"airline":"—","sts_id":"—","value":0,
+            "status":f"FATAL:{e}"})
     finally:
         _state["running"]  = False
         _state["last_run"] = _now_ist()
@@ -823,26 +812,21 @@ async def run_agent() -> list:
 # ─────────────────────────────────────────────────────────
 async def _auto_loop():
     await _bot.wait_until_ready()
-    print("[AGENT] Auto-loop running")
     while not _bot.is_closed():
         await asyncio.sleep(3600)
         h = _state.get("schedule_h", 0)
         if h <= 0: continue
         last = _state.get("last_run")
-        if last:
-            elapsed = (_now_ist() - last).total_seconds() / 3600
-            if elapsed < h: continue
-        print(f"[AGENT] Auto-run ({h}h schedule)")
+        if last and (_now_ist()-last).total_seconds()/3600 < h: continue
+        print(f"[AGENT] Auto-run ({h}h)")
         ch = _bot.get_channel(int(_env("AGENT_CHANNEL") or 0))
-        if ch:
-            await ch.send(f"🤖 **Agent auto-run...** (every {h}h)")
+        if ch: await ch.send(f"🤖 Agent auto-run... (every {h}h)")
         results = await run_agent()
-        if ch and results:
-            await _post_results(ch, results)
+        if ch and results: await _post_results(ch, results)
 
 
 # ─────────────────────────────────────────────────────────
-#  RESULT EMBED
+#  RESULTS EMBED
 # ─────────────────────────────────────────────────────────
 async def _post_results(channel, results):
     sub = [r for r in results if r["status"]=="submitted"]
@@ -852,34 +836,29 @@ async def _post_results(channel, results):
            if r["status"] not in ("submitted","already_done","no_match")]
 
     color = 0x00ff88 if sub else (0xffa502 if don else 0xff4757)
-    embed = discord.Embed(
-        title="🤖 JARVIS AM4 Agent — Complete",
-        color=color,
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.add_field(name="✅ Submitted",    value=str(len(sub)), inline=True)
-    embed.add_field(name="⏭ Already Done", value=str(len(don)), inline=True)
-    embed.add_field(name="❓ No Match",    value=str(len(nm)),  inline=True)
+    e = discord.Embed(title="🤖 JARVIS AM4 Agent — Complete",
+        color=color, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="✅ Submitted",    value=str(len(sub)), inline=True)
+    e.add_field(name="⏭ Already Done", value=str(len(don)), inline=True)
+    e.add_field(name="❓ No Match",    value=str(len(nm)),  inline=True)
 
     if sub:
         lines = [f"• **{r['airline']}** (`{r['sts_id']}`) → {_fmt(r['value'])}"
                  for r in sub[:10]]
-        if len(sub)>10: lines.append(f"*...+{len(sub)-10} more*")
-        embed.add_field(name="Submitted", value="\n".join(lines), inline=False)
+        if len(sub)>10: lines.append(f"*...+{len(sub)-10}*")
+        e.add_field(name="Submitted", value="\n".join(lines), inline=False)
 
     if nm:
-        lines = [f"• {r['airline']}" for r in nm[:8]]
-        embed.add_field(
-            name="⚠️ No STS match — tell players to set airline name on portal",
-            value="\n".join(lines), inline=False,
-        )
+        e.add_field(
+            name="⚠️ No STS match — players must set airline name on portal",
+            value="\n".join(f"• {r['airline']}" for r in nm[:8]), inline=False)
 
     if err:
-        lines = [f"• {r['status']}" for r in err[:3]]
-        embed.add_field(name="❌ Errors", value="\n".join(lines), inline=False)
+        e.add_field(name="❌ Errors",
+            value="\n".join(r['status'] for r in err[:3]), inline=False)
 
-    embed.set_footer(text="JARVIS • AM4 Portal Agent")
-    await channel.send(embed=embed)
+    e.set_footer(text="JARVIS • AM4 Portal Agent")
+    await channel.send(embed=e)
 
 
 # ─────────────────────────────────────────────────────────
@@ -893,7 +872,7 @@ def _register_commands(bot):
         if not ctx.author.guild_permissions.manage_guild:
             return await ctx.send("❌ Admin only.", ephemeral=True)
         if _state["running"]:
-            return await ctx.send("⚠️ Already running. Use `/agentstatus`.", ephemeral=True)
+            return await ctx.send("⚠️ Already running.", ephemeral=True)
         if not _env("AM4_EMAIL") or not _env("AM4_PASSWORD"):
             return await ctx.send(
                 "❌ Set `AM4_EMAIL` and `AM4_PASSWORD` in Render env.", ephemeral=True)
@@ -902,92 +881,89 @@ def _register_commands(bot):
         await ctx.send(
             f"🤖 **JARVIS Agent Starting...**\n"
             f"→ Logging into AM4\n"
-            f"→ Opening Alliance ⭐ tab → searching `{alliance}`\n"
-            f"→ Matching members to portal STS IDs\n"
-            f"→ Auto-submitting share entries\n\n"
-            f"*~60-90 sec. Results will post here.*"
+            f"→ Searching alliance: `{alliance}`\n"
+            f"→ Matching → Submitting\n"
+            f"*~90 sec. Results will post here.*"
         )
-        asyncio.create_task(_run_and_post(ctx.channel))
+        asyncio.create_task(_run_post(ctx.channel))
 
-    async def _run_and_post(channel):
-        results = await run_agent()
-        await _post_results(channel, results)
+    async def _run_post(ch):
+        r = await run_agent()
+        await _post_results(ch, r)
 
     @bot.hybrid_command(name="agentstatus",
-        description="Check AM4 agent status and last run summary")
+        description="Check AM4 agent status")
     async def agentstatus(ctx):
-        embed = discord.Embed(title="🤖 JARVIS AM4 Agent", color=0x00d4ff)
+        e = discord.Embed(title="🤖 JARVIS AM4 Agent", color=0x00d4ff)
         if _state["running"]:
-            embed.description = "⚙️ **Running...** scan in progress"
-            embed.color = 0xffa502
+            e.description = "⚙️ **Running...** scan in progress"
+            e.color = 0xffa502
         elif _state["last_run"]:
-            embed.description = f"✅ Last: `{_state['last_run'].strftime('%d %b %Y %I:%M %p IST')}`"
+            e.description = f"✅ Last: `{_state['last_run'].strftime('%d %b %Y %I:%M %p IST')}`"
             log = _state["log"]
             s=sum(1 for r in log if r["status"]=="submitted")
             d=sum(1 for r in log if r["status"]=="already_done")
             n=sum(1 for r in log if r["status"]=="no_match")
-            e=sum(1 for r in log if r["status"] not in
-                  ("submitted","already_done","no_match"))
-            embed.add_field(name="✅",value=str(s),inline=True)
-            embed.add_field(name="⏭",value=str(d),inline=True)
-            embed.add_field(name="❓",value=str(n),inline=True)
-            embed.add_field(name="❌",value=str(e),inline=True)
-            nm_rows=[r for r in log if r["status"]=="no_match"]
-            if nm_rows:
-                embed.add_field(
-                    name="No portal match (set airline name on portal):",
-                    value="\n".join(f"• {r['airline']}" for r in nm_rows[:8]),
-                    inline=False)
+            er=sum(1 for r in log if r["status"] not in("submitted","already_done","no_match"))
+            e.add_field(name="✅",value=str(s),inline=True)
+            e.add_field(name="⏭",value=str(d),inline=True)
+            e.add_field(name="❓",value=str(n),inline=True)
+            e.add_field(name="❌",value=str(er),inline=True)
+            nm_r=[r for r in log if r["status"]=="no_match"]
+            if nm_r:
+                e.add_field(name="No portal match",
+                    value="\n".join(f"• {r['airline']}" for r in nm_r[:8])
+                          +"\n*(Set airline name on portal)*",inline=False)
         else:
-            embed.description = "💤 Not run yet. Use `/agentrun`."
-        embed.set_footer(text="JARVIS • AM4 Agent")
-        await ctx.send(embed=embed)
+            e.description = "💤 Not run yet. Use `/agentrun`."
+        e.set_footer(text="JARVIS • AM4 Agent")
+        await ctx.send(embed=e)
 
     @bot.hybrid_command(name="agentschedule",
         description="[Admin] Auto-run every N hours (0=off)")
-    @app_commands.describe(hours="Interval in hours. 0 to disable.")
+    @app_commands.describe(hours="Hours between runs. 0 to disable.")
     async def agentschedule(ctx, hours: int = 12):
         if not ctx.author.guild_permissions.manage_guild:
             return await ctx.send("❌ Admin only.", ephemeral=True)
         _state["schedule_h"] = hours
-        if hours <= 0:
-            return await ctx.send("🔕 Auto-agent **disabled**.")
-        await ctx.send(f"⏰ Agent runs every **{hours}h** automatically.")
+        ch = _env("AGENT_CHANNEL")
+        await ctx.send(
+            "🔕 Auto-agent disabled." if hours <= 0
+            else f"⏰ Agent runs every **{hours}h**."
+                 + (f" Results → <#{ch}>" if ch else "")
+        )
 
     @bot.hybrid_command(name="agentdebug",
-        description="[Admin] View debug screenshots from last run")
+        description="[Admin] View step-by-step debug screenshots")
     async def agentdebug(ctx):
         if not ctx.author.guild_permissions.manage_guild:
             return await ctx.send("❌ Admin only.", ephemeral=True)
-        files = []
-        labels = [
-            ("01_landing","Landing Page"),
-            ("02_after_play_click","After Play Click"),
-            ("03_credentials_filled","Credentials Filled"),
-            ("04_post_login","Post Login"),
-            ("05_game_direct","Game Direct URL"),
-            ("06_game_check","Game Check"),
-            ("07_alliance_tab","Alliance Tab Clicked"),
-            ("08_alliance_search_before","Before Search"),
-            ("09_alliance_searched","After Search"),
-            ("10_alliance_opened","Alliance Opened"),
-            ("11_members_tab","Members Tab"),
-            ("12_final_state","Final State"),
-        ]
         import os as _os
+        labels = [
+            ("01_login_url_attempt", "Login URL Attempt"),
+            ("02_homepage",          "Homepage"),
+            ("03_homepage_rendered", "Homepage Rendered"),
+            ("04_after_login_click", "After Login Button Click"),
+            ("05_form_not_found",    "Form Not Found"),
+            ("06_form_filled",       "Form Filled"),
+            ("07_post_login",        "Post Login"),
+            ("08_game_check",        "Game Check"),
+            ("09_before_alliance",   "Before Alliance Click"),
+            ("10_after_alliance",    "After Alliance Click"),
+            ("11_after_search",      "After Alliance Search"),
+            ("12_members_page",      "Members Page"),
+        ]
+        files = []
         for name, label in labels:
             p = f"/tmp/am4_{name}.png"
             if _os.path.exists(p):
-                files.append(discord.File(p, filename=f"{label.replace(' ','_')}.png"))
-
+                files.append(discord.File(p, f"{label.replace(' ','_')}.png"))
         if not files:
-            return await ctx.send("❌ No screenshots. Run `/agentrun` first.", ephemeral=True)
-
-        # Discord max 10 files per message
+            return await ctx.send("❌ No screenshots yet. Run `/agentrun` first.",
+                                  ephemeral=True)
         for i in range(0, len(files), 10):
-            batch = files[i:i+10]
             await ctx.send(
-                f"📸 **Debug screenshots** ({i+1}-{i+len(batch)} of {len(files)}):",
-                files=batch
+                f"📸 Debug ({i+1}-{i+len(files[i:i+10])} of {len(files)}):",
+                files=files[i:i+10]
             )
 
