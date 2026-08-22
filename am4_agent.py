@@ -223,11 +223,11 @@ async def _login(page) -> bool:
     if magic_link:
         print(f"[AGENT] Trying magic link: {magic_link[:60]}...")
         try:
-            await page.goto(magic_link, wait_until="domcontentloaded",
-                            timeout=25_000)
+            await page.goto(magic_link, wait_until="commit",
+                            timeout=60_000)
             await asyncio.sleep(4)
             try:
-                await page.wait_for_load_state("networkidle", timeout=15_000)
+                await page.wait_for_load_state("networkidle", timeout=45_000)
             except: pass
             await asyncio.sleep(3)
             await _ss(page, "01_magic_link")
@@ -259,14 +259,14 @@ async def _login(page) -> bool:
     for url in direct_login_urls:
         print(f"[AGENT] Trying: {url}")
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=12_000)
-            await asyncio.sleep(2)
+            await page.goto(url, wait_until="commit", timeout=60_000)
+            await asyncio.sleep(3)
             el = await _wait(page, [
                 "input[type='email']", "input[type='password']",
                 "input[name='email']", "input[name='password']",
                 "#email", "#password",
                 "[placeholder*='email' i]", "[placeholder*='password' i]",
-            ], timeout=4000)
+            ], timeout=8000)
             if el:
                 print(f"[AGENT] ✅ Login form at: {url}")
                 form_found = True
@@ -280,9 +280,21 @@ async def _login(page) -> bool:
     # ─────────────────────────────────────────────────────
     if not form_found:
         print("[AGENT] Direct URL failed — opening homepage")
-        await page.goto("https://www.airlinemanager.com",
-                        wait_until="domcontentloaded", timeout=25_000)
-        await asyncio.sleep(4)
+        # Retry up to 3 times if timeout
+        for _attempt in range(3):
+            try:
+                await page.goto(
+                    "https://www.airlinemanager.com",
+                    wait_until="commit",   # fastest — fire as soon as navigation commits
+                    timeout=60_000
+                )
+                # Wait for page to actually render
+                await asyncio.sleep(5)
+                break
+            except Exception as _ge:
+                print(f"[AGENT] Homepage goto attempt {_attempt+1} failed: {_ge}")
+                if _attempt == 2: raise
+                await asyncio.sleep(3)
         await _ss(page, "03_homepage")
 
         # Dismiss consent banner
@@ -354,7 +366,7 @@ async def _login(page) -> bool:
             "input[name='email']", "input[name='password']",
             "#email", "#password",
             "[placeholder*='email' i]", "[placeholder*='password' i]",
-        ], timeout=6000)
+        ], timeout=10000)
         form_found = el is not None
 
     # ─────────────────────────────────────────────────────
@@ -406,9 +418,9 @@ async def _login(page) -> bool:
 
     # Wait for game
     print("[AGENT] Waiting for game to load...")
-    await asyncio.sleep(6)
+    await asyncio.sleep(8)
     try:
-        await page.wait_for_load_state("networkidle", timeout=25_000)
+        await page.wait_for_load_state("networkidle", timeout=45_000)
     except: pass
     await asyncio.sleep(3)
     await _ss(page, "08_post_submit")
