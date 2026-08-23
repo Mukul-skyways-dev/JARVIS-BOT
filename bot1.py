@@ -1065,8 +1065,21 @@ async def supabase_patch(table, params, data):
 
 async def supabase_post(table, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-    resp = await asyncio.to_thread(requests.post, url, headers=_supabase_headers(), json=data, timeout=10)
+
+    resp = await asyncio.to_thread(
+        requests.post,
+        url,
+        headers=_supabase_headers(),
+        json=data,
+        timeout=10
+    )
+
     resp.raise_for_status()
+
+    # Supabase may return 201/204 with no response body.
+    if resp.status_code == 204 or not resp.content:
+        return None
+
     return resp.json()
 
 # Which commands earn AERO points, and how many. Trivial commands
