@@ -28,6 +28,11 @@ import pytz
 
 from export_view import ExportView
 from am4_agent import setup_agent
+from aerion_membership import (
+    check_membership,
+    membership_required,
+    register_membership_commands
+)
 
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
@@ -1161,6 +1166,7 @@ async def link(ctx, code: str):
     await ctx.send(f"✅ Linked! Your JARVIS activity will now credit AERO points to **{sts_id}**.")
 
 @bot.hybrid_command(name="myaeropoints", description="Check your linked AERO portal points balance")
+@membership_required
 async def myaeropoints(ctx):
     await ctx.defer(ephemeral=True)
 
@@ -1189,6 +1195,7 @@ async def on_command(ctx):
     asyncio.create_task(credit_aero_points(str(ctx.author.id), ctx.command.name))
 
 @bot.hybrid_command(description="Show the JARVIS usage leaderboard")
+@membership_required
 async def leaderboard(ctx):
     await ctx.defer()
     data = await LeaderboardView.fetch_data()
@@ -1251,6 +1258,7 @@ def resolve_city_alias(query):
     return CITY_ALIASES.get(key, key)
 
 @bot.hybrid_command(description="Look up an airport by IATA/ICAO code or city name (old names work too)")
+@membership_required
 @app_commands.describe(query="e.g. BOM, or 'bombay', or 'mumbai'")
 @app_commands.autocomplete(query=airport_autocomplete)
 async def airport(ctx, *, query: str):
@@ -1305,6 +1313,7 @@ async def airport(ctx, *, query: str):
         await ctx.send(embed=embed)
 
 @bot.hybrid_command(description="Full spec card for an aircraft")
+@membership_required
 @app_commands.describe(name="e.g. a380, or b744")
 @app_commands.autocomplete(name=aircraft_autocomplete)
 async def aircraft(ctx, *, name: str):
@@ -1752,6 +1761,7 @@ def build_route_voice_text(frm, to, plane, result, stop_airport=None):
     return " ".join(parts)
 
 @bot.hybrid_command(description="Full route analysis — profit, demand, seat config, pricing, contribution")
+@membership_required
 @app_commands.describe(frm="Origin airport", to="Destination airport", plane_name="Aircraft", ci="Cost Index 0-200 (default 200)")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
@@ -2046,6 +2056,7 @@ class CompareView(View):
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
 @bot.hybrid_command(description="Compare two aircraft head-to-head (e.g. 'A320 vs B737')")
+@membership_required
 async def compare(ctx, *, planes_input: str):
     await ctx.defer()
     try:
@@ -2082,6 +2093,7 @@ async def compare(ctx, *, planes_input: str):
 # BEST PLANE
 # =========================
 @bot.hybrid_command(description="Best aircraft for a specific route")
+@membership_required
 @app_commands.describe(frm="Origin airport", to="Destination airport")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
 async def best(ctx, frm: str, to: str):
@@ -2260,6 +2272,7 @@ async def _best_world_from_origin(ctx, origin, plane_name, max_distance):
     await ctx.send(embed=embed)
 
 @bot.hybrid_command(name="best_world", description="World-wide best routes for an aircraft, OR best routes from one origin with a distance cap")
+@membership_required
 @app_commands.describe(query="Just an aircraft (world-scan), OR 'ORIGIN AIRCRAFT [max_km]' for one origin")
 async def best_world(ctx, *, query: str):
     await ctx.defer()
@@ -2334,6 +2347,7 @@ def draw_whatif_heatmap(planes, ci_values, matrix, frm, to):
     return buf
 
 @bot.hybrid_command(name="whatif", description="Compare 2-4 aircraft across Cost Index settings in one heatmap")
+@membership_required
 @app_commands.describe(frm="Origin airport", to="Destination airport", planes="Comma-separated aircraft, e.g. 'a380, 777, 747'")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
 async def whatif(ctx, frm: str, to: str, *, planes: str):
@@ -2371,6 +2385,7 @@ async def whatif(ctx, frm: str, to: str, *, planes: str):
     await ctx.send(embed=embed, file=file)
 
 @bot.hybrid_command(name="routemap", description="Flight Radar — glowing route map + profit-vs-distance chart from an airport")
+@membership_required
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def routemap(ctx, airport: str, *, plane_name: str):
@@ -2476,6 +2491,7 @@ def scan_routes_from_origin(ctx, airport, plane, max_distance=None):
     return results, len(routes)
 
 @bot.hybrid_command(name="best_r", aliases=["bestr", "top"], description="Top 5 most profitable routes from an airport")
+@membership_required
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_r(ctx, airport: str, *, plane_name: str):
@@ -2589,12 +2605,14 @@ async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, 
     await ctx.send(embed=embed)
 
 @bot.hybrid_command(name="best_short", description="Top 5 profitable short-haul routes (<=3000km) from an airport")
+@membership_required
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_short(ctx, airport: str, *, plane_name: str):
     await _best_route_by_distance(ctx, airport, plane_name, min_dist=0, max_dist=3000, label="short", emoji="⚡", color=0x00ffcc)
 
 @bot.hybrid_command(name="best_long", description="Top 5 profitable long-haul routes (>3000km) from an airport")
+@membership_required
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_long(ctx, airport: str, *, plane_name: str):
@@ -2628,6 +2646,8 @@ async def on_ready():
             _synced = True
         except Exception as e:
             print(f"⚠️ Slash command sync failed: {e}")
+
+    register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
             
 # =========================
 # WELCOME + CHAT
