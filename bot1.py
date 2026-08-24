@@ -28,11 +28,16 @@ import pytz
 
 from export_view import ExportView
 from am4_agent import setup_agent
+# =========================================================
+# AERION MODULES — Membership + Intelligence
+# =========================================================
 from aerion_membership import (
     check_membership,
     membership_required,
-    register_membership_commands
+    register_membership_commands,
 )
+from aerion_intelligence import register_intelligence
+
 
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
@@ -45,7 +50,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "JARVIS is alive"
+    return "AERION is alive ✈"
 
 def run():
     port = int(os.getenv("PORT", 8080))
@@ -341,6 +346,7 @@ def get_dyn_db():
 # NOT auto-downloaded/overwritten like am4_data.db is — this one
 # is committed directly to the repo and only changes when you
 # manually re-migrate and re-upload a new version.
+# AERION V3 ALPHA
 # =========================================================
 STATIC_DB_FILE = "static_data.db"
 
@@ -401,7 +407,7 @@ STATUS : OPERATIONAL
 """,
             color=0x00c3ff
         )
-        embed.set_footer(text="JARVIS • Flight Operations Engine")
+        embed.set_footer(text="AERION • Flight Operations Engine")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Route Intel", style=discord.ButtonStyle.danger, row=0)
@@ -427,7 +433,7 @@ STATUS : ACTIVE
 """,
             color=0xff4747
         )
-        embed.set_footer(text="JARVIS • Route Intelligence Core")
+        embed.set_footer(text="AERION • Route Intelligence Core")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Fleet Analysis", style=discord.ButtonStyle.secondary, row=0)
@@ -452,7 +458,7 @@ STATUS : STABLE
 """,
             color=0xbfc3c7
         )
-        embed.set_footer(text="JARVIS • Fleet Analysis System")
+        embed.set_footer(text="AERION • Fleet Analysis System")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Airport Systems", style=discord.ButtonStyle.success, row=1)
@@ -477,7 +483,7 @@ DATABASE : CONNECTED
 """,
             color=0x2ecc71
         )
-        embed.set_footer(text="JARVIS • Airport Database System")
+        embed.set_footer(text="AERION • Airport Intelligence")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Utilities", style=discord.ButtonStyle.secondary, row=1)
@@ -501,16 +507,16 @@ SYSTEM : ONLINE
 """,
             color=0x9b59b6
         )
-        embed.set_footer(text="JARVIS • Utility Interface")
+        embed.set_footer(text="AERION • Utility Interface")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # =========================
 # MENU COMMAND
 # =========================
-@bot.hybrid_command(description="Show the JARVIS command menu")
+    description="Show the AERION command menu"
 async def menu(ctx):
     embed = discord.Embed(
-        title="JARVIS AVIATION COMMAND",
+        title="AERION AVIATION COMMAND",
         description="""
 ━━━━━━━━━━━━━━━━━━
 
@@ -561,7 +567,7 @@ Use the control buttons below.
 """,
         color=0x0f172a
     )
-    embed.set_footer(text="JARVIS • A AERO CROWN DYNASTY OFFICIAL BOT")
+    embed.set_footer(text="AERION • AERO CROWN DYNASTY OFFICIAL BOT")
     await ctx.send(embed=embed, view=EliteMenu())
 
 # =========================
@@ -971,7 +977,7 @@ class LeaderboardView(View):
             medal = medals[rank - 1] if rank <= 3 else "🔹"
             text += f"{medal} **#{rank} {name}** — `{pts:,}` uses\n"
         embed = discord.Embed(
-            title="📊 LIVE JARVIS USAGE LEADERBOARD",
+            title="📊 LIVE AERION USAGE LEADERBOARD",
             description=text or "No data yet",
             color=0x1e2b4a
         )
@@ -1047,39 +1053,23 @@ async def supabase_get(table, params):
 
 async def supabase_patch(table, params, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
+    # Prefer: return=minimal → Supabase returns 204 No Content (no JSON body)
+    patch_headers = {**_supabase_headers(), "Prefer": "return=minimal"}
     resp = await asyncio.to_thread(
         requests.patch,
         url,
-        headers=_supabase_headers(),
+        headers=patch_headers,
         params=params,
         json=data,
         timeout=10
     )
     resp.raise_for_status()
-
-    # Supabase can return 204 No Content for a successful PATCH.
-    if resp.status_code == 204 or not resp.content:
-        return None
-
-    return resp.json()
+    return None   # always None — 204 No Content expected
 
 async def supabase_post(table, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-
-    resp = await asyncio.to_thread(
-        requests.post,
-        url,
-        headers=_supabase_headers(),
-        json=data,
-        timeout=10
-    )
-
+    resp = await asyncio.to_thread(requests.post, url, headers=_supabase_headers(), json=data, timeout=10)
     resp.raise_for_status()
-
-    # Supabase may return 201/204 with no response body.
-    if resp.status_code == 204 or not resp.content:
-        return None
-
     return resp.json()
 
 # Which commands earn AERO points, and how many. Trivial commands
@@ -1127,7 +1117,7 @@ async def credit_aero_points(discord_id, command_name):
         await supabase_post("point_transactions", {
             "sts_id": sts_id,
             "amount": points,
-            "reason": f"JARVIS command: {command_name}",
+            "reason": f"AERION command: {command_name}",
             "created_at": datetime.now(timezone.utc).isoformat()
         })
         print(f"[AERO POINTS] Discord {discord_id} used '{command_name}' -> +{points} points "
@@ -1176,10 +1166,9 @@ async def link(ctx, code: str):
         return await ctx.send("⚠️ Linking failed — try again shortly.")
 
     print(f"[LINK] Discord {ctx.author} ({ctx.author.id}) linked to STS {sts_id}")
-    await ctx.send(f"✅ Linked! Your JARVIS activity will now credit AERO points to **{sts_id}**.")
+    await ctx.send(f"✅ Linked! Your AERION activity will now credit AERO points to **{sts_id}**.")
 
 @bot.hybrid_command(name="myaeropoints", description="Check your linked AERO portal points balance")
-@membership_required
 async def myaeropoints(ctx):
     await ctx.defer(ephemeral=True)
 
@@ -1207,8 +1196,7 @@ async def on_command(ctx):
     asyncio.create_task(add_usage(ctx.author))
     asyncio.create_task(credit_aero_points(str(ctx.author.id), ctx.command.name))
 
-@bot.hybrid_command(description="Show the JARVIS usage leaderboard")
-@membership_required
+    description="Show the AERION usage leaderboard"
 async def leaderboard(ctx):
     await ctx.defer()
     data = await LeaderboardView.fetch_data()
@@ -1271,7 +1259,6 @@ def resolve_city_alias(query):
     return CITY_ALIASES.get(key, key)
 
 @bot.hybrid_command(description="Look up an airport by IATA/ICAO code or city name (old names work too)")
-@membership_required
 @app_commands.describe(query="e.g. BOM, or 'bombay', or 'mumbai'")
 @app_commands.autocomplete(query=airport_autocomplete)
 async def airport(ctx, *, query: str):
@@ -1315,7 +1302,7 @@ async def airport(ctx, *, query: str):
     embed.add_field(name="💰 Hub Cost", value=f"${a['hub_cost']:,}" if a['hub_cost'] else "N/A", inline=True)
     embed.add_field(name="📊 Market Size", value=str(a['market']) if a['market'] else "N/A", inline=True)
     embed.add_field(name="🧭 Runway Heading", value=a['rwy_codes'] or "N/A", inline=True)
-    embed.set_footer(text="JARVIS • Airport Database System")
+    embed.set_footer(text="AERION • Airport Intelligence")
 
     if a['rwy'] and a['rwy_codes']:
         img_buf = draw_runway_image(a)
@@ -1326,7 +1313,6 @@ async def airport(ctx, *, query: str):
         await ctx.send(embed=embed)
 
 @bot.hybrid_command(description="Full spec card for an aircraft")
-@membership_required
 @app_commands.describe(name="e.g. a380, or b744")
 @app_commands.autocomplete(name=aircraft_autocomplete)
 async def aircraft(ctx, *, name: str):
@@ -1342,7 +1328,7 @@ async def aircraft(ctx, *, name: str):
     embed.add_field(name="🌱 CO2 Consumption", value=f"{plane['co2']:,.3f}", inline=True)
     embed.add_field(name="💰 Cost", value=f"${plane['cost']:,}", inline=True)
     embed.add_field(name="🔧 A-Check Cost (reference)", value=f"${plane['check_cost']:,}", inline=True)
-    embed.set_footer(text="JARVIS • Aircraft Database System")
+    embed.set_footer(text="AERION • Aircraft Intelligence")
     await ctx.send(embed=embed)
 
 # =========================================================
@@ -1459,7 +1445,7 @@ def draw_aircraft_card(plane, result, route, frm, to):
     # Header
     from_airport = airport_name(frm)
     to_airport = airport_name(to)
-    draw.text((80, 70), "JARVIS AVIATION VISUAL SYSTEM", fill=(150, 200, 255), font=title_font)
+    draw.text((80, 70), "AERION AVIATION VISUAL SYSTEM", fill=(150, 200, 255), font=title_font)
     draw.text((80, 120), from_airport, fill=(100, 180, 255), font=header_font)
     draw.text((80, 155), "▼", fill=(255, 255, 255), font=text_font)
     draw.text((80, 185), to_airport, fill=(100, 180, 255), font=header_font)
@@ -1580,7 +1566,7 @@ def draw_aircraft_card(plane, result, route, frm, to):
     
     # Footer
     footer_y = H - 40
-    draw.text((W // 2 - 120, footer_y), "AERO CROWN DYNASTY • JARVIS INTELLIGENCE", fill=(80, 85, 110), font=small_font)
+    draw.text((W // 2 - 120, footer_y), "AERO CROWN DYNASTY • AERION INTELLIGENCE", fill=(80, 85, 110), font=small_font)
     
     temp = io.BytesIO()
     img.save(temp, format='PNG', optimize=True, compress_level=6)
@@ -1600,7 +1586,7 @@ def format_time(minutes):
 # =========================================================
 from matplotlib.colors import LinearSegmentedColormap
 
-_JARVIS_CMAP = LinearSegmentedColormap.from_list("jarvis_radar", ["#a855f7", "#00e5ff", "#00ff88"])
+_AERION_CMAP = LinearSegmentedColormap.from_list("aerion_radar", ["#a855f7", "#00e5ff", "#00ff88"])
 
 def draw_flight_radar(origin_iata, plane, routes_data):
     """routes_data: list of dicts with dest_iata, dest_lat, dest_lng,
@@ -1646,7 +1632,7 @@ def draw_flight_radar(origin_iata, plane, routes_data):
                     s=4, color="#c9b896", zorder=1, linewidths=0, alpha=0.9)
 
     max_profit = max((r["profit_day"] for r in routes_data), default=1) or 1
-    day_cmap = LinearSegmentedColormap.from_list("jarvis_day", ["#3b3b98", "#c0392b", "#e67e22"])
+    day_cmap = LinearSegmentedColormap.from_list("aerion_day", ["#3b3b98", "#c0392b", "#e67e22"])
     for r in routes_data:
         t = max(0, min(1, r["profit_day"] / max_profit))
         color = day_cmap(t)
@@ -1680,7 +1666,7 @@ def draw_flight_radar(origin_iata, plane, routes_data):
     cis = [r["ci"] for r in routes_data]
 
     sizes = [30 + t * 45 for t in trips]
-    colors = [_JARVIS_CMAP(max(0, min(1, c / 60))) for c in cis]
+    colors = [_AERION_CMAP(max(0, min(1, c / 60))) for c in cis]
 
     ax2.scatter(distances, profits, s=[s * 4 for s in sizes], c=colors, alpha=0.08, edgecolors="none", zorder=2)
     ax2.scatter(distances, profits, s=[s * 2 for s in sizes], c=colors, alpha=0.15, edgecolors="none", zorder=3)
@@ -1774,10 +1760,10 @@ def build_route_voice_text(frm, to, plane, result, stop_airport=None):
     return " ".join(parts)
 
 @bot.hybrid_command(description="Full route analysis — profit, demand, seat config, pricing, contribution")
-@membership_required
 @app_commands.describe(frm="Origin airport", to="Destination airport", plane_name="Aircraft", ci="Cost Index 0-200 (default 200)")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
+    if not await _gate(ctx): return
     await ctx.defer()
     route = get_route(frm, to)
     plane = get_plane(plane_name)
@@ -1900,7 +1886,7 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
         alt_text = "\n".join(f"• {frm.upper()} → **{d}** ({airport_city_country(d)}) — ${p:,}/day" for d, p in alternatives)
         embed.add_field(name="🔗 Related Routes from " + frm.upper(), value=alt_text, inline=False)
 
-    embed.set_footer(text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT")
+    embed.set_footer(text="AERION • AERO CROWN DYNASTY OFFICIAL BOT")
     
     report_data = {
         "Route": f"{frm.upper()} -> {to.upper()}",
@@ -2069,8 +2055,8 @@ class CompareView(View):
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
 @bot.hybrid_command(description="Compare two aircraft head-to-head (e.g. 'A320 vs B737')")
-@membership_required
 async def compare(ctx, *, planes_input: str):
+    if not await _gate(ctx): return
     await ctx.defer()
     try:
         p1_name, p2_name = planes_input.lower().split(" vs ")
@@ -2106,7 +2092,6 @@ async def compare(ctx, *, planes_input: str):
 # BEST PLANE
 # =========================
 @bot.hybrid_command(description="Best aircraft for a specific route")
-@membership_required
 @app_commands.describe(frm="Origin airport", to="Destination airport")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
 async def best(ctx, frm: str, to: str):
@@ -2137,7 +2122,7 @@ async def best(ctx, frm: str, to: str):
     embed.add_field(name="Profit/Day", value=f"**{money(best_calc['profit_day'])}**", inline=True)
     embed.add_field(name="Trips/Day", value=f"**{best_calc['trips']}**", inline=True)
     embed.add_field(name="Mode", value=f"**{best_calc['mode'].upper()}**", inline=False)
-    embed.set_footer(text="JARVIS • Aircraft Optimization")
+    embed.set_footer(text="AERION • Aircraft Optimization")
     report_data = {
         "Route": f"{frm.upper()} -> {to.upper()}",
         "Aircraft": best_plane["name"],
@@ -2244,7 +2229,7 @@ async def _best_world_scan(ctx, plane_name):
         description=text,
         color=0x00e5ff
     )
-    embed.set_footer(text=f"Scanned {len(candidates):,} candidate routes (capped at 8,000 for performance) • JARVIS")
+    embed.set_footer(text=f"Scanned {len(candidates):,} candidate routes (capped at 8,000 for performance) • AERION")
     await msg.edit(content=None, embed=embed)
 
 async def _best_world_from_origin(ctx, origin, plane_name, max_distance):
@@ -2281,13 +2266,13 @@ async def _best_world_from_origin(ctx, origin, plane_name, max_distance):
         color=0x00e5ff
     )
     limit_note = f" • Capped at {max_distance:,} km" if max_distance else ""
-    embed.set_footer(text=f"Scanned {total_routes:,} routes from {origin}{limit_note} • JARVIS")
+    embed.set_footer(text=f"Scanned {total_routes:,} routes from {origin}{limit_note} • AERION")
     await ctx.send(embed=embed)
 
 @bot.hybrid_command(name="best_world", description="World-wide best routes for an aircraft, OR best routes from one origin with a distance cap")
-@membership_required
 @app_commands.describe(query="Just an aircraft (world-scan), OR 'ORIGIN AIRCRAFT [max_km]' for one origin")
 async def best_world(ctx, *, query: str):
+    if not await _gate(ctx): return
     await ctx.defer()
     tokens = query.strip().split()
 
@@ -2334,7 +2319,7 @@ def draw_whatif_heatmap(planes, ci_values, matrix, frm, to):
                 text_color = "#8e9ac0"
             else:
                 t = (val - vmin) / (vmax - vmin)
-                color = _JARVIS_CMAP(t)
+                color = _AERION_CMAP(t)
                 label = f"${val:,.0f}"
                 text_color = "#0a0e1a"
             rect = plt.Rectangle((j, n_rows - i - 1), 1, 1, facecolor=color, edgecolor="#0a0e1a", linewidth=2)
@@ -2360,10 +2345,10 @@ def draw_whatif_heatmap(planes, ci_values, matrix, frm, to):
     return buf
 
 @bot.hybrid_command(name="whatif", description="Compare 2-4 aircraft across Cost Index settings in one heatmap")
-@membership_required
 @app_commands.describe(frm="Origin airport", to="Destination airport", planes="Comma-separated aircraft, e.g. 'a380, 777, 747'")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
 async def whatif(ctx, frm: str, to: str, *, planes: str):
+    if not await _gate(ctx): return
     await ctx.defer()
     route = get_route(frm, to)
     if not route:
@@ -2394,14 +2379,14 @@ async def whatif(ctx, frm: str, to: str, *, planes: str):
     file = discord.File(img_buf, filename="whatif.png")
     embed = discord.Embed(title=f"🧮 What-If Matrix • {frm.upper()} → {to.upper()}", description="Profit/day across aircraft & Cost Index — greener = better", color=0xa855f7)
     embed.set_image(url="attachment://whatif.png")
-    embed.set_footer(text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT")
+    embed.set_footer(text="AERION • AERO CROWN DYNASTY OFFICIAL BOT")
     await ctx.send(embed=embed, file=file)
 
 @bot.hybrid_command(name="routemap", description="Flight Radar — glowing route map + profit-vs-distance chart from an airport")
-@membership_required
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def routemap(ctx, airport: str, *, plane_name: str):
+    if not await _gate(ctx): return
     await ctx.defer()
     airport = airport.upper()
     plane = get_plane(plane_name)
@@ -2466,7 +2451,7 @@ async def routemap(ctx, airport: str, *, plane_name: str):
         color=0x00e5ff
     )
     embed.set_image(url="attachment://radar.png")
-    embed.set_footer(text="JARVIS • AERO CROWN DYNASTY OFFICIAL BOT")
+    embed.set_footer(text="AERION • AERO CROWN DYNASTY OFFICIAL BOT")
     await ctx.send(embed=embed, file=file)
 
 def scan_routes_from_origin(ctx, airport, plane, max_distance=None):
@@ -2504,10 +2489,10 @@ def scan_routes_from_origin(ctx, airport, plane, max_distance=None):
     return results, len(routes)
 
 @bot.hybrid_command(name="best_r", aliases=["bestr", "top"], description="Top 5 most profitable routes from an airport")
-@membership_required
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_r(ctx, airport: str, *, plane_name: str):
+    if not await _gate(ctx): return
     await ctx.defer()
     airport = airport.upper()
     plane = get_plane(plane_name)
@@ -2542,7 +2527,7 @@ async def best_r(ctx, airport: str, *, plane_name: str):
         color=0x2b2d31
     )
     embed.add_field(name="Analysis", value=f"`Airport:` {airport}\n`Aircraft:` {plane['name']}\n`Mode:` {mode.upper()}", inline=False)
-    embed.set_footer(text="JARVIS • Smart Route Optimization")
+    embed.set_footer(text="AERION • Smart Route Optimization")
 
     export_data = {"Airport": airport, "Aircraft": plane["name"], "Mode": mode}
     for i, res in enumerate(top, start=1):
@@ -2614,21 +2599,21 @@ async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, 
         description=f"**From:** {origin_txt}\n\n{text}",
         color=color
     )
-    embed.set_footer(text="JARVIS - AERO CROWN DYNASTY ™")
+    embed.set_footer(text="AERION • AERO CROWN DYNASTY ™")
     await ctx.send(embed=embed)
 
 @bot.hybrid_command(name="best_short", description="Top 5 profitable short-haul routes (<=3000km) from an airport")
-@membership_required
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_short(ctx, airport: str, *, plane_name: str):
+    if not await _gate(ctx): return
     await _best_route_by_distance(ctx, airport, plane_name, min_dist=0, max_dist=3000, label="short", emoji="⚡", color=0x00ffcc)
 
 @bot.hybrid_command(name="best_long", description="Top 5 profitable long-haul routes (>3000km) from an airport")
-@membership_required
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_long(ctx, airport: str, *, plane_name: str):
+    if not await _gate(ctx): return
     await _best_route_by_distance(ctx, airport, plane_name, min_dist=3000, max_dist=float("inf"), label="long", emoji="🌍", color=0xff9900)
 
 # =========================
@@ -2641,12 +2626,13 @@ _agent_loaded = False
 async def on_ready():
     global _synced, _agent_loaded
 
-    print(f"✅ JARVIS online as {bot.user}")
+    print(f"✅ AERION online as {bot.user}")
 
     if not _agent_loaded:
         try:
             setup_agent(bot, supabase_get, supabase_post)
-            _agent_loaded = True
+            register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
+            register_intelligence(bot, groq, supabase_get, check_membership)
             print("🤖 AM4 Agent loaded successfully.")
         except Exception as e:
             print(f"❌ AM4 Agent setup failed: {e}")
@@ -2659,8 +2645,6 @@ async def on_ready():
             _synced = True
         except Exception as e:
             print(f"⚠️ Slash command sync failed: {e}")
-
-    register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
             
 # =========================
 # WELCOME + CHAT
@@ -2669,9 +2653,9 @@ async def on_ready():
 async def on_member_join(member):
     channel = member.guild.system_channel
     if channel:
-        embed = discord.Embed(title="👋 Welcome to Aero Crown Dynasty", description=f"{member.mention} welcome onboard!\n\nUse `!menu` to explore JARVIS.", color=0x00ffcc)
+        embed = discord.Embed(title="👋 Welcome to AERO CROWN DYNASTY", description=f"{member.mention} welcome onboard!\n\nUse `/aerion` to check your status and `/subscribe` to join.", color=0x00ffcc)
         embed.set_thumbnail(url=member.guild.icon.url if member.guild.icon else None)
-        embed.set_footer(text="JARVIS - A AERO CROWN DYNASTY OFFICIAL BOT")
+        embed.set_footer(text="AERION • AERO CROWN DYNASTY OFFICIAL BOT")
         await channel.send(embed=embed)
 
 @bot.event
@@ -2685,11 +2669,11 @@ async def on_message(message):
         await bot.process_commands(message)
         return
     msg = msg.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
-    greetings = ["hi", "hello", "hey", "jarvis", "yo"]
+    greetings = ["hi", "hello", "hey", "aerion", "yo"]
     thanks = ["thanks", "thank you", "thx"]
     help_words = ["help", "support", "what can you do"]
     if any(word == msg for word in greetings):
-        replies = [f"Hey {message.author.mention} 👋 I'm online and ready.", f"Hello {message.author.mention} ⚡ What do you need?", f"Hi {message.author.mention} 👋 Jarvis is active."]
+        replies = [f"Hey {message.author.mention} 👋 AERION online and ready.", f"Hello {message.author.mention} ⚡ How can I assist?", f"Hi {message.author.mention} 👋 AERION active — use `/aerion` to get started."]
         await message.channel.send(random.choice(replies))
     elif any(word in msg for word in thanks):
         replies = [f"You're welcome {message.author.mention} 👍", f"Anytime {message.author.mention} ⚡", f"Glad to help {message.author.mention} 😊"]
