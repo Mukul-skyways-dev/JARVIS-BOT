@@ -37,6 +37,7 @@ from aerion_membership import (
     register_membership_commands,
 )
 from aerion_intelligence import register_intelligence
+from aerion_alliance import register_alliance
 
 
 # =========================================================
@@ -1763,8 +1764,8 @@ def build_route_voice_text(frm, to, plane, result, stop_airport=None):
 @app_commands.describe(frm="Origin airport", to="Destination airport", plane_name="Aircraft", ci="Cost Index 0-200 (default 200)")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
-    if not await _gate(ctx): return
     await ctx.defer()
+    if not await _gate(ctx): return
     route = get_route(frm, to)
     plane = get_plane(plane_name)
     if not route:
@@ -2056,8 +2057,8 @@ class CompareView(View):
 
 @bot.hybrid_command(description="Compare two aircraft head-to-head (e.g. 'A320 vs B737')")
 async def compare(ctx, *, planes_input: str):
-    if not await _gate(ctx): return
     await ctx.defer()
+    if not await _gate(ctx): return
     try:
         p1_name, p2_name = planes_input.lower().split(" vs ")
     except:
@@ -2272,8 +2273,8 @@ async def _best_world_from_origin(ctx, origin, plane_name, max_distance):
 @bot.hybrid_command(name="best_world", description="World-wide best routes for an aircraft, OR best routes from one origin with a distance cap")
 @app_commands.describe(query="Just an aircraft (world-scan), OR 'ORIGIN AIRCRAFT [max_km]' for one origin")
 async def best_world(ctx, *, query: str):
-    if not await _gate(ctx): return
     await ctx.defer()
+    if not await _gate(ctx): return
     tokens = query.strip().split()
 
     specific_mode = len(tokens) >= 2 and _looks_like_airport_code(tokens[0])
@@ -2348,8 +2349,8 @@ def draw_whatif_heatmap(planes, ci_values, matrix, frm, to):
 @app_commands.describe(frm="Origin airport", to="Destination airport", planes="Comma-separated aircraft, e.g. 'a380, 777, 747'")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
 async def whatif(ctx, frm: str, to: str, *, planes: str):
-    if not await _gate(ctx): return
     await ctx.defer()
+    if not await _gate(ctx): return
     route = get_route(frm, to)
     if not route:
         return await ctx.send("❌ Route not found")
@@ -2386,8 +2387,8 @@ async def whatif(ctx, frm: str, to: str, *, planes: str):
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def routemap(ctx, airport: str, *, plane_name: str):
-    if not await _gate(ctx): return
     await ctx.defer()
+    if not await _gate(ctx): return
     airport = airport.upper()
     plane = get_plane(plane_name)
     if not plane:
@@ -2492,8 +2493,8 @@ def scan_routes_from_origin(ctx, airport, plane, max_distance=None):
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_r(ctx, airport: str, *, plane_name: str):
-    if not await _gate(ctx): return
     await ctx.defer()
+    if not await _gate(ctx): return
     airport = airport.upper()
     plane = get_plane(plane_name)
     if not plane:
@@ -2543,7 +2544,6 @@ async def best_r(ctx, airport: str, *, plane_name: str):
 
 async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, label, emoji, color):
     """Shared engine for best_short / best_long — same calc() everyone else uses."""
-    await ctx.defer()
     airport = airport.upper()
     plane = get_plane(plane_name)
     if not plane:
@@ -2606,6 +2606,7 @@ async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, 
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_short(ctx, airport: str, *, plane_name: str):
+    await ctx.defer()
     if not await _gate(ctx): return
     await _best_route_by_distance(ctx, airport, plane_name, min_dist=0, max_dist=3000, label="short", emoji="⚡", color=0x00ffcc)
 
@@ -2613,6 +2614,7 @@ async def best_short(ctx, airport: str, *, plane_name: str):
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
 @app_commands.autocomplete(airport=airport_autocomplete, plane_name=aircraft_autocomplete)
 async def best_long(ctx, airport: str, *, plane_name: str):
+    await ctx.defer()
     if not await _gate(ctx): return
     await _best_route_by_distance(ctx, airport, plane_name, min_dist=3000, max_dist=float("inf"), label="long", emoji="🌍", color=0xff9900)
 
@@ -2633,6 +2635,7 @@ async def on_ready():
             setup_agent(bot, supabase_get, supabase_post)
             register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
             register_intelligence(bot, groq, supabase_get, check_membership)
+            register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
             print("🤖 AM4 Agent loaded successfully.")
         except Exception as e:
             print(f"❌ AM4 Agent setup failed: {e}")
