@@ -1077,6 +1077,64 @@ async def supabase_post(table, data):
 # (menu, leaderboard, difficulty, airport/aircraft lookups) are
 # deliberately excluded so points can't be farmed by spamming cheap
 # commands.
+# ─────────────────────────────────────────────────────────
+#  AERION MEMBERSHIP GATE
+# ─────────────────────────────────────────────────────────
+async def _gate(ctx) -> bool:
+    """Returns True if user has active AERION membership.
+    Send error embed and return False if not.
+    Usage: if not await _gate(ctx): return
+    """
+    try:
+        status = await check_membership(str(ctx.author.id))
+    except Exception as e:
+        print(f"[GATE] check_membership error: {e}")
+        return True  # fail-open
+
+    if not status["linked"]:
+        embed = discord.Embed(
+            title="Link Required",
+            description=(
+                "Your Discord is not linked to the AERO portal.\n\n"
+                "1. Register on portal\n"
+                "2. Generate a link code\n"
+                "3. Use `/link <code>` here\n"
+                "4. Use `/subscribe` to activate AERION"
+            ),
+            color=0xff4757
+        )
+        embed.set_footer(text="AERION - AERO CROWN DYNASTY")
+        try:
+            await ctx.send(embed=embed, ephemeral=True)
+        except Exception:
+            await ctx.send(embed=embed)
+        return False
+
+    if not status["has_access"]:
+        cost = 1000 if status["is_new"] else 100
+        pts  = status["aero_points"]
+        embed = discord.Embed(
+            title="AERION MEMBERSHIP REQUIRED",
+            description=(
+                f"Purchase membership to use AERION.\n\n"
+                f"Type: {'New Member' if status['is_new'] else 'Renewal'}\n"
+                f"Cost: **{cost:,} AERO Points**\n"
+                f"Your balance: **{pts:,} AERO Points**\n\n"
+                + ("Use `/subscribe` to activate!" if pts >= cost
+                   else f"Need {cost - pts:,} more points.")
+            ),
+            color=0xff4757
+        )
+        embed.set_footer(text="AERION - AERO CROWN DYNASTY")
+        try:
+            await ctx.send(embed=embed, ephemeral=True)
+        except Exception:
+            await ctx.send(embed=embed)
+        return False
+
+    return True
+
+
 COMMAND_POINTS = {
     "route": 3, "best_r": 2, "best_short": 2, "best_long": 2,
     "best_world": 3, "best": 2, "compare": 2, "whatif": 3, "routemap": 2
