@@ -1766,12 +1766,16 @@ def build_route_voice_text(frm, to, plane, result, stop_airport=None):
 async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     await ctx.defer()
     if not await _gate(ctx): return
-    route = get_route(frm, to)
-    plane = get_plane(plane_name)
-    if not route:
-        return await ctx.send("❌ Route not found")
+    try:
+        route_data = get_route(frm, to)
+        plane = get_plane(plane_name)
+    except Exception as lookup_err:
+        return await ctx.send(f"❌ Database lookup failed: `{lookup_err}`")
+    if not route_data:
+        return await ctx.send("❌ Route not found in database. Check IATA codes.")
     if not plane:
-        return await ctx.send("❌ Plane not found")
+        return await ctx.send(f"❌ Aircraft `{plane_name}` not found. Check spelling.")
+    route = route_data
     
     distance_total = float(route["distance"])
     plane_range = float(plane["range"])
@@ -1814,7 +1818,13 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
                 stop_leg1 = leg1_result
                 stop_leg2 = leg2_result
 
-    result = calc(route, plane, ctx.author.id, cost_index=ci)
+    try:
+        result = calc(route, plane, ctx.author.id, cost_index=ci)
+    except Exception as calc_err:
+        print(f"[ROUTE] calc() error: {calc_err}")
+        return await ctx.send(
+            f"❌ Calculation error: `{calc_err}`\n"
+            "Check that the aircraft and route data are valid.", ephemeral=True)
     mode = result["mode"]
     
     from_txt = airport_name(frm)
@@ -1872,7 +1882,11 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
         embed.add_field(name="✈️ Fleet Saturation", value="✅ 1 aircraft fully covers this route's demand", inline=True)
 
     # ---- CI Optimization — the value-add a fixed-CI calculator can't offer ----
-    best_profit, best_contrib = find_optimal_ci(route, plane, ctx.author.id)
+    try:
+        best_profit, best_contrib = find_optimal_ci(route, plane, ctx.author.id)
+    except Exception as ci_err:
+        print(f"[ROUTE] CI optimization error (non-fatal): {ci_err}")
+        best_profit, best_contrib = result, result
     if best_profit["cost_index"] != ci or best_contrib["cost_index"] != ci:
         opt_lines = []
         if best_profit["cost_index"] != ci:
@@ -1882,7 +1896,11 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
         if opt_lines:
             embed.add_field(name="🎯 CI Optimization (vs. your CI " + str(ci) + ")", value="\n".join(opt_lines), inline=False)
 
-    alternatives = get_top_alternative_routes(frm, plane, ctx.author.id, exclude_dest=to, limit=3)
+    try:
+        alternatives = get_top_alternative_routes(frm, plane, ctx.author.id, exclude_dest=to, limit=3)
+    except Exception as alt_err:
+        print(f"[ROUTE] Alternative routes error (non-fatal): {alt_err}")
+        alternatives = []
     if alternatives:
         alt_text = "\n".join(f"• {frm.upper()} → **{d}** ({airport_city_country(d)}) — ${p:,}/day" for d, p in alternatives)
         embed.add_field(name="🔗 Related Routes from " + frm.upper(), value=alt_text, inline=False)
@@ -1914,18 +1932,33 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
         "CI": f"{result['ci']}%"
     }
     
-    img_buf = draw_aircraft_card(plane, result, route, frm, to)
-    image_file = discord.File(img_buf, filename="route.png")
-    embed.set_image(url="attachment://route.png")
+    # PIL card — graceful fallback if PIL not installed or fails
+    image_file = None
+    try:
+        img_buf = draw_aircraft_card(plane, result, route, frm, to)
+        if img_buf:
+            image_file = discord.File(img_buf, filename="route.png")
+            embed.set_image(url="attachment://route.png")
+    except Exception as pil_err:
+        print(f"[ROUTE] Aircraft card error (non-fatal): {pil_err}")
 
-    await ctx.send(embed=embed, file=image_file, view=ExportView(report_data))
+    try:
+        if image_file:
+            await ctx.send(embed=embed, file=image_file, view=ExportView(report_data))
+        else:
+            await ctx.send(embed=embed, view=ExportView(report_data))
+    except Exception as send_err:
+        print(f"[ROUTE] Send error: {send_err}")
+        await ctx.send(embed=embed)
 
-    # Voice summary sent as a quick separate follow-up — this way the
-    # main result never waits on the edge-tts network round-trip.
-    voice_text = build_route_voice_text(frm, to, plane, result, stop_airport=stop_airport)
-    voice_buf = await generate_voice_audio(voice_text)
-    if voice_buf:
-        await ctx.send(file=discord.File(voice_buf, filename="route_summary.mp3"))
+    # Voice summary — optional, non-fatal if TTS fails
+    try:
+        voice_text = build_route_voice_text(frm, to, plane, result, stop_airport=stop_airport)
+        voice_buf = await generate_voice_audio(voice_text)
+        if voice_buf:
+            await ctx.send(file=discord.File(voice_buf, filename="route_summary.mp3"))
+    except Exception as voice_err:
+        print(f"[ROUTE] Voice audio error (non-fatal): {voice_err}")
 
 # =========================
 # COMPARE VIEW
@@ -2665,9 +2698,19 @@ async def on_member_join(member):
 async def on_message(message):
     if message.author == bot.user:
         return
-    msg = message.content.lower().strip()
+
+    raw = message.content.strip()
+
+    # Always process prefix commands first — never send to AI
+    prefix = getattr(bot, 'command_prefix', '!')
+    if isinstance(prefix, str) and raw.startswith(prefix):
+        await bot.process_commands(message)
+        return
+
+    msg = raw.lower()
     is_mentioned = bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
+
     if not (is_mentioned or is_dm):
         await bot.process_commands(message)
         return
