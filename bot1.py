@@ -38,7 +38,7 @@ from aerion_membership import (
 )
 from aerion_intelligence import register_intelligence
 from aerion_alliance import register_alliance
-
+from aerion_governance_suite import register_governance_suite
 
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
@@ -2718,7 +2718,6 @@ _agent_loaded = False
 @bot.event
 async def on_ready():
     global _synced, _agent_loaded
-
     print(f"✅ AERION online as {bot.user}")
 
     if not _agent_loaded:
@@ -2727,18 +2726,19 @@ async def on_ready():
             register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
             register_intelligence(bot, groq, supabase_get, check_membership)
             register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
-            print("🤖 AM4 Agent loaded successfully.")
+
+            # ── NEW: governance suite (voting + proposals + treasury + tournament + case) ──
+            register_governance_suite(bot, supabase_get, supabase_post, supabase_patch, check_membership)
+
+            print("🤖 AM4 Agent + Governance Suite loaded successfully.")
         except Exception as e:
-            print(f"❌ AM4 Agent setup failed: {e}")
+            print(f"❌ Setup failed: {e}")
             return
 
     if not _synced:
-        try:
-            synced_cmds = await bot.tree.sync()
-            print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
-            _synced = True
-        except Exception as e:
-            print(f"⚠️ Slash command sync failed: {e}")
+        synced_cmds = await bot.tree.sync()
+        print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
+        _synced = True
             
 # =========================
 # WELCOME + CHAT
