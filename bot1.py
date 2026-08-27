@@ -861,7 +861,7 @@ def calc(route, plane, user_id, mods=None, cost_index=200):
         "j_price": int(j_price),
         "f_price": int(f_price),
         "income_trip": int(income_trip),
-        "cargo_income": int(cargo_income),
+        "cargo_income": 0,  # pax planes: no belly cargo in income
         "fuel": int(fuel),
         "fuel_lb": int(fuel_lb),
         "co2": int(co2),
