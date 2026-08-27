@@ -38,7 +38,7 @@ from aerion_membership import (
 )
 from aerion_intelligence import register_intelligence
 from aerion_alliance import register_alliance
-from aerion_governance_suite import register_governance_suite
+
 
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
@@ -731,6 +731,7 @@ FUEL_PRICE_PER_LB = 0.70       # $/lb — calibrated against reference; approxim
 CO2_PRICE_PER_QUINTAL = 0.12   # $/quintal — calibrated against reference; approximate
 
 def calc(route, plane, user_id, mods=None, cost_index=200):
+    import math as _math
     mode = get_user_mode(user_id)
     dist = float(route["distance"])
     base_speed = float(plane["speed"])
@@ -738,52 +739,60 @@ def calc(route, plane, user_id, mods=None, cost_index=200):
         base_speed *= 1.1
 
     cost_index = max(0, min(200, cost_index))
+    # AM4 speed formula: CI=200 → full speed, CI=0 → 60% speed
     speed = base_speed * (0.0035 * cost_index + 0.3)
-    time = dist / speed if speed else 1
+    time  = dist / speed if speed else 1
 
     y = int(route["y"])
     j = int(route["j"])
     f = int(route["f"])
-    cap = int(plane["capacity"])  # weighted capacity units (Y=1, J=2, F=3)
-    total_demand = y + j + f
+    cap = int(plane["capacity"])  # weighted units: Y=1, J=2, F=3
 
-    # ---- Trips/day: ceil(demand / capacity), capped by technical max ----
-    demand_trips = max(1, -(-total_demand // cap)) if cap else 1
-    technical_max = max(1, int(24 / time)) if time else 1
-    trips = min(demand_trips, technical_max)
+    # ── Trips/day ────────────────────────────────────────────────
+    # Weighted demand vs weighted capacity
+    weighted_demand = y + j * 2 + f * 3
+    demand_trips    = max(1, _math.ceil(weighted_demand / cap)) if cap else 1
+    technical_max   = max(1, int(24 / time)) if time else 1
+    trips           = min(demand_trips, technical_max)
 
-    # ---- Best seat configuration: F -> J -> Y, weighted capacity ----
-    remaining = cap
-    f_c = min(f // trips if trips else 0, remaining // 3)
-    remaining -= f_c * 3
-    j_c = min(j // trips if trips else 0, remaining // 2)
+    # ── Seat config: F→J→Y, weighted cap, round() matches AM4 ───
+    # F: floor (AM4 floors F)
+    f_c = min(_math.floor(f / trips) if trips else 0, cap // 3)
+    remaining = cap - f_c * 3
+    # J: round (AM4 rounds J up)
+    j_c = min(round(j / trips) if trips else 0, remaining // 2)
     remaining -= j_c * 2
-    y_c = min(y // trips if trips else 0, remaining // 1)
+    # Y: whatever fits
+    y_c = min(round(y / trips) if trips else 0, remaining)
 
-    # ---- Ticket pricing: autoprice x optimal multiplier ----
+    # ── Ticket prices: AM4 verified formula ──────────────────────
+    # Max prices (SAME for easy and realism — costs differ, not max prices)
+    y_max = _math.floor(0.4 * dist + 170)
+    j_max = _math.floor(0.9 * dist + 560)
+    f_max = _math.floor(1.2 * dist + 1200)
+
     if mode == "easy":
-        y_auto = (0.4 * dist) + 170
-        j_auto = (0.8 * dist) + 560
-        f_auto = (1.2 * dist) + 1200
-        acheck_k = 0.004444  # empirical — see note above
-        cargo_mul = 0.5
-        k_gm = 1.0  # contribution multiplier — easy
+        # Easy: max prices, no CI reduction
+        y_price = float(y_max)
+        j_price = float(j_max)
+        f_price = float(f_max)
+        acheck_k = 0.004444
+        k_gm     = 1.0
     else:
-        y_auto = (0.3 * dist) + 150
-        j_auto = (0.6 * dist) + 500
-        f_auto = (0.9 * dist) + 1000
-        acheck_k = 0.008889  # empirical — see note above
-        cargo_mul = 0.35
-        k_gm = 1.5  # contribution multiplier — realism
+        # Realism: CI reduces from max (verified vs AM4 official bot)
+        # Y=538, J=1275, F=2143 at dist=1138, CI=200  ✓
+        y_price = float(y_max - _math.floor(cost_index * 0.435))
+        j_price = float(j_max - _math.floor(cost_index * 1.545))
+        f_price = float(f_max - _math.floor(cost_index * 2.11))
+        y_price = max(1.0, y_price)
+        j_price = max(1.0, j_price)
+        f_price = max(1.0, f_price)
+        acheck_k = 0.008889
+        k_gm     = 1.5
 
-    y_price = y_auto * 1.10
-    j_price = j_auto * 1.08
-    f_price = f_auto * 1.06
-
+    # ── Income: pax only — NO cargo for passenger routes ─────────
+    # AM4 income = seat revenue only for pax planes (verified)
     income_trip = (y_c * y_price) + (j_c * j_price) + (f_c * f_price)
-    cargo = float(route.get("cargo", 0))
-    cargo_income = cargo * cargo_mul
-    income_trip += cargo_income
 
     # ---- Fuel & CO2 — confirmed formulas, now CI-scaled ----
     # IMPORTANT: these formulas compute a physical QUANTITY (lb / quintals),
@@ -1077,6 +1086,64 @@ async def supabase_post(table, data):
 # (menu, leaderboard, difficulty, airport/aircraft lookups) are
 # deliberately excluded so points can't be farmed by spamming cheap
 # commands.
+# ─────────────────────────────────────────────────────────
+#  /difficulty  —  Switch between Easy and Realism mode
+# ─────────────────────────────────────────────────────────
+
+@bot.hybrid_command(
+    name="difficulty",
+    description="View or change your AM4 game mode (easy / realism)"
+)
+@app_commands.describe(mode="Set to 'easy' or 'realism'. Leave blank to view current.")
+async def difficulty(ctx, mode: str = None):
+    uid = str(ctx.author.id)
+    if mode is None:
+        current = get_user_mode(uid)
+        label = "Easy Mode" if current == "easy" else "Realism Mode"
+        desc = (
+            "Higher income, lower costs, 100 pct load factor."
+            if current == "easy" else
+            "AM4-accurate pricing with CI, higher costs, matches official bot."
+        )
+        embed = discord.Embed(
+            title="Game Mode",
+            description=f"Current: **{label}**\n{desc}\n\nUse /difficulty easy or /difficulty realism to change.",
+            color=0x00d4ff
+        )
+        embed.set_footer(text="AERION - AERO CROWN DYNASTY OFFICIAL BOT")
+        return await ctx.send(embed=embed, ephemeral=True)
+
+    mode = mode.lower().strip()
+    if mode not in ("easy", "realism"):
+        return await ctx.send("Invalid mode. Use `/difficulty easy` or `/difficulty realism`", ephemeral=True)
+
+    set_user_mode(uid, mode)
+
+    desc_map = {
+        "easy": "Easy Mode active. Higher income, lower costs, 100 pct load factor.",
+        "realism": "Realism Mode active. AM4-accurate CI pricing, higher costs, matches official bot.",
+    }
+    embed = discord.Embed(
+        title=f"Mode set to {mode.upper()}",
+        description=desc_map[mode],
+        color=0x00ff88
+    )
+    embed.set_footer(text="AERION - AERO CROWN DYNASTY OFFICIAL BOT")
+    await ctx.send(embed=embed, ephemeral=True)
+
+
+@bot.hybrid_command(
+    name="mode",
+    description="Alias for /difficulty — view or change AM4 game mode"
+)
+@app_commands.describe(mode="Set to 'easy' or 'realism'. Leave blank to view current.")
+async def mode_cmd(ctx, mode: str = None):
+    await difficulty(ctx, mode)
+
+
+
+
+
 # ─────────────────────────────────────────────────────────
 #  AERION MEMBERSHIP GATE
 # ─────────────────────────────────────────────────────────
@@ -2718,6 +2785,7 @@ _agent_loaded = False
 @bot.event
 async def on_ready():
     global _synced, _agent_loaded
+
     print(f"✅ AERION online as {bot.user}")
 
     if not _agent_loaded:
@@ -2726,19 +2794,18 @@ async def on_ready():
             register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
             register_intelligence(bot, groq, supabase_get, check_membership)
             register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
-
-            # ── NEW: governance suite (voting + proposals + treasury + tournament + case) ──
-            register_governance_suite(bot, supabase_get, supabase_post, supabase_patch, check_membership)
-
-            print("🤖 AM4 Agent + Governance Suite loaded successfully.")
+            print("🤖 AM4 Agent loaded successfully.")
         except Exception as e:
-            print(f"❌ Setup failed: {e}")
+            print(f"❌ AM4 Agent setup failed: {e}")
             return
 
     if not _synced:
-        synced_cmds = await bot.tree.sync()
-        print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
-        _synced = True
+        try:
+            synced_cmds = await bot.tree.sync()
+            print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
+            _synced = True
+        except Exception as e:
+            print(f"⚠️ Slash command sync failed: {e}")
             
 # =========================
 # WELCOME + CHAT
