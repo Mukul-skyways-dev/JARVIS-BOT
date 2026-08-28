@@ -38,8 +38,6 @@ from aerion_membership import (
 )
 from aerion_intelligence import register_intelligence
 from aerion_alliance import register_alliance
-from aerion_governance_suite import register_governance_suite
-
 
 
 # =========================================================
@@ -753,7 +751,7 @@ def calc(route, plane, user_id, mods=None, cost_index=200):
     # ── Trips/day ────────────────────────────────────────────────
     # Weighted demand vs weighted capacity
     weighted_demand = y + j * 2 + f * 3
-    demand_trips    = max(1, _math.ceil(weighted_demand / cap)) if cap else 1
+    demand_trips    = max(1, weighted_demand // cap) if cap else 1  # AM4 uses floor
     technical_max   = max(1, int(24 / time)) if time else 1
     trips           = min(demand_trips, technical_max)
 
@@ -2796,7 +2794,6 @@ async def on_ready():
             register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
             register_intelligence(bot, groq, supabase_get, check_membership)
             register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
-            register_governance_suite(bot, supabase_get, supabase_post, supabase_patch, check_membership)
             print("🤖 AM4 Agent loaded successfully.")
         except Exception as e:
             print(f"❌ AM4 Agent setup failed: {e}")
