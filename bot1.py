@@ -39,6 +39,7 @@ from aerion_membership import (
 from aerion_intelligence import register_intelligence
 from aerion_alliance import register_alliance
 from aerion_governance_suite import register_governance_suite
+from aerion_portal_sync import register_portal_sync
 
 
 # =========================================================
@@ -2796,6 +2797,7 @@ async def on_ready():
             register_intelligence(bot, groq, supabase_get, check_membership)
             register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
             register_governance_suite(bot, supabase_get, supabase_post, supabase_patch, check_membership)
+            register_portal_sync(bot, SUPABASE_URL, SUPABASE_KEY, supabase_get, check_membership)
             print("🤖 AM4 Agent loaded successfully.")
         except Exception as e:
             print(f"❌ AM4 Agent setup failed: {e}")
