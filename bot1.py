@@ -2779,37 +2779,201 @@ async def best_long(ctx, airport: str, *, plane_name: str):
     await _best_route_by_distance(ctx, airport, plane_name, min_dist=3000, max_dist=float("inf"), label="long", emoji="🌍", color=0xff9900)
 
 # =========================
-# ON READY — sync slash commands
+# ON READY — MODULE LOAD + SLASH COMMAND SYNC
 # =========================
+
 _synced = False
 _agent_loaded = False
+
 
 @bot.event
 async def on_ready():
     global _synced, _agent_loaded
 
-    print(f"✅ AERION online as {bot.user}")
+    print("=" * 60)
+    print(f"✅ AERION ONLINE AS: {bot.user}")
+    print("=" * 60)
+
+    # ==========================================
+    # LOAD ALL MODULES ONLY ONCE
+    # ==========================================
 
     if not _agent_loaded:
+
+        print("\n📦 LOADING AERION MODULES...\n")
+
+        # ------------------------------------------
+        # AM4 AGENT
+        # NOTE:
+        # Agent dangerous commands should use
+        # @bot.command() only inside am4_agent.py
+        # ------------------------------------------
+
         try:
-            setup_agent(bot, supabase_get, supabase_post)
-            register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
-            register_intelligence(bot, groq, supabase_get, check_membership)
-            register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
-            register_governance_suite(bot, supabase_get, supabase_post, supabase_patch, check_membership)
-            register_portal_sync(bot, SUPABASE_URL, SUPABASE_KEY, supabase_get, check_membership)
-            print("🤖 AM4 Agent loaded successfully.")
+            setup_agent(
+                bot,
+                supabase_get,
+                supabase_post
+            )
+            print("✅ AM4 Agent module loaded.")
+
         except Exception as e:
-            print(f"❌ AM4 Agent setup failed: {e}")
-            return
+            print(
+                f"❌ AM4 Agent module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
+        # MEMBERSHIP MODULE
+        # ------------------------------------------
+
+        try:
+            register_membership_commands(
+                bot,
+                supabase_get,
+                supabase_post,
+                supabase_patch
+            )
+            print("✅ Membership module loaded.")
+
+        except Exception as e:
+            print(
+                f"❌ Membership module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
+        # INTELLIGENCE MODULE
+        # ------------------------------------------
+
+        try:
+            register_intelligence(
+                bot,
+                groq,
+                supabase_get,
+                check_membership
+            )
+            print("✅ Intelligence module loaded.")
+
+        except Exception as e:
+            print(
+                f"❌ Intelligence module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
+        # ALLIANCE MODULE
+        # ------------------------------------------
+
+        try:
+            register_alliance(
+                bot,
+                groq,
+                supabase_get,
+                supabase_post,
+                supabase_patch,
+                check_membership
+            )
+            print("✅ Alliance module loaded.")
+
+        except Exception as e:
+            print(
+                f"❌ Alliance module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
+        # GOVERNANCE SUITE
+        # ------------------------------------------
+
+        try:
+            register_governance_suite(
+                bot,
+                supabase_get,
+                supabase_post,
+                supabase_patch,
+                check_membership
+            )
+            print("✅ Governance Suite module loaded.")
+
+        except Exception as e:
+            print(
+                f"❌ Governance Suite module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
+        # PORTAL SYNC
+        # ------------------------------------------
+
+        try:
+            register_portal_sync(
+                bot,
+                SUPABASE_URL,
+                SUPABASE_KEY,
+                supabase_get,
+                check_membership
+            )
+            print("✅ Portal Sync module loaded.")
+
+        except Exception as e:
+            print(
+                f"❌ Portal Sync module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
+        # MARK MODULE LOADING COMPLETE
+        # ------------------------------------------
+
+        _agent_loaded = True
+
+        print("\n🤖 ALL AERION MODULES LOADING COMPLETED.")
+        print("=" * 60)
+
+    # ==========================================
+    # SYNC ALL SLASH-ELIGIBLE COMMANDS
+    # ==========================================
 
     if not _synced:
+
         try:
-            synced_cmds = await bot.tree.sync()
-            print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
+
+            print("\n🔄 SYNCING SLASH COMMANDS WITH DISCORD...")
+
+            synced_commands = await bot.tree.sync()
+
+            print(
+                f"✅ SUCCESSFULLY SYNCED "
+                f"{len(synced_commands)} SLASH COMMAND(S)."
+            )
+
+            # Display synced command names in Render logs
+            if synced_commands:
+
+                print("\n📋 SYNCED SLASH COMMANDS:")
+
+                for command in synced_commands:
+                    print(f"   • /{command.name}")
+
+            else:
+                print(
+                    "⚠️ WARNING: Discord returned 0 synced commands."
+                )
+
             _synced = True
+
         except Exception as e:
-            print(f"⚠️ Slash command sync failed: {e}")
+
+            print(
+                f"\n❌ SLASH COMMAND SYNC FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+    print("\n" + "=" * 60)
+    print("🚀 AERION STARTUP PROCESS COMPLETED")
+    print("=" * 60)
+
             
 # =========================
 # WELCOME + CHAT
