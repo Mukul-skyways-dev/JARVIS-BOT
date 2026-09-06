@@ -292,8 +292,9 @@ class CommandActionView(discord.ui.View):
         )
         if not saved:
             await interaction.followup.send(
-                "⚠️ Supabase command-control table available nahi hai. "
-                "Migration apply hone ke baad try karein.",
+                "⚠️ Command control is temporarily unavailable. "
+                "Please ask the bot administrator to check the Supabase "
+                "service-role key and RLS permissions.",
                 ephemeral=True,
             )
             return
