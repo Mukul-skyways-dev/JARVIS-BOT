@@ -2785,12 +2785,11 @@ async def best_long(ctx, airport: str, *, plane_name: str):
 
 _synced = False
 _agent_loaded = False
-_support_loaded = False
 
 
 @bot.event
 async def on_ready():
-    global _synced, _agent_loaded, _support_loaded
+    global _synced, _agent_loaded
 
     print("=" * 60)
     print(f"✅ AERION ONLINE AS: {bot.user}")
