@@ -525,8 +525,10 @@ async def _refresh_panel(
     message = None
     channel_id = record.get("channel_id")
     message_id = record.get("message_id")
-    if channel_id and message_id:
+    channel = None
+    if channel_id:
         channel = guild.get_channel(int(channel_id))
+    if channel_id and message_id:
         if isinstance(channel, discord.TextChannel):
             try:
                 message = await channel.fetch_message(int(message_id))
@@ -538,7 +540,8 @@ async def _refresh_panel(
             except Exception:
                 message = None
 
-    channel = await _find_panel_channel(guild)
+    if not isinstance(channel, discord.TextChannel):
+        channel = await _find_panel_channel(guild)
     if channel is None:
         return
     try:
