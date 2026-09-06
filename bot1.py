@@ -40,6 +40,7 @@ from aerion_intelligence import register_intelligence
 from aerion_alliance import register_alliance
 from aerion_governance_suite import register_governance_suite
 from aerion_portal_sync import register_portal_sync
+from aerion_support_tools import setup_support_tools
 
 
 # =========================================================
@@ -2784,11 +2785,12 @@ async def best_long(ctx, airport: str, *, plane_name: str):
 
 _synced = False
 _agent_loaded = False
+_support_loaded = False
 
 
 @bot.event
 async def on_ready():
-    global _synced, _agent_loaded
+    global _synced, _agent_loaded, _support_loaded
 
     print("=" * 60)
     print(f"✅ AERION ONLINE AS: {bot.user}")
@@ -2839,6 +2841,34 @@ async def on_ready():
         except Exception as e:
             print(
                 f"❌ Membership module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
+        # SUPPORT TOOLS MODULE
+        # ------------------------------------------
+
+        try:
+            setup_support_tools(
+                bot,
+                {
+                    "get_route": get_route,
+                    "get_plane": get_plane,
+                    "get_all_planes": get_all_planes,
+                    "calc": calc,
+                    "find_optimal_ci": find_optimal_ci,
+                    "airport_name": airport_name,
+                    "airport_city_country": airport_city_country,
+                    "airport_autocomplete": airport_autocomplete,
+                    "aircraft_autocomplete": aircraft_autocomplete,
+                    "membership_required": membership_required,
+                }
+            )
+            print("✅ Support tools module loaded.")
+
+        except Exception as e:
+            print(
+                f"❌ Support tools module FAILED → "
                 f"{type(e).__name__}: {e}"
             )
 
