@@ -37,6 +37,7 @@ _view_registered = False
 _guild_join_registered = False
 _db_available: Optional[bool] = None
 _sync_lock = asyncio.Lock()
+_command_templates: List[Any] = []
 
 
 def _utc_now() -> str:
@@ -441,7 +442,11 @@ async def sync_guild_commands(guild: discord.Guild) -> List[Any]:
     async with _sync_lock:
         controls = await _control_map(guild.id)
         _bot.tree.clear_commands(guild=guild)
-        _bot.tree.copy_global_to(guild=guild)
+        if _command_templates:
+            for command in _command_templates:
+                _bot.tree.add_command(command, guild=guild, override=True)
+        else:
+            _bot.tree.copy_global_to(guild=guild)
         for command in list(_bot.tree.get_commands(guild=guild)):
             name = _command_name(command)
             if name in PROTECTED_COMMANDS:
@@ -550,12 +555,25 @@ async def _refresh_panel(
 
 
 async def sync_all_guild_commands() -> List[Any]:
+    global _command_templates
     if _bot is None:
         return []
+    _command_templates = list(_bot.tree.get_commands())
     results = []
     for guild in list(getattr(_bot, "guilds", [])):
         results.extend(await sync_guild_commands(guild))
         await _refresh_panel(guild)
+    # The bot historically registered these commands globally. Clear that
+    # registry and sync an empty global set so stale global commands disappear
+    # from Discord. Each guild now owns its filtered command set.
+    _bot.tree.clear_commands()
+    try:
+        await _bot.tree.sync()
+    except Exception as exc:
+        print(
+            f"[COMMAND CONTROL] Global command cleanup failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
     return results
 
 
