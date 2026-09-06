@@ -41,6 +41,7 @@ from aerion_alliance import register_alliance
 from aerion_governance_suite import register_governance_suite
 from aerion_portal_sync import register_portal_sync
 from aerion_support_tools import setup_support_tools
+from aerion_command_control import setup_command_control, sync_all_guild_commands
 
 
 # =========================================================
@@ -2952,6 +2953,25 @@ async def on_ready():
             )
 
         # ------------------------------------------
+        # COMMAND CONTROL MODULE
+        # ------------------------------------------
+
+        try:
+            setup_command_control(
+                bot,
+                supabase_get,
+                supabase_post,
+                supabase_patch
+            )
+            print("✅ Command control module loaded.")
+
+        except Exception as e:
+            print(
+                f"❌ Command control module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
         # MARK MODULE LOADING COMPLETE
         # ------------------------------------------
 
@@ -2970,7 +2990,7 @@ async def on_ready():
 
             print("\n🔄 SYNCING SLASH COMMANDS WITH DISCORD...")
 
-            synced_commands = await bot.tree.sync()
+            synced_commands = await sync_all_guild_commands()
 
             print(
                 f"✅ SUCCESSFULLY SYNCED "
