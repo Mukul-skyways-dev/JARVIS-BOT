@@ -36,6 +36,7 @@ _supabase_patch: Optional[Callable[..., Awaitable[Any]]] = None
 _view_registered = False
 _guild_join_registered = False
 _db_available: Optional[bool] = None
+_db_probe_logged = False
 _sync_lock = asyncio.Lock()
 _command_templates: List[Any] = []
 
@@ -226,7 +227,10 @@ async def _is_admin(interaction: discord.Interaction) -> bool:
 async def _require_admin(interaction: discord.Interaction) -> bool:
     if await _is_admin(interaction):
         return True
-    message = "❌ Sirf server owner, Administrator, ya bot owner ye panel use kar sakta hai."
+    message = (
+        "❌ Only the server owner, an Administrator, or the bot owner "
+        "can use this panel."
+    )
     if interaction.response.is_done():
         await interaction.followup.send(message, ephemeral=True)
     else:
@@ -241,8 +245,9 @@ def _panel_embed(guild: discord.Guild, controls: Dict[str, bool]) -> discord.Emb
     embed = discord.Embed(
         title="✈️ AERION Admin Control Panel",
         description=(
-            "Buttons se server ke slash commands enable/disable karein.\n"
-            "Membership tier control abhi is panel me included nahi hai."
+            "Use the buttons below to enable or disable this server's slash "
+            "commands.\n"
+            "Membership tier controls are not included in this panel."
         ),
         color=0x00D4FF,
     )
@@ -258,8 +263,8 @@ def _panel_embed(guild: discord.Guild, controls: Dict[str, bool]) -> discord.Emb
     embed.add_field(
         name="How it works",
         value=(
-            "Command select karein → Enable/Disable button dabayein. "
-            "Disable ke baad command is server ke slash menu se remove hogi."
+            "Select a command, then click Enable or Disable. "
+            "Disabled commands are removed from this server's slash menu."
         ),
         inline=False,
     )
@@ -278,7 +283,7 @@ class CommandActionView(discord.ui.View):
             return
         if interaction.guild is None or interaction.guild.id != self.guild_id:
             await interaction.response.send_message(
-                "❌ Ye control panel kisi aur server ke liye hai.",
+                "❌ This control panel belongs to a different server.",
                 ephemeral=True,
             )
             return
@@ -304,7 +309,8 @@ class CommandActionView(discord.ui.View):
         await _refresh_panel(interaction.guild, controls)
         status = "enabled ✅" if enabled else "disabled ⛔"
         await interaction.followup.send(
-            f"`/{self.command_name}` **{status}**. Is server ka slash menu sync ho gaya.",
+            f"`/{self.command_name}` is **{status}**. "
+            "This server's slash menu has been synchronized.",
             ephemeral=True,
         )
 
@@ -358,7 +364,7 @@ class CommandSelect(discord.ui.Select):
         selected = self.values[0]
         if selected == "__none__":
             await interaction.response.send_message(
-                "⚠️ Is server me manage karne ke liye command nahi mili.",
+                "⚠️ No manageable commands were found in this server.",
                 ephemeral=True,
             )
             return
@@ -370,7 +376,7 @@ class CommandSelect(discord.ui.Select):
             description=f"Current status: **{status}**",
             color=0x00FF88 if enabled else 0xFF4455,
         )
-        embed.set_footer(text="Neeche button se status change karein")
+        embed.set_footer(text="Use the buttons below to change the status.")
         await interaction.response.send_message(
             embed=embed,
             view=CommandActionView(self.guild_id, selected),
@@ -477,6 +483,10 @@ async def _find_panel_channel(guild: discord.Guild) -> Optional[discord.TextChan
         permissions = channel.permissions_for(me)
         if permissions.view_channel and permissions.send_messages and permissions.embed_links:
             return channel
+    print(
+        f"[COMMAND CONTROL] No writable text channel is available in guild "
+        f"{guild.id}. Grant the bot View Channel, Send Messages, and Embed Links."
+    )
     return None
 
 
@@ -529,6 +539,17 @@ async def _refresh_panel(
     channel = None
     if channel_id:
         channel = guild.get_channel(int(channel_id))
+        if channel is None:
+            try:
+                fetched_channel = await guild.fetch_channel(int(channel_id))
+                if isinstance(fetched_channel, discord.TextChannel):
+                    channel = fetched_channel
+            except Exception as exc:
+                print(
+                    f"[COMMAND CONTROL] Could not access configured panel "
+                    f"channel {channel_id} in guild {guild.id}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
     if channel_id and message_id:
         if isinstance(channel, discord.TextChannel):
             try:
@@ -559,9 +580,30 @@ async def _refresh_panel(
 
 
 async def sync_all_guild_commands() -> List[Any]:
-    global _command_templates
+    global _command_templates, _db_available, _db_probe_logged
     if _bot is None:
         return []
+    if _supabase_get is None:
+        _db_available = False
+        print("[COMMAND CONTROL] Supabase read helper is not configured.")
+    elif not _db_probe_logged:
+        _db_probe_logged = True
+        probe_failed = False
+        for table in (COMMAND_TABLE, PANEL_TABLE, AUDIT_TABLE):
+            try:
+                await _supabase_get(
+                    table,
+                    {"select": "*", "limit": "1"},
+                )
+            except Exception as exc:
+                probe_failed = True
+                print(
+                    f"[COMMAND CONTROL] Supabase check failed for {table}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        _db_available = not probe_failed
+        if not probe_failed:
+            print("[COMMAND CONTROL] Supabase command-control tables are reachable.")
     _command_templates = list(_bot.tree.get_commands())
     results = []
     for guild in list(getattr(_bot, "guilds", [])):
