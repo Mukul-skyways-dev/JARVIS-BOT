@@ -1049,10 +1049,23 @@ class LeaderboardView(View):
 # =========================================================
 # PORTAL LINKING + AERO POINTS (Supabase REST)
 # =========================================================
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").strip()
+# Prefer an explicitly named server-side key, while keeping the existing
+# SUPABASE_KEY variable compatible with the current Render configuration.
+SUPABASE_KEY = (
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    or os.getenv("SUPABASE_SECRET_KEY")
+    or os.getenv("SUPABASE_KEY")
+    or ""
+).strip()
 
 def _supabase_headers():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError(
+            "Supabase server configuration is missing. Set SUPABASE_URL and "
+            "a server-side SUPABASE_SERVICE_ROLE_KEY, SUPABASE_SECRET_KEY, "
+            "or SUPABASE_KEY."
+        )
     return {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
