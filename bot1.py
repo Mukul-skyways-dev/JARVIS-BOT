@@ -274,6 +274,7 @@ bot = commands.Bot(command_prefix="!", intents=intents, max_messages=None)
 # Share Module import 
 # ========================
 exec(open("share_module.py").read())
+exec(open("community_share_module.py").read())
 
 # =========================
 # DATABASE AUTO DOWNLOAD
