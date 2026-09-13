@@ -29,3 +29,6 @@ create index if not exists community_share_entries_profile_date_idx
 
 create index if not exists community_share_entries_alliance_lookup_idx
     on public.community_share_profiles (alliance);
+
+alter table public.community_share_profiles enable row level security;
+alter table public.community_share_entries enable row level security;
