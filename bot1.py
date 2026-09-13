@@ -2797,12 +2797,12 @@ async def best_long(ctx, airport: str, *, plane_name: str):
 # =========================
 
 _synced = False
-_agent_loaded = False
+_modules_loaded = False
 
 
 @bot.event
 async def on_ready():
-    global _synced, _agent_loaded
+    global _synced, _modules_loaded
 
     print("=" * 60)
     print(f"✅ AERION ONLINE AS: {bot.user}")
@@ -2812,7 +2812,7 @@ async def on_ready():
     # LOAD ALL MODULES ONLY ONCE
     # ==========================================
 
-    if not _agent_loaded:
+    if not _modules_loaded:
 
         print("\n📦 LOADING AERION MODULES...\n")
         
@@ -2966,7 +2966,7 @@ async def on_ready():
         # MARK MODULE LOADING COMPLETE
         # ------------------------------------------
 
-        _agent_loaded = True
+        _modules_loaded = True
 
         print("\n🤖 ALL AERION MODULES LOADING COMPLETED.")
         print("=" * 60)
