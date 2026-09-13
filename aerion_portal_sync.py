@@ -21,8 +21,7 @@ from datetime import datetime, timezone, timedelta
 import discord
 from discord import app_commands
 import pytz
-import websockets
-import websockets.exceptions
+# websockets not needed — using polling approach
 
 # ── PDF (reportlab) ──────────────────────────────────────
 try:
@@ -62,8 +61,6 @@ _webhook_config: dict = {
 _realtime_connected = False
 _realtime_last_ping = None
 _realtime_events_total = 0
-_realtime_ws = None
-
 # ─────────────────────────────────────────────────────────
 #  HELPERS
 # ─────────────────────────────────────────────────────────
@@ -239,59 +236,109 @@ async def _on_points_transaction(rec: dict):
     embed.set_footer(text=f"{BOT_NAME} Portal Sync • {_ts()}")
     await ch.send(embed=embed)
 
-# ── Realtime connection loop ───────────────────────────────
+# ── Polling-based sync (reliable on Render free tier) ────────
+# Tracks last seen IDs to detect new rows
+_last_seen = {
+    "share_entries":      0,
+    "share_users":        0,
+    "point_transactions": 0,
+}
+
+async def _poll_once():
+    """Check each table for new rows since last poll."""
+    global _realtime_events_total, _realtime_last_ping
+
+    # ── share_entries ─────────────────────────────────────
+    try:
+        rows = await _supa_get("share_entries", {
+            "select": "*",
+            "order":  "id.desc",
+            "limit":  "10",
+        })
+        for row in reversed(rows or []):
+            rid = row.get("id", 0)
+            if rid > _last_seen["share_entries"]:
+                _last_seen["share_entries"] = rid
+                _realtime_events_total += 1
+                _realtime_last_ping = _now_ist()
+                await _on_share_entry(row)
+                print(f"[PORTAL SYNC] share_entry detected: {row.get('sts_id')} → {row.get('value')}")
+    except Exception as e:
+        print(f"[PORTAL SYNC] share_entries poll error: {e}")
+
+    # ── share_users (new registrations) ───────────────────
+    try:
+        rows = await _supa_get("share_users", {
+            "select": "*",
+            "order":  "id.desc",
+            "limit":  "5",
+        })
+        for row in reversed(rows or []):
+            rid = row.get("id", 0)
+            if rid > _last_seen["share_users"]:
+                _last_seen["share_users"] = rid
+                _realtime_events_total += 1
+                _realtime_last_ping = _now_ist()
+                await _on_new_member(row)
+                print(f"[PORTAL SYNC] new_member detected: {row.get('sts_id')}")
+    except Exception as e:
+        print(f"[PORTAL SYNC] share_users poll error: {e}")
+
+    # ── point_transactions ────────────────────────────────
+    try:
+        rows = await _supa_get("point_transactions", {
+            "select": "*",
+            "order":  "id.desc",
+            "limit":  "10",
+        })
+        for row in reversed(rows or []):
+            rid = row.get("id", 0)
+            if rid > _last_seen["point_transactions"]:
+                _last_seen["point_transactions"] = rid
+                _realtime_events_total += 1
+                _realtime_last_ping = _now_ist()
+                await _on_points_transaction(row)
+    except Exception as e:
+        print(f"[PORTAL SYNC] point_transactions poll error: {e}")
+
+
 async def _realtime_loop():
-    global _realtime_connected, _realtime_last_ping, _realtime_ws
+    """
+    Polling-based portal sync — checks every 30 seconds.
+    More reliable than WebSocket on Render free tier.
+    Sets _realtime_connected = True once first poll succeeds.
+    """
+    global _realtime_connected
 
     await _bot.wait_until_ready()
-    print("[PORTAL SYNC] Realtime loop started")
+    await asyncio.sleep(10)   # wait for bot to fully start
+    print("[PORTAL SYNC] Polling loop started (30s interval)")
 
-    tables = ["share_entries", "share_users", "point_transactions"]
-    retry_delay = 5
+    # Seed last seen IDs on startup so we don't notify old entries
+    try:
+        for table in _last_seen:
+            rows = await _supa_get(table, {
+                "select": "id", "order": "id.desc", "limit": "1"})
+            if rows:
+                _last_seen[table] = rows[0].get("id", 0)
+                print(f"[PORTAL SYNC] Seeded {table} last_id={_last_seen[table]}")
+        _realtime_connected = True
+        print("[PORTAL SYNC] ✅ Sync active — watching for new portal events")
+    except Exception as e:
+        print(f"[PORTAL SYNC] Seed error: {e}")
+
+    # Check if any channel is configured — warn if not
+    all_zero = all(v == 0 for v in _webhook_config.values())
+    if all_zero:
+        print("[PORTAL SYNC] ⚠️  No notification channels set! Run /webhookconfig in Discord.")
 
     while not _bot.is_closed():
+        await asyncio.sleep(30)   # poll every 30 seconds
         try:
-            url = _realtime_url()
-            print(f"[PORTAL SYNC] Connecting to Supabase Realtime...")
-
-            async with websockets.connect(
-                url,
-                ping_interval=25,
-                ping_timeout=10,
-                close_timeout=10,
-            ) as ws:
-                _realtime_ws = ws
-                _realtime_connected = True
-                _realtime_last_ping = _now_ist()
-                retry_delay = 5   # reset on success
-                print("[PORTAL SYNC] ✅ Connected to Supabase Realtime")
-
-                # Subscribe to each table
-                for i, table in enumerate(tables, 1):
-                    topic = f"realtime:public:{table}"
-                    await ws.send(_join_msg(topic, str(i)))
-                    await asyncio.sleep(0.3)
-                print(f"[PORTAL SYNC] Subscribed to: {tables}")
-
-                # Listen loop
-                async for raw in ws:
-                    _realtime_last_ping = _now_ist()
-                    await _handle_realtime_event(raw)
-
-        except (websockets.exceptions.ConnectionClosed,
-                websockets.exceptions.WebSocketException,
-                OSError, asyncio.TimeoutError) as e:
-            _realtime_connected = False
-            _realtime_ws = None
-            print(f"[PORTAL SYNC] Disconnected: {e}. Retrying in {retry_delay}s...")
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 120)   # exponential backoff, max 2 min
-
+            await _poll_once()
         except Exception as e:
-            _realtime_connected = False
-            _realtime_ws = None
-            print(f"[PORTAL SYNC] Unexpected error: {e}. Retrying in {retry_delay}s...")
-            await asyncio.sleep(retry_delay)
+            print(f"[PORTAL SYNC] Poll loop error: {e}")
+
 
 # ─────────────────────────────────────────────────────────
 #  /invoice  —  Generate PDF invoice for any transaction
@@ -747,15 +794,20 @@ class _WebhookConfigView(discord.ui.View):
     @discord.ui.button(label="📡 Default", style=discord.ButtonStyle.secondary)
     async def set_default(self, i, b): await self._set_channel(i, "default")
 
-    @discord.ui.button(label="🔄 Reconnect Realtime", style=discord.ButtonStyle.green)
-    async def reconnect(self, i, b):
-        global _realtime_ws
-        if _realtime_ws:
-            try: await _realtime_ws.close()
-            except: pass
-        await i.response.send_message(
-            "🔄 Realtime reconnecting... check status in 10 seconds.",
-            ephemeral=True)
+    @discord.ui.button(label="🧪 Send Test Notification", style=discord.ButtonStyle.green)
+    async def test_notif(self, i, b):
+        ch = await _get_channel("share_entry") or await _get_channel("default")
+        if not ch:
+            return await i.response.send_message(
+                "❌ No channel set yet. Click a channel button above first.", ephemeral=True)
+        test_embed = discord.Embed(
+            title="🧪 AERION Portal Sync — Test",
+            description="✅ Webhook config is working! Notifications will appear here.",
+            color=0x00ff88
+        )
+        test_embed.set_footer(text=f"{BOT_NAME} Portal Sync • {_ts()}")
+        await ch.send(embed=test_embed)
+        await i.response.send_message("✅ Test notification sent!", ephemeral=True)
 
 # ─────────────────────────────────────────────────────────
 #  /portalsync  —  Status dashboard
@@ -784,12 +836,19 @@ async def _cmd_portalsync(ctx):
         color=0x00ff88 if _realtime_connected else 0xff4757
     )
     e.add_field(
-        name="Realtime Connection",
-        value=("🟢 **LIVE** — Supabase Realtime active"
+        name="Portal Sync Status",
+        value=("🟢 **ACTIVE** — Polling every 30 seconds"
                if _realtime_connected
-               else "🔴 **DISCONNECTED** — Attempting reconnect..."),
+               else "🟡 **STARTING** — First poll in progress..."),
         inline=False
     )
+    all_zero = all(v == 0 for v in _webhook_config.values())
+    if all_zero:
+        e.add_field(
+            name="⚠️ Setup Required",
+            value="No notification channels set. Run /webhookconfig and click a button for each event.",
+            inline=False
+        )
     e.add_field(name="Events Received", value=f"{_realtime_events_total:,}", inline=True)
     e.add_field(
         name="Last Activity",
