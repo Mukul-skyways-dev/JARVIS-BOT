@@ -27,7 +27,6 @@ from openai import OpenAI
 import pytz
 
 from export_view import ExportView
-from am4_agent import setup_agent
 # =========================================================
 # AERION MODULES — Membership + Intelligence
 # =========================================================
@@ -2816,28 +2815,7 @@ async def on_ready():
     if not _agent_loaded:
 
         print("\n📦 LOADING AERION MODULES...\n")
-
-        # ------------------------------------------
-        # AM4 AGENT
-        # NOTE:
-        # Agent dangerous commands should use
-        # @bot.command() only inside am4_agent.py
-        # ------------------------------------------
-
-        try:
-            setup_agent(
-                bot,
-                supabase_get,
-                supabase_post
-            )
-            print("✅ AM4 Agent module loaded.")
-
-        except Exception as e:
-            print(
-                f"❌ AM4 Agent module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
+        
         # ------------------------------------------
         # MEMBERSHIP MODULE
         # ------------------------------------------
