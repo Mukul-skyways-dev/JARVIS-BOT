@@ -41,7 +41,7 @@ from aerion_governance_suite import register_governance_suite
 from aerion_portal_sync import register_portal_sync
 from aerion_support_tools import setup_support_tools
 from aerion_command_control import setup_command_control, sync_all_guild_commands
-
+from community_share_module import register_community_share_commands
 
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
@@ -2837,6 +2837,25 @@ async def on_ready():
             )
 
         # ------------------------------------------
+        # COMMUNITY SHARE MODULE (NON-MEMBERS TRACKING)
+        # ------------------------------------------
+
+        try:
+            register_community_share_commands(
+                bot,
+                supabase_get,
+                supabase_post,
+                supabase_patch
+            )
+            print("✅ Community share module loaded.")
+
+        except Exception as e:
+            print(
+                f"❌ Community share module FAILED → "
+                f"{type(e).__name__}: {e}"
+            )
+
+        # ------------------------------------------
         # SUPPORT TOOLS MODULE
         # ------------------------------------------
 
@@ -3014,7 +3033,6 @@ async def on_ready():
     print("\n" + "=" * 60)
     print("🚀 AERION STARTUP PROCESS COMPLETED")
     print("=" * 60)
-
             
 # =========================
 # WELCOME + CHAT
