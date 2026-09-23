@@ -27,6 +27,7 @@ from openai import OpenAI
 import pytz
 
 from export_view import ExportView
+from am4_agent import setup_agent
 # =========================================================
 # AERION MODULES — Membership + Intelligence
 # =========================================================
@@ -39,9 +40,7 @@ from aerion_intelligence import register_intelligence
 from aerion_alliance import register_alliance
 from aerion_governance_suite import register_governance_suite
 from aerion_portal_sync import register_portal_sync
-from aerion_support_tools import setup_support_tools
-from aerion_command_control import setup_command_control, sync_all_guild_commands
-from community_share_module import register_community_share_commands
+
 
 # =========================================================
 # KEEP ALIVE / PORT BINDING (Render requires a bound port on
@@ -274,7 +273,6 @@ bot = commands.Bot(command_prefix="!", intents=intents, max_messages=None)
 # Share Module import 
 # ========================
 exec(open("share_module.py").read())
-exec(open("community_share_module.py").read())
 
 # =========================
 # DATABASE AUTO DOWNLOAD
@@ -1049,23 +1047,10 @@ class LeaderboardView(View):
 # =========================================================
 # PORTAL LINKING + AERO POINTS (Supabase REST)
 # =========================================================
-SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").strip()
-# Prefer an explicitly named server-side key, while keeping the existing
-# SUPABASE_KEY variable compatible with the current Render configuration.
-SUPABASE_KEY = (
-    os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    or os.getenv("SUPABASE_SECRET_KEY")
-    or os.getenv("SUPABASE_KEY")
-    or ""
-).strip()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 def _supabase_headers():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError(
-            "Supabase server configuration is missing. Set SUPABASE_URL and "
-            "a server-side SUPABASE_SERVICE_ROLE_KEY, SUPABASE_SECRET_KEY, "
-            "or SUPABASE_KEY."
-        )
     return {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -2794,245 +2779,37 @@ async def best_long(ctx, airport: str, *, plane_name: str):
     await _best_route_by_distance(ctx, airport, plane_name, min_dist=3000, max_dist=float("inf"), label="long", emoji="🌍", color=0xff9900)
 
 # =========================
-# ON READY — MODULE LOAD + SLASH COMMAND SYNC
+# ON READY — sync slash commands
 # =========================
-
 _synced = False
-_modules_loaded = False
-
+_agent_loaded = False
 
 @bot.event
 async def on_ready():
-    global _synced, _modules_loaded
+    global _synced, _agent_loaded
 
-    print("=" * 60)
-    print(f"✅ AERION ONLINE AS: {bot.user}")
-    print("=" * 60)
+    print(f"✅ AERION online as {bot.user}")
 
-    # ==========================================
-    # LOAD ALL MODULES ONLY ONCE
-    # ==========================================
-
-    if not _modules_loaded:
-
-        print("\n📦 LOADING AERION MODULES...\n")
-        
-        # ------------------------------------------
-        # MEMBERSHIP MODULE
-        # ------------------------------------------
-
+    if not _agent_loaded:
         try:
-            register_membership_commands(
-                bot,
-                supabase_get,
-                supabase_post,
-                supabase_patch
-            )
-            print("✅ Membership module loaded.")
-
+            setup_agent(bot, supabase_get, supabase_post)
+            register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
+            register_intelligence(bot, groq, supabase_get, check_membership)
+            register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
+            register_governance_suite(bot, supabase_get, supabase_post, supabase_patch, check_membership)
+            register_portal_sync(bot, SUPABASE_URL, SUPABASE_KEY, supabase_get, check_membership)
+            print("🤖 AM4 Agent loaded successfully.")
         except Exception as e:
-            print(
-                f"❌ Membership module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # ------------------------------------------
-        # COMMUNITY SHARE MODULE (NON-MEMBERS TRACKING)
-        # ------------------------------------------
-
-        try:
-            register_community_share_commands(
-                bot,
-                supabase_get,
-                supabase_post,
-                supabase_patch
-            )
-            print("✅ Community share module loaded.")
-
-        except Exception as e:
-            print(
-                f"❌ Community share module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # ------------------------------------------
-        # SUPPORT TOOLS MODULE
-        # ------------------------------------------
-
-        try:
-            setup_support_tools(
-                bot,
-                {
-                    "get_route": get_route,
-                    "get_plane": get_plane,
-                    "get_all_planes": get_all_planes,
-                    "calc": calc,
-                    "find_optimal_ci": find_optimal_ci,
-                    "airport_name": airport_name,
-                    "airport_city_country": airport_city_country,
-                    "airport_autocomplete": airport_autocomplete,
-                    "aircraft_autocomplete": aircraft_autocomplete,
-                    "membership_required": membership_required,
-                }
-            )
-            print("✅ Support tools module loaded.")
-
-        except Exception as e:
-            print(
-                f"❌ Support tools module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # ------------------------------------------
-        # INTELLIGENCE MODULE
-        # ------------------------------------------
-
-        try:
-            register_intelligence(
-                bot,
-                groq,
-                supabase_get,
-                check_membership
-            )
-            print("✅ Intelligence module loaded.")
-
-        except Exception as e:
-            print(
-                f"❌ Intelligence module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # ------------------------------------------
-        # ALLIANCE MODULE
-        # ------------------------------------------
-
-        try:
-            register_alliance(
-                bot,
-                groq,
-                supabase_get,
-                supabase_post,
-                supabase_patch,
-                check_membership
-            )
-            print("✅ Alliance module loaded.")
-
-        except Exception as e:
-            print(
-                f"❌ Alliance module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # ------------------------------------------
-        # GOVERNANCE SUITE
-        # ------------------------------------------
-
-        try:
-            register_governance_suite(
-                bot,
-                supabase_get,
-                supabase_post,
-                supabase_patch,
-                check_membership
-            )
-            print("✅ Governance Suite module loaded.")
-
-        except Exception as e:
-            print(
-                f"❌ Governance Suite module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # ------------------------------------------
-        # PORTAL SYNC
-        # ------------------------------------------
-
-        try:
-            register_portal_sync(
-                bot,
-                SUPABASE_URL,
-                SUPABASE_KEY,
-                supabase_get,
-                check_membership
-            )
-            print("✅ Portal Sync module loaded.")
-
-        except Exception as e:
-            print(
-                f"❌ Portal Sync module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # ------------------------------------------
-        # COMMAND CONTROL MODULE
-        # ------------------------------------------
-
-        try:
-            setup_command_control(
-                bot,
-                supabase_get,
-                supabase_post,
-                supabase_patch
-            )
-            print("✅ Command control module loaded.")
-
-        except Exception as e:
-            print(
-                f"❌ Command control module FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # ------------------------------------------
-        # MARK MODULE LOADING COMPLETE
-        # ------------------------------------------
-
-        _modules_loaded = True
-
-        print("\n🤖 ALL AERION MODULES LOADING COMPLETED.")
-        print("=" * 60)
-
-    # ==========================================
-    # SYNC ALL SLASH-ELIGIBLE COMMANDS
-    # ==========================================
+            print(f"❌ AM4 Agent setup failed: {e}")
+            return
 
     if not _synced:
-
         try:
-
-            print("\n🔄 SYNCING SLASH COMMANDS WITH DISCORD...")
-
-            synced_commands = await sync_all_guild_commands()
-
-            print(
-                f"✅ SUCCESSFULLY SYNCED "
-                f"{len(synced_commands)} SLASH COMMAND(S)."
-            )
-
-            # Display synced command names in Render logs
-            if synced_commands:
-
-                print("\n📋 SYNCED SLASH COMMANDS:")
-
-                for command in synced_commands:
-                    print(f"   • /{command.name}")
-
-            else:
-                print(
-                    "⚠️ WARNING: Discord returned 0 synced commands."
-                )
-
+            synced_cmds = await bot.tree.sync()
+            print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
             _synced = True
-
         except Exception as e:
-
-            print(
-                f"\n❌ SLASH COMMAND SYNC FAILED → "
-                f"{type(e).__name__}: {e}"
-            )
-
-    print("\n" + "=" * 60)
-    print("🚀 AERION STARTUP PROCESS COMPLETED")
-    print("=" * 60)
+            print(f"⚠️ Slash command sync failed: {e}")
             
 # =========================
 # WELCOME + CHAT
@@ -3087,6 +2864,468 @@ async def on_message(message):
             replies = [f"{message.author.mention} I'm not fully sure, but I can try helping. Can you rephrase?", f"{message.author.mention} 🤔 I need a bit more context.", f"{message.author.mention} I don't have a direct match for that, but I'm listening."]
             await message.channel.send(random.choice(replies))
     await bot.process_commands(message)
+
+
+# =========================================================
+# AERION WEB API  (paste this whole block into bot1.py,
+# just ABOVE the "# RUN BOT" section at the bottom)
+#
+# It uses the SAME functions the Discord commands use
+# (calc, get_route, get_plane, scan_routes_from_origin, get_groq_reply...)
+# so Discord and the web UI always give identical numbers.
+# Nothing existing is changed.
+# =========================================================
+import functools as _wfunctools
+import time as _wtime
+from types import SimpleNamespace as _WNS
+from flask import request as _wreq, jsonify as _wjson, send_file as _wsend_file
+
+# --- Web users are not Discord users, so difficulty comes from the UI toggle.
+# calc() reads difficulty from player_settings by user_id, so we keep two
+# fixed "virtual users" (web_easy / web_realism) with the matching mode.
+_WEB_MODE_USERS = {"easy": "web_easy", "realism": "web_realism"}
+_WEB_UI_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aerion_web.html")
+
+
+def _web_setup_modes():
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("CREATE TABLE IF NOT EXISTS player_settings (user_id TEXT PRIMARY KEY, difficulty TEXT)")
+            for m, uid in _WEB_MODE_USERS.items():
+                cur.execute("INSERT OR REPLACE INTO player_settings (user_id, difficulty) VALUES (?, ?)", (uid, m))
+            conn.commit()
+    except Exception as e:
+        print(f"[WEB] mode setup failed: {e}")
+
+_web_setup_modes()
+
+
+def _web_mode(mode):
+    return "easy" if str(mode or "").lower() == "easy" else "realism"
+
+
+def _web_uid(mode):
+    return _WEB_MODE_USERS[_web_mode(mode)]
+
+
+def _web_int(value, default, lo, hi):
+    try:
+        return max(lo, min(hi, int(float(value))))
+    except Exception:
+        return default
+
+
+def _web_arg(name, default=""):
+    return (_wreq.args.get(name) or default).strip()
+
+
+# ---------- rate limit (the API is public, protect Groq + CPU) ----------
+_web_hits = {}
+
+def _web_ip():
+    # Render sits behind Cloudflare, which sets CF-Connecting-IP (not spoofable behind it)
+    cf = _wreq.headers.get("CF-Connecting-IP", "").strip()
+    if cf:
+        return cf
+    fwd = _wreq.headers.get("X-Forwarded-For", "")
+    return (fwd.split(",")[0].strip() if fwd else (_wreq.remote_addr or "?"))
+
+def _web_rate_ok(key, limit, window=60):
+    now = _wtime.time()
+    hits = [t for t in _web_hits.get(key, []) if now - t < window]
+    if len(hits) >= limit:
+        _web_hits[key] = hits
+        return False
+    hits.append(now)
+    _web_hits[key] = hits
+    if len(_web_hits) > 5000:
+        _web_hits.clear()
+    return True
+
+
+# ---------- serializers ----------
+def _web_plane(p):
+    return {
+        "name": p["name"], "shortname": p["shortname"], "capacity": p["capacity"],
+        "range": p["range"], "speed": p["speed"], "fuel": p["fuel"], "co2": p["co2"],
+        "cost": p["cost"], "check_cost": p["check_cost"],
+    }
+
+
+def _web_airport_row(r):
+    return {
+        "iata": r["iata"], "icao": r["icao"], "name": r["fullname"], "city": r["name"],
+        "country": r["country"], "runway_ft": r["rwy"], "hub_cost": r["hub_cost"],
+        "market": r["market"], "runway_codes": r["rwy_codes"],
+    }
+
+
+def _web_airport(iata):
+    """Structured airport info for headers. Same sources as airport_name()."""
+    iata = (iata or "").upper().strip()
+    out = {"iata": iata, "name": iata, "city": "", "country": ""}
+    try:
+        with get_static_db() as conn:
+            row = conn.execute("SELECT * FROM airports WHERE iata = ? LIMIT 1", (iata,)).fetchone()
+        if row:
+            return _web_airport_row(row)
+    except Exception as e:
+        print("[WEB] airport lookup error:", e)
+    try:
+        with get_db() as conn:
+            r = conn.execute("SELECT f_city, f_country, f_name FROM routes WHERE f_iata = ? LIMIT 1", (iata,)).fetchone()
+            if not r:
+                r = conn.execute("SELECT t_city, t_country, t_name FROM routes WHERE t_iata = ? LIMIT 1", (iata,)).fetchone()
+        if r:
+            out.update(city=r[0], country=r[1], name=r[2])
+    except Exception as e:
+        print("[WEB] airport fallback error:", e)
+    return out
+
+
+# ---------- engines (mirror the Discord commands, but return data) ----------
+def _web_analyze(frm, to, plane_name, ci, mode):
+    uid = _web_uid(mode)
+    frm, to = frm.upper().strip(), to.upper().strip()
+    plane = get_plane(plane_name)
+    if not plane:
+        return None, f"Aircraft '{plane_name}' not found.", 404
+    route_data = get_route(frm, to)
+    if not route_data:
+        return None, "Route not found in database. Check the IATA codes.", 404
+
+    dist = float(route_data["distance"])
+    rng = float(plane["range"])
+
+    # Best stopover (same logic as !route): only when the direct leg is out of range
+    stop = None
+    if dist > rng:
+        best_combined = -1
+        with get_db() as conn:
+            cands = conn.execute(
+                "SELECT t_iata, distance, dem_y, dem_j, dem_f FROM routes "
+                "WHERE f_iata = ? AND CAST(distance AS REAL) <= ? LIMIT 200",
+                (frm, rng),
+            ).fetchall()
+        for cand_iata, cand_dist, cy, cj, cf in cands:
+            try:
+                if to_int(cy) + to_int(cj) + to_int(cf) == 0:
+                    continue
+                leg2 = get_route(cand_iata, to)
+                if not leg2 or leg2["distance"] > rng:
+                    continue
+                leg1 = {"distance": to_float(cand_dist), "y": to_int(cy), "j": to_int(cj), "f": to_int(cf), "cargo": 0}
+                r1 = calc(leg1, plane, uid, cost_index=ci)
+                r2 = calc(leg2, plane, uid, cost_index=ci)
+            except Exception:
+                continue
+            combined = r1["profit_day"] + r2["profit_day"]
+            if combined > best_combined:
+                best_combined = combined
+                stop = {"airport": _web_airport(cand_iata), "leg1": r1, "leg2": r2, "combined_profit_day": combined}
+
+    result = calc(route_data, plane, uid, cost_index=ci)
+
+    # Break-even (same as bot)
+    cost = plane.get("cost", 0)
+    breakeven = None
+    if cost and result["profit_day"] > 0:
+        breakeven = {
+            "payback_days": round(cost / result["profit_day"]),
+            "annual_roi": round(result["profit_day"] * 365 / cost * 100),
+        }
+
+    # Fleet saturation (same as bot)
+    total_demand = route_data["y"] + route_data["j"] + route_data["f"]
+    cap = plane.get("capacity", 0)
+    demand_trips = max(1, -(-total_demand // cap)) if cap else 1
+    tech_max = max(1, int(24 / result["time"])) if result["time"] else 1
+    fleet = {
+        "demand_trips": demand_trips,
+        "technical_max": tech_max,
+        "aircraft_needed": (-(-demand_trips // tech_max)) if demand_trips > tech_max else 1,
+    }
+
+    # Cost-index sweep (same idea as find_optimal_ci, but the UI gets the whole curve)
+    curve = []
+    for c in range(0, 201, 10):
+        r = calc(route_data, plane, uid, cost_index=c)
+        curve.append({"ci": c, "profit_day": r["profit_day"], "contribution_day": r["contribution_day"],
+                      "trips": r["trips"], "margin": r["ci"]})
+    best_profit = max(curve, key=lambda x: x["profit_day"])
+    best_contrib = max(curve, key=lambda x: x["contribution_day"])
+
+    try:
+        alts = [
+            {"iata": d, "place": airport_city_country(d), "profit_day": p}
+            for d, p in get_top_alternative_routes(frm, plane, uid, exclude_dest=to, limit=5)
+        ]
+    except Exception as e:
+        print("[WEB] alternatives error:", e)
+        alts = []
+
+    return {
+        "mode": _web_mode(mode),
+        "frm": _web_airport(frm),
+        "to": _web_airport(to),
+        "plane": _web_plane(plane),
+        "distance": int(dist),
+        "demand": {"y": route_data["y"], "j": route_data["j"], "f": route_data["f"]},
+        "out_of_range": dist > rng,
+        "result": result,
+        "stopover": stop,
+        "breakeven": breakeven,
+        "fleet": fleet,
+        "ci_curve": curve,
+        "optimal": {"profit": best_profit, "contribution": best_contrib},
+        "alternatives": alts,
+    }, None, 200
+
+
+def _web_best_routes(airport_code, plane_name, mode, kind, limit):
+    uid = _web_uid(mode)
+    airport_code = airport_code.upper().strip()
+    plane = get_plane(plane_name)
+    if not plane:
+        return None, f"Aircraft '{plane_name}' not found.", 404
+    # scan_routes_from_origin only needs ctx.author.id -> tiny stand-in object
+    fake_ctx = _WNS(author=_WNS(id=uid))
+    results, total = scan_routes_from_origin(fake_ctx, airport_code, plane)
+    if total == 0:
+        return None, f"No routes found from {airport_code}.", 404
+    if kind == "short":
+        results = [r for r in results if r[1] <= 3000]
+    elif kind == "long":
+        results = [r for r in results if r[1] > 3000]
+    if not results:
+        return None, f"No profitable routes from {airport_code} with {plane['name']} for this filter.", 404
+    top = [
+        {"iata": d, "place": airport_city_country(d), "distance": dist, "profit_day": profit, "trips": trips, "margin": ci}
+        for d, dist, profit, trips, ci in results[:limit]
+    ]
+    points = [{"iata": d, "d": dist, "p": profit} for d, dist, profit, trips, ci in results]
+    return {
+        "mode": _web_mode(mode),
+        "airport": _web_airport(airport_code),
+        "plane": _web_plane(plane),
+        "kind": kind,
+        "total_routes": total,
+        "profitable": len(results),
+        "top": top,
+        "points": points,
+    }, None, 200
+
+
+def _web_best_planes(frm, to, mode, limit):
+    uid = _web_uid(mode)
+    route_data = get_route(frm, to)
+    if not route_data:
+        return None, "Route not found in database. Check the IATA codes.", 404
+    rows = []
+    for p in get_all_planes():
+        try:
+            if float(route_data["distance"]) > float(p["range"]):
+                continue
+            c = calc(route_data, p, uid)
+            score = c["profit_day"] + float(p["speed"]) * 10 - float(p["fuel"]) * 100  # same score as !best
+            rows.append((score, p, c))
+        except Exception:
+            continue
+    if not rows:
+        return None, "No suitable aircraft found for this distance.", 404
+    rows.sort(key=lambda x: x[0], reverse=True)
+    return {
+        "mode": _web_mode(mode),
+        "frm": _web_airport(frm),
+        "to": _web_airport(to),
+        "distance": int(route_data["distance"]),
+        "candidates": len(rows),
+        "planes": [{"plane": _web_plane(p), "result": c} for score, p, c in rows[:limit]],
+    }, None, 200
+
+
+def _web_compare(a_name, b_name, frm, to, mode):
+    uid = _web_uid(mode)
+    p1, p2 = get_plane(a_name), get_plane(b_name)
+    if not p1 or not p2:
+        return None, "One of the aircraft was not found.", 404
+    if frm and to:
+        route_data = get_route(frm, to)
+        if not route_data:
+            return None, "Route not found in database. Check the IATA codes.", 404
+        basis = {"type": "route", "label": f"{frm.upper()} → {to.upper()}"}
+    else:
+        # same benchmark route the !compare command uses
+        route_data = {"distance": 5000, "y": 300, "j": 50, "f": 10, "cargo": 10000}
+        basis = {"type": "benchmark", "label": "Benchmark route (5,000 km · Y300 J50 F10)"}
+    basis["distance"] = int(route_data["distance"])
+    return {
+        "mode": _web_mode(mode),
+        "basis": basis,
+        "a": {"plane": _web_plane(p1), "result": calc(route_data, p1, uid)},
+        "b": {"plane": _web_plane(p2), "result": calc(route_data, p2, uid)},
+    }, None, 200
+
+
+def _web_airport_search(q):
+    raw = q.strip()
+    code = raw.upper()
+    city = resolve_city_alias(raw)
+    with get_static_db() as conn:
+        row = conn.execute("SELECT * FROM airports WHERE iata = ? OR icao = ? LIMIT 1", (code, code)).fetchone()
+        rows = [row] if row else []
+        if not rows:
+            rows = conn.execute(
+                "SELECT * FROM airports WHERE LOWER(name) LIKE ? OR LOWER(fullname) LIKE ? "
+                "ORDER BY market DESC LIMIT 5", (f"%{city}%", f"%{city}%")
+            ).fetchall()
+    return [_web_airport_row(r) for r in rows]
+
+
+# ---------- Flask plumbing ----------
+def _web_api(fn):
+    @_wfunctools.wraps(fn)
+    def wrapper(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        except Exception as e:
+            print(f"[WEB] {fn.__name__} error: {e}")
+            return _wjson(error="Server error while processing this request."), 500
+    return wrapper
+
+
+@app.before_request
+def _web_guard():
+    if _wreq.path.startswith("/api/") and _wreq.method != "OPTIONS":
+        if not _web_rate_ok(_web_ip() + ":api", 120):
+            return _wjson(error="Too many requests. Slow down a little."), 429
+
+
+@app.after_request
+def _web_cors(resp):
+    # Lets the same HTML work from another origin too (GitHub Pages, Capacitor app...)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return resp
+
+
+def _web_out(payload, err, code):
+    if err:
+        return _wjson(error=err), code
+    return _wjson(payload)
+
+
+@app.route("/app")
+def web_ui():
+    if not os.path.exists(_WEB_UI_FILE):
+        return "aerion_web.html not found next to bot1.py", 404
+    return _wsend_file(_WEB_UI_FILE, mimetype="text/html", max_age=0)
+
+
+@app.route("/api/health")
+@_web_api
+def web_health():
+    return _wjson(ok=True, bot=(str(bot.user) if bot.user else None), aircraft=len(get_all_planes()))
+
+
+@app.route("/api/suggest/airports")
+@_web_api
+def web_suggest_airports():
+    q = _web_arg("q").lower()
+    items = []
+    with get_static_db() as conn:
+        if q:
+            rows = conn.execute(
+                "SELECT iata, name, fullname, country FROM airports "
+                "WHERE LOWER(iata) LIKE ? OR LOWER(name) LIKE ? OR LOWER(fullname) LIKE ? "
+                "ORDER BY market DESC LIMIT 12", (f"%{q}%", f"%{q}%", f"%{q}%")
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT iata, name, fullname, country FROM airports ORDER BY market DESC LIMIT 12").fetchall()
+    for r in rows:
+        items.append({"iata": r["iata"], "city": r["name"], "name": r["fullname"], "country": r["country"]})
+    return _wjson(items=items)
+
+
+@app.route("/api/aircraft")
+@_web_api
+def web_aircraft():
+    return _wjson(items=[_web_plane(p) for p in get_all_planes()])
+
+
+@app.route("/api/airport")
+@_web_api
+def web_airport_lookup():
+    q = _web_arg("q")
+    if not q:
+        return _wjson(error="Type an IATA/ICAO code or a city name."), 400
+    items = _web_airport_search(q)
+    if not items:
+        return _wjson(error=f"No airport found matching '{q}'."), 404
+    return _wjson(items=items)
+
+
+@app.route("/api/route")
+@_web_api
+def web_route():
+    frm, to, plane = _web_arg("frm"), _web_arg("to"), _web_arg("plane")
+    if not (frm and to and plane):
+        return _wjson(error="frm, to and plane are required."), 400
+    ci = _web_int(_web_arg("ci", "200"), 200, 0, 200)
+    return _web_out(*_web_analyze(frm, to, plane, ci, _web_arg("mode")))
+
+
+@app.route("/api/best-routes")
+@_web_api
+def web_best_routes():
+    ap, plane = _web_arg("airport"), _web_arg("plane")
+    if not (ap and plane):
+        return _wjson(error="airport and plane are required."), 400
+    kind = _web_arg("kind", "all").lower()
+    kind = kind if kind in ("all", "short", "long") else "all"
+    limit = _web_int(_web_arg("limit", "10"), 10, 1, 25)
+    return _web_out(*_web_best_routes(ap, plane, _web_arg("mode"), kind, limit))
+
+
+@app.route("/api/best-plane")
+@_web_api
+def web_best_plane():
+    frm, to = _web_arg("frm"), _web_arg("to")
+    if not (frm and to):
+        return _wjson(error="frm and to are required."), 400
+    limit = _web_int(_web_arg("limit", "8"), 8, 1, 20)
+    return _web_out(*_web_best_planes(frm, to, _web_arg("mode"), limit))
+
+
+@app.route("/api/compare")
+@_web_api
+def web_compare():
+    a, b = _web_arg("a"), _web_arg("b")
+    if not (a and b):
+        return _wjson(error="a and b are required."), 400
+    return _web_out(*_web_compare(a, b, _web_arg("frm"), _web_arg("to"), _web_arg("mode")))
+
+
+@app.route("/api/chat", methods=["POST"])
+@_web_api
+def web_chat():
+    data = _wreq.get_json(silent=True) or {}
+    msg = str(data.get("message", "")).strip()[:500]
+    sid = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("sid", "")))[:40] or "anon"
+    if not msg:
+        return _wjson(error="Type a message first."), 400
+    if not _web_rate_ok(_web_ip() + ":chat", 12):
+        return _wjson(error="Chat limit reached (12 messages per minute). Try again shortly."), 429
+    if not _web_rate_ok("chat:global", 60):      # protects the Groq quota even if IPs are spoofed
+        return _wjson(error="AERION is busy right now. Try again in a minute."), 429
+    if len(_conversation_memory) > 2000:      # keep memory bounded on a public endpoint
+        _conversation_memory.clear()
+    reply = asyncio.run(get_groq_reply(f"web:{sid}", msg))
+    if not reply:
+        return _wjson(error="AERION could not answer right now. Try again in a moment."), 502
+    return _wjson(reply=reply)
 
 
 # =========================
