@@ -27,7 +27,6 @@ from openai import OpenAI
 import pytz
 
 from export_view import ExportView
-from am4_agent import setup_agent
 # =========================================================
 # AERION MODULES — Membership + Intelligence
 # =========================================================
