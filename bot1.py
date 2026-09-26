@@ -3352,7 +3352,7 @@ def admin_system_status():
         routes_n = airports_n = 0
     aircraft_n = len(get_all_planes())
     try:
-        db_loaded_at = datetime.utcfromtimestamp(os.path.getmtime(STATIC_DB_FILE)).isoformat() + "Z"
+        db_loaded_at = datetime.fromtimestamp(os.path.getmtime(STATIC_DB_FILE), tz=timezone.utc).isoformat().replace("+00:00", "Z")
     except Exception:
         db_loaded_at = None
     sb_ok, sb_ms = True, 0
@@ -3370,11 +3370,236 @@ def admin_system_status():
     return _wjson(
         bot={"online": bot_online, "name": str(bot.user) if bot.user else None, "latency_ms": latency_ms, "uptime_s": uptime_s},
         discord={"guilds": guild_count},
-        api={"version": "1.0", "server_id": os.getenv("SERVER_ID", "aerion"), "started_at": datetime.utcfromtimestamp(_ADMIN_START_TIME).isoformat() + "Z"},
+        api={"version": "1.0", "server_id": os.getenv("SERVER_ID", "aerion"), "started_at": datetime.fromtimestamp(_ADMIN_START_TIME, tz=timezone.utc).isoformat().replace("+00:00", "Z")},
         db={"version": os.path.basename(STATIC_DB_FILE), "loaded_at": db_loaded_at, "routes": routes_n, "airports": airports_n, "aircraft": aircraft_n},
         supabase={"ok": sb_ok, "latency_ms": sb_ms},
         groq={"ok": bool(os.getenv("GROQ_API_KEY")), "tokens_today": 0, "budget": 0},
         render={"memory_mb": mem_mb, "memory_limit_mb": int(os.getenv("RENDER_MEMORY_LIMIT_MB", "512")), "cpu_pct": 0, "plan": os.getenv("RENDER_PLAN", "free")},
+    )
+
+
+# =========================================================
+# ADMIN PANEL — CONFIG (Overview alerts + Save/publish +
+# Content/maintenance banner) and STATS (Overview tab).
+# Still no auth check here — that stays exactly as it is.
+# =========================================================
+import threading
+
+# ---------- config: stored in a local JSON file, versioned, with history ----------
+# NOTE: on Render's free tier this file lives on the instance disk and
+# survives restarts, but NOT a fresh redeploy. Good enough for now.
+_ADMIN_CFG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aerion_admin_config.json")
+_ADMIN_CFG_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aerion_admin_config_history.json")
+_ADMIN_DEFAULT_CFG = {
+    "server_id": os.getenv("SERVER_ID", "aerion"),
+    "web": {"enabled": True, "require_login": False},
+    "maintenance": {"on": False, "message": "", "eta": None},
+    "banner": {"on": False, "text": "", "kind": "info"},
+    "modules": {m: {"enabled": True} for m in ("route", "best", "plane", "compare", "fleet", "airport", "ask")},
+}
+
+
+def _admin_load_cfg():
+    if os.path.exists(_ADMIN_CFG_FILE):
+        try:
+            with open(_ADMIN_CFG_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"version": 1, "config": json.loads(json.dumps(_ADMIN_DEFAULT_CFG))}
+
+
+def _admin_save_cfg(state):
+    with open(_ADMIN_CFG_FILE, "w") as f:
+        json.dump(state, f)
+
+
+def _admin_load_history():
+    if os.path.exists(_ADMIN_CFG_HISTORY_FILE):
+        try:
+            with open(_ADMIN_CFG_HISTORY_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+
+def _admin_save_history(hist):
+    with open(_ADMIN_CFG_HISTORY_FILE, "w") as f:
+        json.dump(hist[-50:], f)
+
+
+def _admin_setp(obj, path, value):
+    parts = path.split(".")
+    for p in parts[:-1]:
+        obj = obj.setdefault(p, {})
+    obj[parts[-1]] = value
+
+
+@app.route("/admin/api/config")
+@_web_api
+def admin_get_config():
+    state = _admin_load_cfg()
+    return _wjson(config=state["config"], version=state["version"])
+
+
+@app.route("/admin/api/config", methods=["PUT"])
+@_web_api
+def admin_put_config():
+    data = _wreq.get_json(silent=True) or {}
+    state = _admin_load_cfg()
+    try:
+        base_version = int(data.get("base_version", -1))
+    except Exception:
+        base_version = -1
+    if base_version != state["version"]:
+        return _wjson(error="Someone else changed the config first. Reload and try again.", code="conflict"), 409
+    changes = data.get("changes") or []
+    if not changes:
+        return _wjson(error="No changes given."), 400
+    before = json.loads(json.dumps(state["config"]))
+    for c in changes:
+        _admin_setp(state["config"], c["path"], c["value"])
+    state["version"] += 1
+    _admin_save_cfg(state)
+    hist = _admin_load_history()
+    hist.append({
+        "id": os.urandom(6).hex(),
+        "version": state["version"], "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "by": data.get("note_by") or "admin", "note": data.get("note", ""), "changes": changes, "before": before,
+    })
+    _admin_save_history(hist)
+    return _wjson(config=state["config"], version=state["version"])
+
+
+@app.route("/admin/api/config/history")
+@_web_api
+def admin_config_history():
+    hist = _admin_load_history()
+    items = [{"id": h["id"], "version": h["version"], "at": h["at"], "by": h.get("by"), "note": h.get("note", ""), "changes": h.get("changes", [])} for h in reversed(hist)]
+    return _wjson(items=items)
+
+
+@app.route("/admin/api/config/rollback", methods=["POST"])
+@_web_api
+def admin_config_rollback():
+    data = _wreq.get_json(silent=True) or {}
+    hist = _admin_load_history()
+    entry = next((h for h in hist if h["id"] == data.get("id")), None)
+    if not entry:
+        return _wjson(error="That history entry was not found."), 404
+    state = _admin_load_cfg()
+    state["config"] = entry["before"]
+    state["version"] += 1
+    _admin_save_cfg(state)
+    hist.append({
+        "id": os.urandom(6).hex(), "version": state["version"], "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "by": "admin", "note": f"Rolled back to before v{entry['version']}", "changes": [], "before": entry["before"],
+    })
+    _admin_save_history(hist)
+    return _wjson(config=state["config"], version=state["version"])
+
+
+# ---------- lightweight real traffic tracking, for the Overview tab ----------
+# Starts collecting the moment this deploys — there's no historical data
+# from before, so Overview will look sparse until real traffic comes in.
+_ANALYTICS_LOCK = threading.Lock()
+_ANALYTICS = []
+_ANALYTICS_MAX = 20000
+_ANALYTICS_MODULE_BY_PATH = {
+    "/api/route": "route", "/api/best-routes": "best", "/api/best-plane": "plane",
+    "/api/compare": "compare", "/api/aircraft": "fleet", "/api/airport": "airport", "/api/chat": "ask",
+}
+
+
+@app.before_request
+def _admin_analytics_start():
+    _wreq._t0 = _wtime.time()
+
+
+@app.after_request
+def _admin_analytics_record(resp):
+    try:
+        p = _wreq.path
+        module = _ANALYTICS_MODULE_BY_PATH.get(p)
+        if module:
+            ms = round((_wtime.time() - getattr(_wreq, "_t0", _wtime.time())) * 1000)
+            route_key = None
+            if p == "/api/route":
+                frm, to = _wreq.args.get("frm", "").upper(), _wreq.args.get("to", "").upper()
+                if frm and to:
+                    route_key = f"{frm}-{to}"
+            plane_key = _wreq.args.get("plane") if p in ("/api/route", "/api/best-routes") else None
+            rec = {"t": _wtime.time(), "module": module, "ip": _web_ip(), "status": resp.status_code, "ms": ms, "route": route_key, "plane": plane_key}
+            with _ANALYTICS_LOCK:
+                _ANALYTICS.append(rec)
+                if len(_ANALYTICS) > _ANALYTICS_MAX:
+                    del _ANALYTICS[: len(_ANALYTICS) - _ANALYTICS_MAX]
+    except Exception:
+        pass
+    return resp
+
+
+_RANGE_SECONDS = {"1h": 3600, "24h": 86400, "7d": 7 * 86400}
+_RANGE_BUCKETS = {"1h": (12, 300), "24h": (24, 3600), "7d": (7, 86400)}
+
+
+@app.route("/admin/api/stats")
+@_web_api
+def admin_stats():
+    rng = _wreq.args.get("range", "24h")
+    if rng not in _RANGE_SECONDS:
+        rng = "24h"
+    window = _RANGE_SECONDS[rng]
+    now = _wtime.time()
+    with _ANALYTICS_LOCK:
+        snapshot = list(_ANALYTICS)
+    cur = [r for r in snapshot if now - r["t"] <= window]
+    prev = [r for r in snapshot if window < now - r["t"] <= 2 * window]
+    errors = [r for r in cur if r["status"] >= 400]
+    lat = sorted(r["ms"] for r in cur) or [0]
+
+    def pct(p):
+        i = min(len(lat) - 1, int(len(lat) * p))
+        return lat[i]
+
+    n_buckets, bucket_s = _RANGE_BUCKETS[rng]
+    buckets_req, buckets_err, labels = [0] * n_buckets, [0] * n_buckets, []
+    for i in range(n_buckets):
+        bucket_start = now - window + i * bucket_s
+        fmt = "%a" if rng == "7d" else "%H:%M"
+        labels.append(datetime.fromtimestamp(bucket_start, tz=timezone.utc).strftime(fmt))
+    for r in cur:
+        idx = min(n_buckets - 1, max(0, int((r["t"] - (now - window)) / bucket_s)))
+        buckets_req[idx] += 1
+        if r["status"] >= 400:
+            buckets_err[idx] += 1
+    by_module = {}
+    for r in cur:
+        by_module[r["module"]] = by_module.get(r["module"], 0) + 1
+    by_module_list = sorted(({"module": k, "count": v} for k, v in by_module.items()), key=lambda x: -x["count"]) or [{"module": "route", "count": 0}]
+    top_routes, top_planes = {}, {}
+    for r in cur:
+        if r.get("route"):
+            top_routes[r["route"]] = top_routes.get(r["route"], 0) + 1
+        if r.get("plane"):
+            top_planes[r["plane"]] = top_planes.get(r["plane"], 0) + 1
+    top_routes_list = sorted(({"route": k, "count": v} for k, v in top_routes.items()), key=lambda x: -x["count"])[:10] or [{"route": "—", "count": 0}]
+    top_planes_list = sorted(({"plane": k, "count": v} for k, v in top_planes.items()), key=lambda x: -x["count"])[:10] or [{"plane": "—", "count": 0}]
+    unique_ips = len({r["ip"] for r in cur})
+    active_ips = len({r["ip"] for r in cur if now - r["t"] <= 300})
+    quota_hits = len([r for r in cur if r["status"] == 429])
+    return _wjson(
+        kpis={
+            "requests": len(cur), "requests_prev": len(prev),
+            "unique_users": unique_ips, "members_active": 0, "guests_active": unique_ips,
+            "error_rate": round(len(errors) / len(cur) * 100, 1) if cur else 0,
+            "p50": pct(0.5), "p95": pct(0.95), "active_sessions": active_ips, "quota_hits": quota_hits,
+            "groq_tokens": 0, "groq_budget": int(os.getenv("GROQ_DAILY_BUDGET", "100000")),
+        },
+        series={"labels": labels, "requests": buckets_req, "errors": buckets_err},
+        by_module=by_module_list, by_tier=[{"tier": "Guest", "count": len(cur)}],
+        top_routes=top_routes_list, top_planes=top_planes_list,
     )
 
 
