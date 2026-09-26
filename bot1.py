@@ -3385,11 +3385,7 @@ def admin_system_status():
 # =========================================================
 import threading
 
-# ---------- config: stored in a local JSON file, versioned, with history ----------
-# NOTE: on Render's free tier this file lives on the instance disk and
-# survives restarts, but NOT a fresh redeploy. Good enough for now.
-_ADMIN_CFG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aerion_admin_config.json")
-_ADMIN_CFG_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aerion_admin_config_history.json")
+# ---------- config: stored in Supabase (2 tables — see chat for the exact schema), versioned, with history ----------
 _ADMIN_DEFAULT_CFG = {
     "server_id": os.getenv("SERVER_ID", "aerion"),
     "web": {"enabled": True, "require_login": False},
@@ -3399,34 +3395,56 @@ _ADMIN_DEFAULT_CFG = {
 }
 
 
+def _cfg_supa_get(table, params):
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=_supabase_headers(), params=params, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def _cfg_supa_upsert(table, data, on_conflict):
+    headers = {**_supabase_headers(), "Prefer": "resolution=merge-duplicates,return=representation"}
+    r = requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=headers, params={"on_conflict": on_conflict}, json=data, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def _cfg_supa_insert(table, data):
+    headers = {**_supabase_headers(), "Prefer": "return=representation"}
+    r = requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=headers, json=data, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
 def _admin_load_cfg():
-    if os.path.exists(_ADMIN_CFG_FILE):
-        try:
-            with open(_ADMIN_CFG_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
+    try:
+        rows = _cfg_supa_get("aerion_config", {"id": "eq.1", "select": "*"})
+        if rows:
+            return {"version": rows[0]["version"], "config": rows[0]["config"]}
+    except Exception as e:
+        print(f"[ADMIN] config load failed, using defaults: {e}")
     return {"version": 1, "config": json.loads(json.dumps(_ADMIN_DEFAULT_CFG))}
 
 
 def _admin_save_cfg(state):
-    with open(_ADMIN_CFG_FILE, "w") as f:
-        json.dump(state, f)
+    _cfg_supa_upsert("aerion_config", {
+        "id": 1, "version": state["version"], "config": state["config"],
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }, on_conflict="id")
 
 
 def _admin_load_history():
-    if os.path.exists(_ADMIN_CFG_HISTORY_FILE):
-        try:
-            with open(_ADMIN_CFG_HISTORY_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return []
+    try:
+        return _cfg_supa_get("aerion_config_history", {"select": "*", "order": "version.desc", "limit": 50})
+    except Exception as e:
+        print(f"[ADMIN] config history load failed: {e}")
+        return []
 
 
-def _admin_save_history(hist):
-    with open(_ADMIN_CFG_HISTORY_FILE, "w") as f:
-        json.dump(hist[-50:], f)
+def _admin_append_history(entry):
+    try:
+        _cfg_supa_insert("aerion_config_history", entry)
+    except Exception as e:
+        print(f"[ADMIN] config history save failed: {e}")
 
 
 def _admin_setp(obj, path, value):
@@ -3462,13 +3480,10 @@ def admin_put_config():
         _admin_setp(state["config"], c["path"], c["value"])
     state["version"] += 1
     _admin_save_cfg(state)
-    hist = _admin_load_history()
-    hist.append({
-        "id": os.urandom(6).hex(),
-        "version": state["version"], "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    _admin_append_history({
+        "id": os.urandom(6).hex(), "version": state["version"], "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "by": data.get("note_by") or "admin", "note": data.get("note", ""), "changes": changes, "before": before,
     })
-    _admin_save_history(hist)
     return _wjson(config=state["config"], version=state["version"])
 
 
@@ -3476,7 +3491,7 @@ def admin_put_config():
 @_web_api
 def admin_config_history():
     hist = _admin_load_history()
-    items = [{"id": h["id"], "version": h["version"], "at": h["at"], "by": h.get("by"), "note": h.get("note", ""), "changes": h.get("changes", [])} for h in reversed(hist)]
+    items = [{"id": h["id"], "version": h["version"], "at": h["at"], "by": h.get("by"), "note": h.get("note", ""), "changes": h.get("changes", [])} for h in hist]
     return _wjson(items=items)
 
 
@@ -3492,11 +3507,10 @@ def admin_config_rollback():
     state["config"] = entry["before"]
     state["version"] += 1
     _admin_save_cfg(state)
-    hist.append({
+    _admin_append_history({
         "id": os.urandom(6).hex(), "version": state["version"], "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "by": "admin", "note": f"Rolled back to before v{entry['version']}", "changes": [], "before": entry["before"],
     })
-    _admin_save_history(hist)
     return _wjson(config=state["config"], version=state["version"])
 
 
