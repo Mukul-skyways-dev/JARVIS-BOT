@@ -3327,6 +3327,57 @@ def web_chat():
     return _wjson(reply=reply)
 
 
+# =========================================================
+# ADMIN PANEL — SYSTEM STATUS ONLY
+# (Just the one route the admin panel was missing, so its
+# "Online/Offline" badge and System page work. Nothing about
+# login/auth is touched here — that stays exactly as it is.)
+# =========================================================
+_ADMIN_START_TIME = _wtime.time()
+
+
+@app.route("/admin/api/system")
+@_web_api
+def admin_system_status():
+    bot_online = bot.is_ready()
+    lat = bot.latency
+    latency_ms = round(lat * 1000) if (lat is not None and lat == lat) else 0  # nan-safe
+    uptime_s = int(_wtime.time() - _ADMIN_START_TIME)
+    guild_count = len(bot.guilds) if bot_online else 0
+    try:
+        with get_static_db() as conn:
+            routes_n = conn.execute("SELECT COUNT(*) FROM routes").fetchone()[0]
+            airports_n = conn.execute("SELECT COUNT(*) FROM airports").fetchone()[0]
+    except Exception:
+        routes_n = airports_n = 0
+    aircraft_n = len(get_all_planes())
+    try:
+        db_loaded_at = datetime.utcfromtimestamp(os.path.getmtime(STATIC_DB_FILE)).isoformat() + "Z"
+    except Exception:
+        db_loaded_at = None
+    sb_ok, sb_ms = True, 0
+    try:
+        t0 = _wtime.time()
+        requests.get(f"{SUPABASE_URL}/rest/v1/admins", headers=_supabase_headers(), params={"select": "id", "limit": 1}, timeout=5).raise_for_status()
+        sb_ms = round((_wtime.time() - t0) * 1000)
+    except Exception:
+        sb_ok = False
+    try:
+        import resource
+        mem_mb = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
+    except Exception:
+        mem_mb = 0
+    return _wjson(
+        bot={"online": bot_online, "name": str(bot.user) if bot.user else None, "latency_ms": latency_ms, "uptime_s": uptime_s},
+        discord={"guilds": guild_count},
+        api={"version": "1.0", "server_id": os.getenv("SERVER_ID", "aerion"), "started_at": datetime.utcfromtimestamp(_ADMIN_START_TIME).isoformat() + "Z"},
+        db={"version": os.path.basename(STATIC_DB_FILE), "loaded_at": db_loaded_at, "routes": routes_n, "airports": airports_n, "aircraft": aircraft_n},
+        supabase={"ok": sb_ok, "latency_ms": sb_ms},
+        groq={"ok": bool(os.getenv("GROQ_API_KEY")), "tokens_today": 0, "budget": 0},
+        render={"memory_mb": mem_mb, "memory_limit_mb": int(os.getenv("RENDER_MEMORY_LIMIT_MB", "512")), "cpu_pct": 0, "plan": os.getenv("RENDER_PLAN", "free")},
+    )
+
+
 # =========================
 # RUN BOT
 # =========================
