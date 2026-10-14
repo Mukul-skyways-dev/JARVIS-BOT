@@ -27,7 +27,6 @@ from openai import OpenAI
 import pytz
 
 from export_view import ExportView
-from am4_agent import setup_agent
 # =========================================================
 # AERION MODULES — Membership + Intelligence
 # =========================================================
@@ -112,6 +111,7 @@ GROQ_SYSTEM_PROMPT = (
     "you are developed by Mukul khandelwal known as skyways in the group."
     "you are developed at LOOP LOGIC GEN X2B CODEBASE."
     "you are backed with LOOP LOGIC T100 XC3702 1TB GIGA6 SERVER."
+    "you are on V3 ALPHA version currently and your developer is planning your new update V4 HORIZON."
 )
 
 GROQ_TOOLS = [
