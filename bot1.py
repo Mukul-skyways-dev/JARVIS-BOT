@@ -24,7 +24,14 @@ import re
 import os
 import requests
 from openai import OpenAI
-import pytz
+try:
+    import pytz
+except Exception:
+    import datetime as _dt
+    class _PytzFallback:
+        def timezone(self, name):
+            return _dt.timezone(_dt.timedelta(hours=5, minutes=30))
+    pytz = _PytzFallback()
 
 from export_view import ExportView
 # =========================================================
@@ -85,17 +92,21 @@ groq = OpenAI(
 # restart — not persisted to disk). Each entry is a list of
 # {"role": ..., "content": ...} dicts, oldest first.
 _conversation_memory = {}
+import threading
+_conv_lock = threading.Lock()
 MEMORY_TURNS = 6  # keep last 6 user+assistant messages (~3 exchanges)
 
 def _get_history(user_id):
-    return _conversation_memory.setdefault(user_id, [])
+    with _conv_lock:
+        return list(_conversation_memory.setdefault(user_id, []))
 
 def _remember(user_id, user_message, assistant_reply):
-    history = _get_history(user_id)
-    history.append({"role": "user", "content": user_message})
-    history.append({"role": "assistant", "content": assistant_reply})
-    if len(history) > MEMORY_TURNS:
-        del history[:-MEMORY_TURNS]
+    with _conv_lock:
+        history = _conversation_memory.setdefault(user_id, [])
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": assistant_reply})
+        if len(history) > MEMORY_TURNS:
+            del history[:-MEMORY_TURNS]
 
 GROQ_SYSTEM_PROMPT = (
     "You are AERION, a Discord bot for an AM4 (Airline Manager 4) game "
@@ -271,7 +282,7 @@ bot = commands.Bot(command_prefix="!", intents=intents, max_messages=None)
 # ========================
 # Share Module import 
 # ========================
-exec(open("share_module.py").read())
+exec(open("share_module.py", encoding="utf-8").read())
 
 # =========================
 # DATABASE AUTO DOWNLOAD
@@ -1060,12 +1071,16 @@ async def supabase_get(table, params):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     resp = await asyncio.to_thread(requests.get, url, headers=_supabase_headers(), params=params, timeout=10)
     resp.raise_for_status()
-    return resp.json()
+    if resp.status_code == 204 or not resp.text.strip():
+        return []
+    try:
+        return resp.json()
+    except Exception:
+        return []
 
 async def supabase_patch(table, params, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-    # Prefer: return=minimal → Supabase returns 204 No Content (no JSON body)
-    patch_headers = {**_supabase_headers(), "Prefer": "return=minimal"}
+    patch_headers = {**_supabase_headers(), "Prefer": "return=representation"}
     resp = await asyncio.to_thread(
         requests.patch,
         url,
@@ -1075,13 +1090,25 @@ async def supabase_patch(table, params, data):
         timeout=10
     )
     resp.raise_for_status()
-    return None   # always None — 204 No Content expected
+    if resp.status_code == 204 or not resp.text.strip():
+        return []
+    try:
+        data = resp.json()
+        return data if isinstance(data, list) else [data]
+    except Exception:
+        return []
 
 async def supabase_post(table, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-    resp = await asyncio.to_thread(requests.post, url, headers=_supabase_headers(), json=data, timeout=10)
+    post_headers = {**_supabase_headers(), "Prefer": "return=representation"}
+    resp = await asyncio.to_thread(requests.post, url, headers=post_headers, json=data, timeout=10)
     resp.raise_for_status()
-    return resp.json()
+    if resp.status_code in (200, 201, 204) and not resp.text.strip():
+        return None
+    try:
+        return resp.json()
+    except Exception:
+        return None
 
 # Which commands earn AERO points, and how many. Trivial commands
 # (menu, leaderboard, difficulty, airport/aircraft lookups) are
@@ -1158,6 +1185,10 @@ async def _gate(ctx) -> bool:
     except Exception as e:
         print(f"[GATE] check_membership error: {e}")
         return True  # fail-open
+
+    if status.get("error") or status.get("db_error"):
+        print(f"[GATE] Database error checking membership for {ctx.author.id}: {status.get('error')} — failing open")
+        return True  # fail-open so database connection errors don't falsely block linked users
 
     if not status["linked"]:
         embed = discord.Embed(
@@ -1284,15 +1315,43 @@ async def link(ctx, code: str):
     except Exception:
         pass  # if the timestamp can't be parsed, don't block linking over it
 
-    sts_id = row["sts_id"]
+    sts_id = str(row["sts_id"]).strip()
+    user_discord_id = str(ctx.author.id)
     try:
-        await supabase_patch("share_users", {"sts_id": f"eq.{sts_id}"}, {"discord_id": str(ctx.author.id)})
+        # Clear any other profile in share_users currently mapped to this discord_id
+        # to prevent duplicate/conflicting records
+        await supabase_patch(
+            "share_users",
+            {"discord_id": f"eq.{user_discord_id}"},
+            {"discord_id": None}
+        )
+
+        # Update target sts_id (exact match first, then case-insensitive)
+        updated_rows = await supabase_patch(
+            "share_users",
+            {"sts_id": f"eq.{sts_id}"},
+            {"discord_id": user_discord_id}
+        )
+        if not updated_rows:
+            updated_rows = await supabase_patch(
+                "share_users",
+                {"sts_id": f"ilike.{sts_id}"},
+                {"discord_id": user_discord_id}
+            )
+
+        if not updated_rows:
+            print(f"[LINK] Warning: No share_users record found for STS ID '{sts_id}'")
+            return await ctx.send(
+                f"❌ Linking failed: STS ID **{sts_id}** was not found in the portal user database. "
+                "Please make sure your portal account is created."
+            )
+
         await supabase_patch("discord_link_codes", {"id": f"eq.{row['id']}"}, {"used": True})
     except Exception as e:
-        print(f"[LINK] Supabase update failed linking {ctx.author.id} -> {sts_id}: {e}")
-        return await ctx.send("⚠️ Linking failed — try again shortly.")
+        print(f"[LINK] Supabase update failed linking {user_discord_id} -> {sts_id}: {e}")
+        return await ctx.send("⚠️ Linking failed due to a database error — try again shortly.")
 
-    print(f"[LINK] Discord {ctx.author} ({ctx.author.id}) linked to STS {sts_id}")
+    print(f"[LINK] Discord {ctx.author} ({user_discord_id}) linked to STS {sts_id}")
     await ctx.send(f"✅ Linked! Your AERION activity will now credit AERO points to **{sts_id}**.")
 
 @bot.hybrid_command(name="myaeropoints", description="Check your linked AERO portal points balance")
@@ -1323,7 +1382,7 @@ async def on_command(ctx):
     asyncio.create_task(add_usage(ctx.author))
     asyncio.create_task(credit_aero_points(str(ctx.author.id), ctx.command.name))
 
-    description="Show the AERION usage leaderboard"
+@bot.hybrid_command(name="leaderboard", description="Show the AERION usage leaderboard")
 async def leaderboard(ctx):
     await ctx.defer()
     data = await LeaderboardView.fetch_data()
@@ -2780,32 +2839,54 @@ async def best_long(ctx, airport: str, *, plane_name: str):
 # =========================
 # ON READY — sync slash commands
 # =========================
+# ON READY — sync slash commands
+# =========================
 _synced = False
 _agent_loaded = False
 
+def register_all_modules():
+    global _agent_loaded
+    if _agent_loaded:
+        return
+    try:
+        register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
+        register_intelligence(bot, groq, supabase_get, check_membership)
+        register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
+        register_governance_suite(bot, supabase_get, supabase_post, supabase_patch, check_membership)
+        register_portal_sync(bot, SUPABASE_URL, SUPABASE_KEY, supabase_get, check_membership)
+        _agent_loaded = True
+        print("🤖 AM4 Modules loaded successfully.")
+    except Exception as e:
+        print(f"❌ AM4 Modules setup failed: {e}")
+
+# Register commands on the bot instance immediately so they exist in tree before gateway sync
+register_all_modules()
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandNotFound):
+        print(f"⚠️ App command '{interaction.command_name}' not found in current command tree.")
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"⚠️ The command `/{interaction.command_name}` was not found in the local command tree or is currently synchronizing. Please try again shortly.",
+                ephemeral=True
+            )
+        return
+    print(f"❌ Application command error: {type(error).__name__}: {error}")
+
 @bot.event
 async def on_ready():
-    global _synced, _agent_loaded
+    global _synced
 
     print(f"✅ AERION online as {bot.user}")
 
-    if not _agent_loaded:
-        try:
-            setup_agent(bot, supabase_get, supabase_post)
-            register_membership_commands(bot, supabase_get, supabase_post, supabase_patch)
-            register_intelligence(bot, groq, supabase_get, check_membership)
-            register_alliance(bot, groq, supabase_get, supabase_post, supabase_patch, check_membership)
-            register_governance_suite(bot, supabase_get, supabase_post, supabase_patch, check_membership)
-            register_portal_sync(bot, SUPABASE_URL, SUPABASE_KEY, supabase_get, check_membership)
-            print("🤖 AM4 Agent loaded successfully.")
-        except Exception as e:
-            print(f"❌ AM4 Agent setup failed: {e}")
-            return
+    register_all_modules()
 
     if not _synced:
         try:
             synced_cmds = await bot.tree.sync()
-            print(f"🔧 Synced {len(synced_cmds)} slash command(s).")
+            cmd_names = [cmd.name for cmd in synced_cmds]
+            print(f"🔧 Synced {len(synced_cmds)} slash command(s): {', '.join(cmd_names)}")
             _synced = True
         except Exception as e:
             print(f"⚠️ Slash command sync failed: {e}")
@@ -3319,8 +3400,9 @@ def web_chat():
         return _wjson(error="Chat limit reached (12 messages per minute). Try again shortly."), 429
     if not _web_rate_ok("chat:global", 60):      # protects the Groq quota even if IPs are spoofed
         return _wjson(error="AERION is busy right now. Try again in a minute."), 429
-    if len(_conversation_memory) > 2000:      # keep memory bounded on a public endpoint
-        _conversation_memory.clear()
+    with _conv_lock:
+        if len(_conversation_memory) > 2000:      # keep memory bounded on a public endpoint
+            _conversation_memory.clear()
     reply = asyncio.run(get_groq_reply(f"web:{sid}", msg))
     if not reply:
         return _wjson(error="AERION could not answer right now. Try again in a moment."), 502

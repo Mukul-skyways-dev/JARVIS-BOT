@@ -132,6 +132,10 @@ async def _gate(ctx) -> bool:
         status = await _check_member(str(ctx.author.id))
     except: return True
 
+    if status.get("error") or status.get("db_error"):
+        print(f"[ALLIANCE] DB error checking membership for {ctx.author.id}: {status.get('error')} — failing open")
+        return True
+
     if not status["linked"]:
         embed = discord.Embed(
             title="🔗 Link Required",

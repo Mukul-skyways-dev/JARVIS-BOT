@@ -66,6 +66,9 @@ async def _gate(ctx) -> bool:
         status = await _check_member(str(ctx.author.id))
     except Exception:
         return True
+    if status.get("error") or status.get("db_error"):
+        print(f"[GOVERNANCE] DB error checking membership for {ctx.author.id}: {status.get('error')} — failing open")
+        return True
     if not status["linked"]:
         await ctx.send("🔗 Link your Discord to the AERO portal first with `/link <code>`.", ephemeral=True)
         return False

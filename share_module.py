@@ -13,15 +13,24 @@
 #           helpers (already in your bot)
 # =========================================================
 
-import pytz, io, asyncio, time
+import io, asyncio, time
 from datetime import datetime, timezone, timedelta
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-import numpy as np
+try:
+    import pytz
+    IST = pytz.timezone("Asia/Kolkata")
+except Exception:
+    import datetime as _dt
+    IST = _dt.timezone(_dt.timedelta(hours=5, minutes=30))
 
-IST = pytz.timezone("Asia/Kolkata")
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
+    import numpy as np
+    _MATPLOTLIB_AVAILABLE = True
+except Exception:
+    _MATPLOTLIB_AVAILABLE = False
 
 # ── helpers ───────────────────────────────────────────────
 def _now_ist():
@@ -58,11 +67,15 @@ def _parse_money(s):
 
 # ── fetch linked STS for a Discord user ───────────────────
 async def _get_sts(discord_id: str):
-    """Returns the STS ID linked to this Discord user, or None."""
     try:
+        uid = str(discord_id).strip()
         rows = await supabase_get(
             "share_users",
-            {"discord_id": f"eq.{discord_id}", "select": "sts_id,name,airline,alliance,aero_points"}
+            {
+                "discord_id": f"eq.{uid}",
+                "select": "sts_id,name,airline,alliance,aero_points",
+                "order": "aerion_access.desc,aerion_expires.desc.nullslast"
+            }
         )
         return rows[0] if rows else None
     except Exception as e:
