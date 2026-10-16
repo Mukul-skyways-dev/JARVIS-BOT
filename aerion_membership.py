@@ -175,11 +175,10 @@ def membership_required(func):
     """
     Decorator for bot commands.
     Blocks execution if user doesn't have active AERION membership.
-    Shows a helpful embed with how to subscribe.
+    Shows a rich branded embed with action buttons.
     """
     @functools.wraps(func)
     async def wrapper(ctx, *args, **kwargs):
-        # Acknowledge Discord interaction immediately if within a slash command interaction
         if getattr(ctx, "interaction", None) and not ctx.interaction.response.is_done():
             try:
                 await ctx.defer(ephemeral=True)
@@ -190,14 +189,18 @@ def membership_required(func):
 
         if status.get("error") or status.get("db_error"):
             embed = discord.Embed(
-                title="⚠️ Portal Connection Error",
+                title="⚠️  Portal Temporarily Unavailable",
                 description=(
-                    "Could not verify your membership right now due to a temporary database connection error.\n\n"
-                    "Please try again in a few moments."
+                    "```\n"
+                    "  AERION DATABASE GATEWAY\n"
+                    "  ── STATUS: RECONNECTING ──\n"
+                    "```\n"
+                    "Could not reach the membership database right now.\n"
+                    "This is temporary — please try again in a few moments."
                 ),
                 color=0xffaa00
             )
-            embed.set_footer(text=f"{BOT_NAME} • {BOT_TAGLINE}")
+            embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  {BOT_TAGLINE}")
             try:
                 await ctx.send(embed=embed, ephemeral=True)
             except Exception:
@@ -206,18 +209,27 @@ def membership_required(func):
 
         if not status["linked"]:
             embed = discord.Embed(
-                title="🔗 Not Linked to AERION Portal",
-                description=(
-                    "You need to link your portal account first.\n\n"
-                    "**Steps:**\n"
-                    "1. Go to the AERO portal\n"
-                    "2. Generate a link code from your profile\n"
-                    "3. Use `/link <code>` here\n"
-                    "4. Then subscribe with `/subscribe`"
-                ),
+                title="🔗  Account Not Linked",
                 color=0xff4757
             )
-            embed.set_footer(text=f"{BOT_NAME} • {BOT_TAGLINE}")
+            embed.description = (
+                "```\n"
+                "  AERION PORTAL LINK REQUIRED\n"
+                "```\n"
+                "Your Discord account is **not linked** to the AERO Portal.\n"
+                "Link your account to access the AERION ecosystem."
+            )
+            embed.add_field(
+                name="📋  How to Link",
+                value=(
+                    "> **1.** Register on the AERO Portal\n"
+                    "> **2.** Go to your profile → **Generate Link Code**\n"
+                    "> **3.** Use `/link <code>` in this server\n"
+                    "> **4.** Then run `/subscribe` to activate membership"
+                ),
+                inline=False
+            )
+            embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  {BOT_TAGLINE}")
             try:
                 await ctx.send(embed=embed, ephemeral=True)
             except Exception:
@@ -228,28 +240,45 @@ def membership_required(func):
             cost = MEMBERSHIP_NEW_COST if status["is_new"] else MEMBERSHIP_RENEWAL_COST
             pts  = status["aero_points"]
             can_afford = pts >= cost
+            short_by   = max(0, cost - pts)
+            kind_label = "🆕  First-Time Join" if status["is_new"] else "🔄  Renewal"
 
             embed = discord.Embed(
-                title="🔒 AERION MEMBERSHIP REQUIRED",
-                description=(
-                    f"**Please purchase a membership to use the AERION ecosystem.**\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"{'🆕 First-time join' if status['is_new'] else '🔄 Renewal'}\n"
-                    f"Cost    : **{cost:,} AERO Points**\n"
-                    f"Your Bal: **{pts:,} AERO Points**"
-                    + (f"\n\n✅ You can afford this! Use `/subscribe` to activate."
-                       if can_afford
-                       else f"\n\n❌ Insufficient points. Need {cost-pts:,} more.\n"
-                            f"Earn points by using the portal or completing quests.")
-                    + "\n━━━━━━━━━━━━━━━━━━━━━━━"
-                ),
-                color=0xff4757
+                title="🔒  AERION Membership Required",
+                color=0xf0c040
             )
-            embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION} • {BOT_TAGLINE}")
+            embed.description = (
+                "```\n"
+                "  AERION PREMIUM ACCESS\n"
+                "  ── SUBSCRIPTION INACTIVE ──\n"
+                "```\n"
+                "Activate your membership to unlock the full AERION suite."
+            )
+            embed.add_field(
+                name="📦  Subscription Details",
+                value=(
+                    f"**Type     :** {kind_label}\n"
+                    f"**Cost     :** `{cost:,}` AERO Points\n"
+                    f"**Duration :** {MEMBERSHIP_DAYS} days\n"
+                    f"**Your Bal :** `{pts:,}` AERO Points"
+                ),
+                inline=True
+            )
+            embed.add_field(
+                name="💳  Affordability",
+                value=(
+                    f"{'✅  **You can subscribe now!**' if can_afford else f'❌  Short by `{short_by:,}` pts'}\n\n"
+                    + ("Run `/subscribe` to activate." if can_afford
+                       else "Earn points via portal quests\nand AERION command usage.")
+                ),
+                inline=True
+            )
+            embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  {BOT_TAGLINE}")
+            view = _GateActionView(can_afford=can_afford)
             try:
-                await ctx.send(embed=embed, ephemeral=True)
+                await ctx.send(embed=embed, view=view, ephemeral=True)
             except Exception:
-                await ctx.send(embed=embed)
+                await ctx.send(embed=embed, view=view)
             return
 
         return await func(ctx, *args, **kwargs)
@@ -264,68 +293,69 @@ async def _send_membership_certificate(
     txn_id: str, cost: int, expires: datetime,
     is_new: bool
 ):
-    """DM the user a beautifully formatted membership certificate."""
-    issued = _now_ist().strftime("%d %b %Y  %I:%M %p IST")
-    exp_str= expires.astimezone(_IST).strftime("%d %b %Y  %I:%M %p IST")
-    kind   = "FOUNDING MEMBER CERTIFICATE" if is_new else "RENEWAL CERTIFICATE"
+    """DM the user a premium gold-themed membership certificate."""
+    issued  = _now_ist().strftime("%d %b %Y  %I:%M %p IST")
+    exp_str = expires.astimezone(_IST).strftime("%d %b %Y  %I:%M %p IST")
+    kind    = "FOUNDING MEMBER" if is_new else "RENEWAL CONFIRMED"
+    color   = 0xf0c040  # Gold
 
     embed = discord.Embed(
-        title=f"🎫 {BOT_NAME} MEMBERSHIP — {kind}",
-        color=0x00e5ff
+        title=f"🏅  {BOT_NAME}  —  {kind}",
+        color=color
     )
     embed.description = (
-        f"```\n"
-        f"╔══════════════════════════════════════╗\n"
-        f"║     AERION ECOSYSTEM MEMBERSHIP      ║\n"
-        f"║     {BOT_VERSION:<36}║\n"
-        f"╚══════════════════════════════════════╝\n"
-        f"```"
+        "```\n"
+        "  ╔══════════════════════════════════╗\n"
+        "  ║    AERION MEMBERSHIP CERTIFICATE  ║\n"
+        f"  ║    {BOT_VERSION:<34}║\n"
+        "  ╚══════════════════════════════════╝\n"
+        "```"
     )
     embed.add_field(
-        name="👤 Member Details",
+        name="👤  Member Details",
         value=(
-            f"**Name :** {name}\n"
-            f"**STS ID:** `{sts_id}`\n"
-            f"**Discord:** {discord_user.mention}"
+            f"**Name    :** {name}\n"
+            f"**STS ID  :** `{sts_id}`\n"
+            f"**Discord :** {discord_user.mention}"
         ),
-        inline=False
+        inline=True
     )
     embed.add_field(
-        name="🎫 Membership Info",
+        name="🎫  Membership Info",
         value=(
-            f"**Type    :** {'New Member' if is_new else 'Renewal'}\n"
-            f"**Duration:** {MEMBERSHIP_DAYS} days\n"
+            f"**Type    :** {'New Member 🆕' if is_new else 'Renewal 🔄'}\n"
+            f"**Valid   :** {MEMBERSHIP_DAYS} days\n"
             f"**Issued  :** {issued}\n"
             f"**Expires :** {exp_str}"
         ),
-        inline=False
+        inline=True
     )
     embed.add_field(
-        name="🧾 Transaction",
+        name="🧾  Transaction",
         value=(
             f"**TXN ID :** `{txn_id}`\n"
-            f"**Amount :** {cost:,} AERO Points\n"
-            f"**Status :** ✅ CONFIRMED"
+            f"**Cost   :** {cost:,} AERO Points\n"
+            f"**Status :** ✅  CONFIRMED"
         ),
         inline=False
     )
     embed.add_field(
-        name="✨ Access Granted",
+        name="✨  Access Unlocked",
         value=(
-            "• All AERION Intelligence commands\n"
-            "• Alliance Intelligence suite\n"
-            "• Smart Monitoring & Alerts\n"
-            "• Player Progression system\n"
-            "• Advanced AM4 analytics"
+            "┣ AERION Intelligence Suite\n"
+            "┣ Alliance Intelligence\n"
+            "┣ Smart Monitoring & Alerts\n"
+            "┣ Player Progression System\n"
+            "┗ Advanced AM4 Analytics"
         ),
         inline=False
     )
-    embed.set_footer(text=f"{BOT_NAME} • {BOT_TAGLINE} • TXN: {txn_id}")
+    embed.set_footer(text=f"{BOT_NAME}  •  {BOT_TAGLINE}  •  TXN: {txn_id}")
 
     try:
         await discord_user.send(
             content=(
-                f"🎉 **Welcome to {BOT_NAME}{'!' if is_new else ' — Membership Renewed!'}** "
+                f"🎉 **{'Welcome to AERION!' if is_new else 'AERION Membership Renewed!'}** "
                 f"{discord_user.mention}"
             ),
             embed=embed
@@ -337,6 +367,7 @@ async def _send_membership_certificate(
     except Exception as e:
         print(f"[MEMBERSHIP] DM delivery error to {discord_user}: {e}")
         return False
+
 
 # ─────────────────────────────────────────────────────────
 #  SUBSCRIBE LOGIC
@@ -495,13 +526,26 @@ def register_membership_commands(bot_instance, supa_get, supa_post, supa_patch):
         is_new   = status["is_new"]
         cost     = MEMBERSHIP_NEW_COST if is_new else MEMBERSHIP_RENEWAL_COST
         expires  = status["expires"]
+        airline  = status.get("row", {}).get("airline") or "—"
+        alliance = status.get("row", {}).get("alliance") or "—"
 
-        color = 0x00ff88 if has_acc else 0xff4757
-        status_text = (
-            f"✅ **ACTIVE** — {days} day(s) remaining"
-            if has_acc else
-            "❌ **INACTIVE** — Purchase membership to access AERION"
-        )
+        # Color + status bar
+        if has_acc and days > 15:
+            color = 0x00ff88          # green  — healthy
+        elif has_acc and days > 0:
+            color = 0xf0c040          # gold   — expiring soon
+        else:
+            color = 0xff4757          # red    — inactive
+
+        if has_acc:
+            bar_filled = min(30, int(days / 30 * 30))
+            bar = "█" * bar_filled + "░" * (30 - bar_filled)
+            status_text = f"✅  **ACTIVE**  —  `{days}` day(s) remaining"
+            bar_line    = f"`[{bar}]`"
+        else:
+            bar = "░" * 30
+            status_text = "❌  **INACTIVE**  —  Membership not active"
+            bar_line    = f"`[{bar}]`"
 
         exp_str = (
             expires.astimezone(_IST).strftime("%d %b %Y  %I:%M %p IST")
@@ -509,35 +553,66 @@ def register_membership_commands(bot_instance, supa_get, supa_post, supa_patch):
         )
 
         embed = discord.Embed(
-            title=f"🤖 {BOT_NAME} — Membership Status",
+            title=f"🤖  {BOT_NAME}  —  Membership Dashboard",
             color=color
         )
-        embed.add_field(name="👤 Profile",
+        embed.description = (
+            "```\n"
+            "  AERO CROWN DYNASTY  |  AERION ECOSYSTEM\n"
+            "```"
+        )
+        # Row 1 — Profile
+        embed.add_field(
+            name="👤  Profile",
             value=(
-                f"**Name  :** {status['name']}\n"
-                f"**STS ID:** `{status['sts_id']}`\n"
-                f"**Points:** {pts:,} AERO"
-            ), inline=False)
-        embed.add_field(name="🎫 Membership",
+                f"**Name    :** {status['name']}\n"
+                f"**STS ID  :** `{status['sts_id']}`\n"
+                f"**Airline :** {airline}\n"
+                f"**Alliance:** {alliance}"
+            ),
+            inline=True
+        )
+        # Row 1 — Points
+        embed.add_field(
+            name="💎  AERO Points",
             value=(
-                f"**Status  :** {status_text}\n"
+                f"`{pts:,}` points\n\n"
+                f"{'✅  Can subscribe' if pts >= cost else f'❌  Need `{cost-pts:,}` more'}\n"
+                f"({'Join' if is_new else 'Renewal'} costs `{cost:,}`)"
+            ),
+            inline=True
+        )
+        # Row 2 — Membership status (full width)
+        embed.add_field(
+            name="🎫  Membership Status",
+            value=(
+                f"{status_text}\n"
+                f"{bar_line}\n"
                 f"**Expires :** {exp_str}\n"
-                f"**Type    :** {'New Member' if is_new else 'Renewal'}"
-            ), inline=False)
+                f"**Type    :** {'First-Time Member 🆕' if is_new else 'Renewal Member 🔄'}"
+            ),
+            inline=False
+        )
 
         if not has_acc:
             can_afford = pts >= cost
             embed.add_field(
-                name=f"{'🆕 Join' if is_new else '🔄 Renew'} AERION",
+                name=f"{'🆕  Join' if is_new else '🔄  Renew'}  AERION",
                 value=(
-                    f"Cost: **{cost:,} AERO Points**\n"
-                    + ("✅ You can afford this! Use `/subscribe`"
+                    f"**Cost     :** `{cost:,}` AERO Points\n"
+                    f"**Duration :** {MEMBERSHIP_DAYS} days\n"
+                    + ("✅  Use `/subscribe` to activate right now!"
                        if can_afford
-                       else f"❌ Need {cost-pts:,} more points. Earn via portal quests.")
-                ), inline=False)
+                       else f"❌  Need `{cost-pts:,}` more points.\n"
+                            "Earn via portal quests & AERION commands.")
+                ),
+                inline=False
+            )
 
-        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION} • {BOT_TAGLINE}")
-        await ctx.send(embed=embed, ephemeral=True)
+        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  {BOT_TAGLINE}")
+        view = _AerionStatusView(has_access=has_acc, can_afford=(pts >= cost))
+        await ctx.send(embed=embed, view=view, ephemeral=True)
+
 
     # ── /subscribe ────────────────────────────────────────
     @bot_instance.hybrid_command(
@@ -553,53 +628,107 @@ def register_membership_commands(bot_instance, supa_get, supa_post, supa_patch):
         status = await check_membership(str(ctx.author.id))
 
         if status.get("error") or status.get("db_error"):
-            return await ctx.send(
-                "⚠️ Could not connect to portal database. Please try again shortly.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="⚠️  Portal Unavailable",
+                description=(
+                    "Could not reach the membership database.\n"
+                    "Please try again in a few moments."
+                ),
+                color=0xffaa00
             )
+            embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}")
+            return await ctx.send(embed=embed, ephemeral=True)
 
         if not status["linked"]:
-            return await ctx.send(
-                "❌ Link your Discord first with `/link <code>`.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="🔗  Account Not Linked",
+                description=(
+                    "Link your Discord to the AERO Portal first.\n\n"
+                    "> Use `/link <code>` with your portal link code."
+                ),
+                color=0xff4757
             )
+            embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}")
+            return await ctx.send(embed=embed, ephemeral=True)
 
         is_new  = status["is_new"]
         cost    = MEMBERSHIP_NEW_COST if is_new else MEMBERSHIP_RENEWAL_COST
         pts     = status["aero_points"]
         days    = status["days_left"]
+        can_afford = pts >= cost
 
         # Build confirmation view
         view = _SubscribeConfirmView(ctx.author, is_new, cost, pts, days)
-        embed = discord.Embed(
-            title=f"{'🆕 JOIN' if is_new else '🔄 RENEW'} — AERION MEMBERSHIP",
-            color=0x00d4ff
-        )
-        embed.add_field(name="📋 Summary",
-            value=(
-                f"**Type     :** {'First-time join' if is_new else 'Renewal'}\n"
-                f"**Cost     :** {cost:,} AERO Points\n"
-                f"**Duration :** {MEMBERSHIP_DAYS} days\n"
-                f"**Your Bal :** {pts:,} AERO Points\n"
-                f"**After    :** {pts-cost:,} AERO Points"
-                + (f"\n**Extends  :** +{MEMBERSHIP_DAYS} days (currently {days}d left)"
-                   if not is_new and days > 0 else "")
-            ), inline=False)
 
-        if pts < cost:
+        color = 0xf0c040 if can_afford else 0xff4757
+        embed = discord.Embed(
+            title=f"{'🆕  JOIN' if is_new else '🔄  RENEW'}  —  AERION MEMBERSHIP",
+            color=color
+        )
+        embed.description = (
+            "```\n"
+            f"  {'FIRST-TIME MEMBERSHIP' if is_new else 'MEMBERSHIP RENEWAL'}\n"
+            "```"
+        )
+        # Col 1 — cost breakdown
+        embed.add_field(
+            name="📋  Cost Breakdown",
+            value=(
+                f"**Type     :** {'First-Time Join 🆕' if is_new else 'Renewal 🔄'}\n"
+                f"**Cost     :** `{cost:,}` AERO Points\n"
+                f"**Duration :** {MEMBERSHIP_DAYS} days\n"
+                + (f"**Extends  :** +{MEMBERSHIP_DAYS}d (now {days}d left)\n"
+                   if not is_new and days > 0 else "")
+            ),
+            inline=True
+        )
+        # Col 2 — your balance
+        embed.add_field(
+            name="💎  Your Balance",
+            value=(
+                f"**Current  :** `{pts:,}` pts\n"
+                f"**After    :** `{max(0, pts-cost):,}` pts\n\n"
+                + ("✅  **Sufficient balance**" if can_afford
+                   else f"❌  Short by `{cost-pts:,}` pts")
+            ),
+            inline=True
+        )
+
+        if not can_afford:
             embed.add_field(
-                name="❌ Insufficient Points",
+                name="❌  Insufficient Points",
                 value=(
-                    f"You need {cost-pts:,} more AERO Points.\n"
-                    "Earn points by using the portal or completing quests."
-                ), inline=False)
+                    f"You need `{cost-pts:,}` more AERO Points.\n"
+                    "Earn points by using AERION commands\n"
+                    "and completing portal quests."
+                ),
+                inline=False
+            )
+            embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  {BOT_TAGLINE}")
             return await ctx.send(embed=embed, ephemeral=True)
 
-        embed.add_field(name="⚠️ Confirm",
-            value="Press **Confirm** to deduct points and activate membership.\n"
-                  "A certificate will be DM'd to you.", inline=False)
-        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}")
+        embed.add_field(
+            name="✨  Access You'll Unlock",
+            value=(
+                "┣ AERION Intelligence Suite\n"
+                "┣ Alliance Intelligence\n"
+                "┣ Advanced Route Analytics\n"
+                "┗ All Premium Commands"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="⚠️  Confirm Purchase",
+            value=(
+                "Press **✅ Confirm** to deduct points and activate.\n"
+                "A certificate will be DM'd to you instantly."
+            ),
+            inline=False
+        )
+        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  {BOT_TAGLINE}")
         await ctx.send(embed=embed, view=view, ephemeral=True)
+
+
 
     # ── /membercheck (admin) ──────────────────────────────
     @bot_instance.hybrid_command(
@@ -616,27 +745,53 @@ def register_membership_commands(bot_instance, supa_get, supa_post, supa_patch):
             await ctx.defer(ephemeral=True)
 
         status = await check_membership(str(member.id))
-        color  = 0x00ff88 if status["has_access"] else 0xff4757
+
+        if status.get("db_error"):
+            embed = discord.Embed(
+                title="⚠️  DB Error",
+                description=f"Could not fetch data for {member.mention}.",
+                color=0xffaa00
+            )
+            return await ctx.send(embed=embed, ephemeral=True)
+
+        has_acc = status["has_access"]
+        color   = 0x00ff88 if has_acc else (0xf0c040 if status["linked"] else 0xff4757)
 
         embed = discord.Embed(
-            title=f"🔍 Membership Check — {member.display_name}",
+            title=f"🔍  Member Check  —  {member.display_name}",
             color=color
         )
-        embed.add_field(name="Linked",    value="✅" if status["linked"]     else "❌", inline=True)
-        embed.add_field(name="Access",    value="✅" if status["has_access"] else "❌", inline=True)
-        embed.add_field(name="Days Left", value=str(status["days_left"]),               inline=True)
-        if status["sts_id"]:
-            embed.add_field(name="STS ID",     value=f"`{status['sts_id']}`",           inline=True)
-            embed.add_field(name="Name",       value=status["name"] or "—",             inline=True)
-            embed.add_field(name="AERO Points",value=f"{status['aero_points']:,}",      inline=True)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(
+            name="🔗  Link Status",
+            value=(
+                f"{'✅  Linked' if status['linked'] else '❌  Not Linked'}\n"
+                f"**STS ID :** `{status['sts_id'] or '—'}`\n"
+                f"**Name   :** {status['name'] or '—'}"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="🎫  Membership",
+            value=(
+                f"**Access  :** {'✅  Active' if has_acc else '❌  Inactive'}\n"
+                f"**Days    :** {status['days_left']}\n"
+                f"**Points  :** {status['aero_points']:,}"
+            ),
+            inline=True
+        )
         if status["expires"]:
-            embed.add_field(name="Expires",
-                value=status["expires"].astimezone(_IST).strftime("%d %b %Y %I:%M %p IST"),
-                inline=False)
+            embed.add_field(
+                name="⏰  Expiry",
+                value=status["expires"].astimezone(_IST).strftime("%d %b %Y  %I:%M %p IST"),
+                inline=False
+            )
         if status.get("error"):
-            embed.add_field(name="Error Notice", value=f"⚠️ {status['error']}", inline=False)
-        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}")
+            embed.add_field(name="⚠️  Notice", value=status["error"], inline=False)
+        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  Admin Panel")
         await ctx.send(embed=embed, ephemeral=True)
+
+
 
     # ── /grantmembership (admin) ──────────────────────────
     @bot_instance.hybrid_command(
@@ -684,11 +839,33 @@ def register_membership_commands(bot_instance, supa_get, supa_post, supa_patch):
             dm_sent = await _send_membership_certificate(
                 member, sts_id, status["name"], txn_id, 0, expires, status["is_new"]
             )
-            await ctx.send(
-                f"✅ Granted **{days}d** AERION membership to {member.mention}.\n"
-                f"TXN: `{txn_id}` | DM sent: {'✅' if dm_sent else '❌ (DMs off)'}",
-                ephemeral=True
+            exp_str = expires.astimezone(_IST).strftime("%d %b %Y  %I:%M %p IST")
+            embed = discord.Embed(
+                title=f"✅  Membership Granted  —  {member.display_name}",
+                color=0x00ff88
             )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.add_field(
+                name="🎫  Grant Details",
+                value=(
+                    f"**Member  :** {member.mention}\n"
+                    f"**STS ID  :** `{sts_id}`\n"
+                    f"**Duration:** {days} days\n"
+                    f"**Expires :** {exp_str}"
+                ),
+                inline=True
+            )
+            embed.add_field(
+                name="🧾  Transaction",
+                value=(
+                    f"**TXN ID :** `{txn_id}`\n"
+                    f"**Cost   :** 0 pts (Admin Grant)\n"
+                    f"**DM Cert:** {'✅ Sent' if dm_sent else '❌ DMs off'}"
+                ),
+                inline=True
+            )
+            embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  Admin Action  •  By {ctx.author}")
+            await ctx.send(embed=embed, ephemeral=True)
         except Exception as e:
             await ctx.send(f"❌ Grant failed: {e}", ephemeral=True)
 
@@ -707,7 +884,7 @@ class _SubscribeConfirmView(discord.ui.View):
         self.pts       = pts
         self.days_left = days_left
 
-    @discord.ui.button(label="✅ Confirm Purchase", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="✅  Confirm & Activate", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button):
         if interaction.user.id != self.user.id:
             return await interaction.response.send_message(
@@ -717,33 +894,176 @@ class _SubscribeConfirmView(discord.ui.View):
         result = await _do_subscribe(self.user)
 
         if not result["success"]:
-            return await interaction.followup.send(result["message"], ephemeral=True)
+            err_embed = discord.Embed(
+                title="❌  Activation Failed",
+                description=result["message"],
+                color=0xff4757
+            )
+            err_embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}")
+            return await interaction.followup.send(embed=err_embed, ephemeral=True)
 
         expires_str = result["expires"].astimezone(_IST).strftime("%d %b %Y  %I:%M %p IST")
         embed = discord.Embed(
-            title=f"🎉 AERION MEMBERSHIP ACTIVATED!",
+            title="🎉  AERION MEMBERSHIP ACTIVATED!",
+            description=(
+                "```\n"
+                "  WELCOME TO THE AERION ECOSYSTEM\n"
+                "```\n"
+                "You now have full access to all AERION premium features!"
+            ),
             color=0x00ff88
         )
-        embed.add_field(name="✅ Status",
+        embed.add_field(
+            name="💳  Transaction",
             value=(
                 f"**TXN ID  :** `{result['txn_id']}`\n"
-                f"**Deducted:** {result['cost']:,} AERO Points\n"
-                f"**Balance :** {result['new_pts']:,} AERO Points\n"
-                f"**Expires :** {expires_str}"
-            ), inline=False)
-        embed.add_field(name="📨 Certificate",
-            value=("✅ Sent to your DMs!"
-                   if result["dm_sent"]
-                   else "⚠️ Couldn't DM you — enable DMs to receive certificate."),
-            inline=False)
-        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION} • TXN: {result['txn_id']}")
+                f"**Deducted:** `{result['cost']:,}` AERO Points\n"
+                f"**Balance :** `{result['new_pts']:,}` AERO Points"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="⏰  Validity",
+            value=(
+                f"**Expires  :** {expires_str}\n"
+                f"**Duration :** {MEMBERSHIP_DAYS} days\n"
+                f"**Type     :** {'New Member 🆕' if result['is_new'] else 'Renewal 🔄'}"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="📨  Certificate",
+            value=(
+                "✅  Sent to your DMs!" if result["dm_sent"]
+                else "⚠️  Enable DMs to receive your certificate."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="✨  Access Unlocked",
+            value=(
+                "┣ AERION Intelligence Suite\n"
+                "┣ Alliance Intelligence\n"
+                "┣ Advanced Route Analytics\n"
+                "┗ All Premium Commands"
+            ),
+            inline=False
+        )
+        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  TXN: {result['txn_id']}")
         self.stop()
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="❌  Cancel", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button):
         if interaction.user.id != self.user.id:
             return await interaction.response.send_message("❌", ephemeral=True)
         self.stop()
+        cancel_embed = discord.Embed(
+            title="❌  Purchase Cancelled",
+            description="No points were deducted. Your balance is unchanged.",
+            color=0xff4757
+        )
+        cancel_embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}")
+        await interaction.response.send_message(embed=cancel_embed, ephemeral=True)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+# ─────────────────────────────────────────────────────────
+#  GATE ACTION VIEW  (shown when user has no membership)
+# ─────────────────────────────────────────────────────────
+class _GateActionView(discord.ui.View):
+    """Buttons shown on the 'membership required' gate embed."""
+    def __init__(self, can_afford: bool = False):
+        super().__init__(timeout=60)
+        self.can_afford = can_afford
+
+    @discord.ui.button(label="💎  Subscribe Now", style=discord.ButtonStyle.green)
+    async def subscribe_btn(self, interaction: discord.Interaction, button):
         await interaction.response.send_message(
-            "❌ Subscription cancelled. No points deducted.", ephemeral=True)
+            "Run `/subscribe` to activate your AERION membership!",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="📋  How to Earn Points", style=discord.ButtonStyle.blurple)
+    async def earn_btn(self, interaction: discord.Interaction, button):
+        embed = discord.Embed(
+            title="💎  How to Earn AERO Points",
+            color=0xf0c040
+        )
+        embed.add_field(
+            name="📊  AERION Commands",
+            value=(
+                "┣ `/route` — **+3** pts\n"
+                "┣ `/best` series — **+2** pts each\n"
+                "┣ `/compare`, `/whatif` — **+2–3** pts\n"
+                "┗ `/routemap` — **+2** pts"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🌐  Portal Quests",
+            value="Complete quests on the AERO Portal for bonus point rewards.",
+            inline=False
+        )
+        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}  •  Points are awarded per command use")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ─────────────────────────────────────────────────────────
+#  AERION STATUS VIEW  (buttons on /aerion dashboard)
+# ─────────────────────────────────────────────────────────
+class _AerionStatusView(discord.ui.View):
+    """Action buttons shown on the /aerion membership dashboard."""
+    def __init__(self, has_access: bool = False, can_afford: bool = False):
+        super().__init__(timeout=120)
+        self.has_access = has_access
+        self.can_afford = can_afford
+
+    @discord.ui.button(label="🔄  Refresh Status", style=discord.ButtonStyle.secondary)
+    async def refresh(self, interaction: discord.Interaction, button):
+        await interaction.response.defer(ephemeral=True)
+        status = await check_membership(str(interaction.user.id))
+        if status.get("db_error"):
+            return await interaction.followup.send(
+                "⚠️  Could not refresh — database temporarily unavailable.",
+                ephemeral=True
+            )
+        pts    = status["aero_points"]
+        has_ac = status["has_access"]
+        days   = status["days_left"]
+        exp    = status["expires"]
+        exp_str = exp.astimezone(_IST).strftime("%d %b %Y  %I:%M %p IST") if exp else "—"
+        color  = 0x00ff88 if has_ac else 0xff4757
+        embed  = discord.Embed(title="🔄  Status Refreshed", color=color)
+        embed.add_field(name="Membership", value=f"{'✅ Active' if has_ac else '❌ Inactive'} — {days}d left", inline=True)
+        embed.add_field(name="AERO Points", value=f"`{pts:,}`", inline=True)
+        embed.add_field(name="Expires", value=exp_str, inline=False)
+        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="💎  Subscribe / Renew", style=discord.ButtonStyle.green)
+    async def subscribe_btn(self, interaction: discord.Interaction, button):
+        await interaction.response.send_message(
+            "Run **`/subscribe`** to activate or renew your AERION membership!",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="💡  Earn Points", style=discord.ButtonStyle.blurple)
+    async def earn_btn(self, interaction: discord.Interaction, button):
+        embed = discord.Embed(title="💎  How to Earn AERO Points", color=0xf0c040)
+        embed.add_field(
+            name="📊  Commands",
+            value=(
+                "┣ `/route` — **+3** pts\n"
+                "┣ `/best` — **+2** pts\n"
+                "┣ `/compare`, `/whatif` — **+2–3** pts\n"
+                "┗ `/routemap` — **+2** pts"
+            ),
+            inline=False
+        )
+        embed.set_footer(text=f"{BOT_NAME} {BOT_VERSION}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+

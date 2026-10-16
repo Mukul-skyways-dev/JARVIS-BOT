@@ -1192,17 +1192,26 @@ async def _gate(ctx) -> bool:
 
     if not status["linked"]:
         embed = discord.Embed(
-            title="Link Required",
-            description=(
-                "Your Discord is not linked to the AERO portal.\n\n"
-                "1. Register on portal\n"
-                "2. Generate a link code\n"
-                "3. Use `/link <code>` here\n"
-                "4. Use `/subscribe` to activate AERION"
-            ),
+            title="🔗  Account Not Linked",
             color=0xff4757
         )
-        embed.set_footer(text="AERION - AERO CROWN DYNASTY")
+        embed.description = (
+            "```\n"
+            "  AERION PORTAL LINK REQUIRED\n"
+            "```\n"
+            "Your Discord account is **not linked** to the AERO Portal."
+        )
+        embed.add_field(
+            name="📋  How to Link",
+            value=(
+                "> **1.** Register on the AERO Portal\n"
+                "> **2.** Profile → **Generate Link Code**\n"
+                "> **3.** Use `/link <code>` in this server\n"
+                "> **4.** Then run `/subscribe` to activate"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="AERION  •  AERO CROWN DYNASTY")
         try:
             await ctx.send(embed=embed, ephemeral=True)
         except Exception:
@@ -1212,19 +1221,37 @@ async def _gate(ctx) -> bool:
     if not status["has_access"]:
         cost = 1000 if status["is_new"] else 100
         pts  = status["aero_points"]
+        can_afford  = pts >= cost
+        kind_label  = "🆕  First-Time Join" if status["is_new"] else "🔄  Renewal"
         embed = discord.Embed(
-            title="AERION MEMBERSHIP REQUIRED",
-            description=(
-                f"Purchase membership to use AERION.\n\n"
-                f"Type: {'New Member' if status['is_new'] else 'Renewal'}\n"
-                f"Cost: **{cost:,} AERO Points**\n"
-                f"Your balance: **{pts:,} AERO Points**\n\n"
-                + ("Use `/subscribe` to activate!" if pts >= cost
-                   else f"Need {cost - pts:,} more points.")
-            ),
-            color=0xff4757
+            title="🔒  AERION Membership Required",
+            color=0xf0c040
         )
-        embed.set_footer(text="AERION - AERO CROWN DYNASTY")
+        embed.description = (
+            "```\n"
+            "  AERION PREMIUM ACCESS\n"
+            "  ── SUBSCRIPTION INACTIVE ──\n"
+            "```"
+        )
+        embed.add_field(
+            name="📦  Subscription",
+            value=(
+                f"**Type :** {kind_label}\n"
+                f"**Cost :** `{cost:,}` AERO Points\n"
+                f"**Bal  :** `{pts:,}` AERO Points"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="💳  Status",
+            value=(
+                "✅  **Can subscribe now!**\nRun `/subscribe`"
+                if can_afford else
+                f"❌  Short by `{cost-pts:,}` pts\nEarn via AERION commands"
+            ),
+            inline=True
+        )
+        embed.set_footer(text="AERION  •  AERO CROWN DYNASTY")
         try:
             await ctx.send(embed=embed, ephemeral=True)
         except Exception:
@@ -1232,6 +1259,7 @@ async def _gate(ctx) -> bool:
         return False
 
     return True
+
 
 
 COMMAND_POINTS = {
@@ -1341,18 +1369,61 @@ async def link(ctx, code: str):
 
         if not updated_rows:
             print(f"[LINK] Warning: No share_users record found for STS ID '{sts_id}'")
-            return await ctx.send(
-                f"❌ Linking failed: STS ID **{sts_id}** was not found in the portal user database. "
-                "Please make sure your portal account is created."
+            _link_fail_embed = discord.Embed(
+                title="❌  Linking Failed — STS ID Not Found",
+                description=(
+                    f"STS ID **`{sts_id}`** was not found in the portal database.\n\n"
+                    "> Make sure your AERO Portal account is created and the STS ID matches exactly."
+                ),
+                color=0xff4757
             )
+            _link_fail_embed.set_footer(text="AERION  •  AERO CROWN DYNASTY")
+            return await ctx.send(embed=_link_fail_embed, ephemeral=True)
 
         await supabase_patch("discord_link_codes", {"id": f"eq.{row['id']}"}, {"used": True})
     except Exception as e:
         print(f"[LINK] Supabase update failed linking {user_discord_id} -> {sts_id}: {e}")
-        return await ctx.send("⚠️ Linking failed due to a database error — try again shortly.")
+        _err_embed = discord.Embed(
+            title="⚠️  Linking Failed",
+            description="A database error occurred while linking. Please try again shortly.",
+            color=0xffaa00
+        )
+        _err_embed.set_footer(text="AERION  •  AERO CROWN DYNASTY")
+        return await ctx.send(embed=_err_embed, ephemeral=True)
 
     print(f"[LINK] Discord {ctx.author} ({user_discord_id}) linked to STS {sts_id}")
-    await ctx.send(f"✅ Linked! Your AERION activity will now credit AERO points to **{sts_id}**.")
+
+    _link_success = discord.Embed(
+        title="🔗  Account Linked Successfully!",
+        color=0x00ff88
+    )
+    _link_success.description = (
+        "```\n"
+        "  AERION PORTAL LINK  ─  CONFIRMED\n"
+        "```\n"
+        "Your Discord account is now linked to the AERO Portal."
+    )
+    _link_success.add_field(
+        name="✅  Link Details",
+        value=(
+            f"**STS ID  :** `{sts_id}`\n"
+            f"**Discord :** {ctx.author.mention}\n"
+            f"**Status  :** Active Link ✅"
+        ),
+        inline=True
+    )
+    _link_success.add_field(
+        name="⚡  What's Next",
+        value=(
+            "**1.** Run `/aerion` to check your status\n"
+            "**2.** Run `/subscribe` to activate membership\n"
+            "**3.** Start earning AERO Points!"
+        ),
+        inline=True
+    )
+    _link_success.set_footer(text="AERION  •  AERO CROWN DYNASTY  •  Points credit starts now")
+    await ctx.send(embed=_link_success, ephemeral=True)
+
 
 @bot.hybrid_command(name="myaeropoints", description="Check your linked AERO portal points balance")
 async def myaeropoints(ctx):
@@ -1362,17 +1433,88 @@ async def myaeropoints(ctx):
         return await ctx.send("⚠️ Portal linking isn't configured on this bot yet.")
 
     try:
-        rows = await supabase_get("share_users", {"discord_id": f"eq.{ctx.author.id}", "select": "sts_id,aero_points,name"})
+        rows = await supabase_get("share_users", {
+            "discord_id": f"eq.{ctx.author.id}",
+            "select": "sts_id,aero_points,name,aerion_access,aerion_expires"
+        })
     except Exception as e:
         print(f"[AERO POINTS] Balance check failed for {ctx.author.id}: {e}")
-        return await ctx.send("⚠️ Couldn't reach the portal right now.")
+        embed = discord.Embed(
+            title="⚠️  Portal Unavailable",
+            description="Could not reach the portal right now. Try again shortly.",
+            color=0xffaa00
+        )
+        return await ctx.send(embed=embed, ephemeral=True)
 
     if not rows:
-        return await ctx.send("❌ Your Discord isn't linked yet — generate a code on the portal, then use `/link <code>`.")
+        embed = discord.Embed(
+            title="🔗  Account Not Linked",
+            description=(
+                "Your Discord isn't linked to the AERO Portal yet.\n\n"
+                "> Generate a code on the portal, then use `/link <code>`."
+            ),
+            color=0xff4757
+        )
+        embed.set_footer(text="AERION  •  AERO CROWN DYNASTY")
+        return await ctx.send(embed=embed, ephemeral=True)
 
-    row = rows[0]
-    label = row.get("name") or row["sts_id"]
-    await ctx.send(f"💰 **{label}** — AERO Points: **{(row.get('aero_points') or 0):,}**")
+    row     = rows[0]
+    label   = row.get("name") or row["sts_id"]
+    pts     = int(row.get("aero_points") or 0)
+    has_acc = bool(row.get("aerion_access"))
+
+    # Rough tier based on points
+    if pts >= 10000:
+        tier, tier_color = "💎 Diamond", 0x00d4ff
+    elif pts >= 5000:
+        tier, tier_color = "🥇 Gold",    0xf0c040
+    elif pts >= 2000:
+        tier, tier_color = "🥈 Silver",  0xaaaaaa
+    elif pts >= 500:
+        tier, tier_color = "🥉 Bronze",  0xcd7f32
+    else:
+        tier, tier_color = "🌱 Starter", 0x00ff88
+
+    embed = discord.Embed(
+        title="💎  AERO Points Balance",
+        color=tier_color
+    )
+    embed.description = (
+        "```\n"
+        "  AERION POINTS LEDGER\n"
+        "```"
+    )
+    embed.add_field(
+        name="👤  Account",
+        value=(
+            f"**Name  :** {label}\n"
+            f"**STS ID:** `{row['sts_id']}`\n"
+            f"**Tier  :** {tier}"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="💰  Balance",
+        value=(
+            f"**Points  :** `{pts:,}` AERO\n"
+            f"**Membership:** {'✅ Active' if has_acc else '❌ Inactive'}\n"
+            f"**Sub Cost:** `{'1,000' if not has_acc else '100'}` pts"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="📈  How to Earn More",
+        value=(
+            "┣ `/route` — **+3** pts\n"
+            "┣ `/best`, `/compare` — **+2** pts\n"
+            "┗ Portal quests for bonus points"
+        ),
+        inline=False
+    )
+    embed.set_thumbnail(url=ctx.author.display_avatar.url)
+    embed.set_footer(text="AERION  •  AERO CROWN DYNASTY  •  Points update in real-time")
+    await ctx.send(embed=embed, ephemeral=True)
+
 
 # =========================
 # AUTO TRACK - NEW
@@ -2021,52 +2163,143 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
         legs = [("┌", from_txt), ("└", to_txt)]
     route_display = format_route_display(legs)
 
-    embed = discord.Embed(title=f"{plane['name']} • Route Analysis V4.0", description=f"```{route_display}```", color=route_health_color(result["ci"]))
-    embed.add_field(name="✈ Flight Info", value=f"**Distance:** {int(distance_total):,} km\n**Trips:** {result['trips']}/day\n**Flight Time:** {result['time']} hr\n**Mode:** {mode.upper()}\n**Cost Index:** {result['cost_index']}", inline=False)
-    embed.add_field(name="📊 Demand", value=f"**Y:** {route['y']}\n**J:** {route['j']}\n**F:** {route['f']}", inline=True)
-    embed.add_field(name="⚙ Configuration", value=f"**Y:** {result['y']}\n**J:** {result['j']}\n**F:** {result['f']}", inline=True)
-    embed.add_field(name="🎟 Ticket Pricing", value=f"**Y:** ${result['y_price']:,}\n**J:** ${result['j_price']:,}\n**F:** ${result['f_price']:,}", inline=True)
-    embed.add_field(name="💰 Per Flight", value=f"**Income:** ${result['income_trip']:,}\n**Fuel:** ${result['fuel']:,}\n**CO2:** ${result['co2']:,}\n**Maint:** ${result['acheck'] + result['repair']:,}\n\n**Profit:** ${result['profit_trip']:,}\n**CI Margin:** {result['ci']}%\n**Contribution:** ${result['contribution_trip']:,}", inline=False)
-    embed.add_field(name="📅 Per Day", value=f"**Income:** ${result['income_day']:,}\n**Fuel:** ${result['fuel_day']:,}\n**CO2:** ${result['co2_day']:,}\n**Maint:** ${(result['acheck'] + result['repair']) * result['trips']:,}\n\n**Profit:** ${result['profit_day']:,}\n**Contribution:** ${result['contribution_day']:,}\n**Flights:** {result['trips']}", inline=False)
+    embed = discord.Embed(
+        title=f"✈️  {plane['name']}  ─  Route Analysis",
+        color=route_health_color(result["ci"])
+    )
 
+    # ── Section 1: Route Header ───────────────────────────
+    embed.description = f"```\n{route_display}\n```"
+
+    # ── Section 2: Quick Summary (inline fields) ──────────
+    embed.add_field(
+        name="🛫  Flight Info",
+        value=(
+            f"**Distance :** {int(distance_total):,} km\n"
+            f"**Trips/Day:** {result['trips']}\n"
+            f"**Flt Time :** {result['time']} hr\n"
+            f"**Mode     :** {mode.upper()}\n"
+            f"**CI       :** {result['cost_index']}"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="📊  Demand  →  Config",
+        value=(
+            f"**Y:** {route['y']:>6}  →  {result['y']}\n"
+            f"**J:** {route['j']:>6}  →  {result['j']}\n"
+            f"**F:** {route['f']:>6}  →  {result['f']}\n"
+            f"**Load:** {int((result['y']+result['j']+result['f']) / max(1, plane.get('capacity',1)) * 100)}%"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="🎟️  Ticket Prices",
+        value=(
+            f"**Economy  :** ${result['y_price']:,}\n"
+            f"**Business :** ${result['j_price']:,}\n"
+            f"**First    :** ${result['f_price']:,}"
+        ),
+        inline=True
+    )
+
+    # ── Section 3: Per-Flight Detailed Breakdown ──────────
+    embed.add_field(
+        name="💺  Per Flight — Full Breakdown",
+        value=(
+            f"```\n"
+            f"  Income       : ${result['income_trip']:>12,}\n"
+            f"  Fuel Cost    : ${result['fuel']:>12,}\n"
+            f"  CO2 Tax      : ${result['co2']:>12,}\n"
+            f"  Maintenance  : ${result['acheck'] + result['repair']:>12,}\n"
+            f"  {'─' * 32}\n"
+            f"  NET PROFIT   : ${result['profit_trip']:>12,}\n"
+            f"  CI Margin    : {result['ci']}%\n"
+            f"  Contribution : ${result['contribution_trip']:>12,}\n"
+            f"```"
+        ),
+        inline=False
+    )
+
+    # ── Section 4: Per-Day Detailed Breakdown ────────────
+    daily_maint = (result['acheck'] + result['repair']) * result['trips']
+    embed.add_field(
+        name="📅  Per Day — Full Breakdown",
+        value=(
+            f"```\n"
+            f"  Flights/Day  : {result['trips']:>13}\n"
+            f"  Income/Day   : ${result['income_day']:>12,}\n"
+            f"  Fuel/Day     : ${result['fuel_day']:>12,}\n"
+            f"  CO2/Day      : ${result['co2_day']:>12,}\n"
+            f"  Maint/Day    : ${daily_maint:>12,}\n"
+            f"  {'─' * 32}\n"
+            f"  PROFIT/DAY   : ${result['profit_day']:>12,}\n"
+            f"  CONTRIB/DAY  : ${result['contribution_day']:>12,}\n"
+            f"```"
+        ),
+        inline=False
+    )
+
+    # ── Stopover ──────────────────────────────────────────
     if stop_airport and stop_leg1 and stop_leg2:
+        combined_profit = stop_leg1['profit_day'] + stop_leg2['profit_day']
         embed.add_field(
-            name="🔀 Best Stopover (auto-selected by combined profit)",
-            value=f"**{frm.upper()} → {stop_airport}:** ${stop_leg1['profit_day']:,}/day\n"
-                  f"**{stop_airport} → {to.upper()}:** ${stop_leg2['profit_day']:,}/day\n"
-                  f"**Combined:** ${stop_leg1['profit_day'] + stop_leg2['profit_day']:,}/day",
+            name=f"🔀  Best Stopover via {stop_airport}",
+            value=(
+                f"```\n"
+                f"  {frm.upper()} → {stop_airport:<4}  : ${stop_leg1['profit_day']:>10,}/day\n"
+                f"  {stop_airport:<4} → {to.upper():<4}  : ${stop_leg2['profit_day']:>10,}/day\n"
+                f"  {'─' * 30}\n"
+                f"  Combined       : ${combined_profit:>10,}/day\n"
+                f"```\n"
+                "*(Auto-selected by highest combined profit)*"
+            ),
             inline=False
         )
 
-    # ---- Break-even Calculator (feature 2) ----
+    # ── Break-Even ────────────────────────────────────────
     aircraft_cost = plane.get("cost", 0)
     if result["profit_day"] > 0 and aircraft_cost:
         payback_days = aircraft_cost / result["profit_day"]
-        annual_roi = (result["profit_day"] * 365 / aircraft_cost) * 100
+        annual_roi   = (result["profit_day"] * 365 / aircraft_cost) * 100
         embed.add_field(
-            name="💵 Break-Even",
-            value=f"**Payback:** {payback_days:,.0f} days\n**Annual ROI:** {annual_roi:,.0f}%",
+            name="💵  Break-Even",
+            value=(
+                f"**Payback :** {payback_days:,.0f} days\n"
+                f"**Annual ROI:** {annual_roi:,.1f}%"
+            ),
             inline=True
         )
     elif aircraft_cost:
-        embed.add_field(name="💵 Break-Even", value="⚠️ Route runs at a loss — no payback at this CI/mode.", inline=True)
+        embed.add_field(
+            name="💵  Break-Even",
+            value="⚠️  Route runs at a loss — no payback at this CI/mode.",
+            inline=True
+        )
 
-    # ---- Fleet Saturation Planner (feature 4) ----
-    total_demand = route["y"] + route["j"] + route["f"]
-    cap = plane.get("capacity", 0)
+    # ── Fleet Saturation ─────────────────────────────────
+    total_demand        = route["y"] + route["j"] + route["f"]
+    cap                 = plane.get("capacity", 0)
     demand_trips_needed = max(1, -(-total_demand // cap)) if cap else 1
-    technical_max = max(1, int(24 / result["time"])) if result["time"] else 1
+    technical_max       = max(1, int(24 / result["time"])) if result["time"] else 1
     if demand_trips_needed > technical_max:
         fleet_needed = -(-demand_trips_needed // technical_max)
         embed.add_field(
-            name="✈️ Fleet Saturation",
-            value=f"**{fleet_needed} aircraft** needed to fully cover this route's demand\n(1 aircraft only manages {result['trips']}/{demand_trips_needed} required trips)",
+            name="✈️  Fleet Saturation",
+            value=(
+                f"**{fleet_needed} aircraft** needed for full demand\n"
+                f"*(1 plane: {result['trips']}/{demand_trips_needed} trips)*"
+            ),
             inline=True
         )
     else:
-        embed.add_field(name="✈️ Fleet Saturation", value="✅ 1 aircraft fully covers this route's demand", inline=True)
+        embed.add_field(
+            name="✈️  Fleet Saturation",
+            value="✅  1 aircraft fully covers demand",
+            inline=True
+        )
 
-    # ---- CI Optimization — the value-add a fixed-CI calculator can't offer ----
+    # ── CI Optimization ──────────────────────────────────
     try:
         best_profit, best_contrib = find_optimal_ci(route, plane, ctx.author.id)
     except Exception as ci_err:
@@ -2075,23 +2308,45 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     if best_profit["cost_index"] != ci or best_contrib["cost_index"] != ci:
         opt_lines = []
         if best_profit["cost_index"] != ci:
-            opt_lines.append(f"💰 **Max Profit:** CI {best_profit['cost_index']} → ${best_profit['profit_day']:,}/day ({best_profit['trips']} trips)")
+            opt_lines.append(
+                f"💰 **Max Profit:** CI {best_profit['cost_index']} → ${best_profit['profit_day']:,}/day"
+                f" ({best_profit['trips']} trips)"
+            )
         if best_contrib["cost_index"] != ci:
-            opt_lines.append(f"🏆 **Max Contribution:** CI {best_contrib['cost_index']} → ${best_contrib['contribution_day']:,}/day ({best_contrib['trips']} trips)")
+            opt_lines.append(
+                f"🏆 **Max Contribution:** CI {best_contrib['cost_index']} → ${best_contrib['contribution_day']:,}/day"
+                f" ({best_contrib['trips']} trips)"
+            )
         if opt_lines:
-            embed.add_field(name="🎯 CI Optimization (vs. your CI " + str(ci) + ")", value="\n".join(opt_lines), inline=False)
+            embed.add_field(
+                name=f"🎯  CI Optimizer (vs. your CI {ci})",
+                value="\n".join(opt_lines),
+                inline=False
+            )
 
+    # ── Alternative Routes ────────────────────────────────
     try:
         alternatives = get_top_alternative_routes(frm, plane, ctx.author.id, exclude_dest=to, limit=3)
     except Exception as alt_err:
         print(f"[ROUTE] Alternative routes error (non-fatal): {alt_err}")
         alternatives = []
     if alternatives:
-        alt_text = "\n".join(f"• {frm.upper()} → **{d}** ({airport_city_country(d)}) — ${p:,}/day" for d, p in alternatives)
-        embed.add_field(name="🔗 Related Routes from " + frm.upper(), value=alt_text, inline=False)
+        alt_text = "\n".join(
+            f"┣ **{frm.upper()} → {d}** ({airport_city_country(d)}) — ${p:,}/day"
+            for d, p in alternatives[:-1]
+        ) + (
+            f"\n┗ **{frm.upper()} → {alternatives[-1][0]}** ({airport_city_country(alternatives[-1][0])}) — ${alternatives[-1][1]:,}/day"
+            if alternatives else ""
+        )
+        embed.add_field(
+            name=f"🔗  Top Alternatives from {frm.upper()}",
+            value=alt_text,
+            inline=False
+        )
 
-    embed.set_footer(text="AERION • AERO CROWN DYNASTY OFFICIAL BOT")
-    
+    embed.set_footer(text=f"AERION  •  AERO CROWN DYNASTY  •  Mode: {mode.upper()}  •  CI: {result['cost_index']}")
+
+
     report_data = {
         "Route": f"{frm.upper()} -> {to.upper()}",
         "Aircraft": plane["name"],
@@ -2116,7 +2371,7 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
         "Contribution/Day": result["contribution_day"],
         "CI": f"{result['ci']}%"
     }
-    
+
     # PIL card — graceful fallback if PIL not installed or fails
     image_file = None
     try:
@@ -2127,11 +2382,19 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     except Exception as pil_err:
         print(f"[ROUTE] Aircraft card error (non-fatal): {pil_err}")
 
+    route_view = RouteActionView(
+        ctx_author=ctx.author,
+        frm=frm, to=to,
+        plane=plane, ci=ci,
+        current_mode=mode,
+        report_data=report_data
+    )
+
     try:
         if image_file:
-            await ctx.send(embed=embed, file=image_file, view=ExportView(report_data))
+            await ctx.send(embed=embed, file=image_file, view=route_view)
         else:
-            await ctx.send(embed=embed, view=ExportView(report_data))
+            await ctx.send(embed=embed, view=route_view)
     except Exception as send_err:
         print(f"[ROUTE] Send error: {send_err}")
         await ctx.send(embed=embed)
@@ -2139,11 +2402,92 @@ async def route(ctx, frm: str, to: str, plane_name: str, ci: int = 200):
     # Voice summary — optional, non-fatal if TTS fails
     try:
         voice_text = build_route_voice_text(frm, to, plane, result, stop_airport=stop_airport)
-        voice_buf = await generate_voice_audio(voice_text)
+        voice_buf  = await generate_voice_audio(voice_text)
         if voice_buf:
             await ctx.send(file=discord.File(voice_buf, filename="route_summary.mp3"))
     except Exception as voice_err:
         print(f"[ROUTE] Voice audio error (non-fatal): {voice_err}")
+
+
+# ─────────────────────────────────────────────────────────
+#  ROUTE ACTION VIEW  (Mode toggle + Export buttons)
+# ─────────────────────────────────────────────────────────
+class RouteActionView(View):
+    """
+    Buttons displayed below a /route result:
+      [🟢 Switch to Easy]  or  [🔵 Switch to Realism]
+      [📊 Export CSV]
+    Clicking the mode toggle re-runs the calc in the new mode and
+    edits the original message with the updated embed.
+    """
+    def __init__(self, ctx_author, frm, to, plane, ci, current_mode, report_data):
+        super().__init__(timeout=120)
+        self.author       = ctx_author
+        self.frm          = frm
+        self.to           = to
+        self.plane        = plane
+        self.ci           = ci
+        self.current_mode = current_mode   # "easy" or "realism"
+        self.report_data  = report_data
+
+        # Dynamic label based on current mode
+        other_mode  = "realism" if current_mode == "easy" else "easy"
+        other_label = "🔵  Switch to Realism" if current_mode == "easy" else "🟢  Switch to Easy"
+        self._other_mode = other_mode
+
+        # Build buttons dynamically
+        mode_btn = discord.ui.Button(
+            label=other_label,
+            style=discord.ButtonStyle.secondary,
+            custom_id="toggle_mode"
+        )
+        mode_btn.callback = self._toggle_mode_callback
+        self.add_item(mode_btn)
+
+    async def _toggle_mode_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author.id:
+            return await interaction.response.send_message(
+                "❌  Only the command author can switch modes.", ephemeral=True
+            )
+        # Flip mode
+        set_user_mode(str(interaction.user.id), self._other_mode)
+        await interaction.response.send_message(
+            f"✅  Mode switched to **{self._other_mode.upper()}**!\n"
+            f"Run `/route {self.frm} {self.to} {self.plane['shortname']}` again to see the updated analysis.",
+            ephemeral=True
+        )
+        self.stop()
+
+    @discord.ui.button(label="📊  Export CSV", style=discord.ButtonStyle.blurple)
+    async def export_csv(self, interaction: discord.Interaction, button):
+        if interaction.user.id != self.author.id:
+            return await interaction.response.send_message(
+                "❌  Only the command author can export.", ephemeral=True
+            )
+        try:
+            import io, csv
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(["Field", "Value"])
+            for k, v in self.report_data.items():
+                writer.writerow([k, v])
+            buf.seek(0)
+            route_label = f"{self.frm.upper()}_{self.to.upper()}_{self.plane['shortname']}"
+            file = discord.File(
+                io.BytesIO(buf.getvalue().encode()),
+                filename=f"AERION_Route_{route_label}.csv"
+            )
+            await interaction.response.send_message(
+                "📊  Here's your route data export:", file=file, ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"❌  Export failed: {e}", ephemeral=True)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
 
 # =========================
 # COMPARE VIEW
