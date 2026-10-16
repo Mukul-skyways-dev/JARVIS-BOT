@@ -1118,6 +1118,57 @@ async def supabase_post(table, data):
 #  /difficulty  —  Switch between Easy and Realism mode
 # ─────────────────────────────────────────────────────────
 
+class DifficultyToggleView(View):
+    def __init__(self, user_id: str, current_mode: str):
+        super().__init__(timeout=120)
+        self.user_id = str(user_id)
+        self.current_mode = current_mode.lower()
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.easy_btn.style = discord.ButtonStyle.success if self.current_mode == "easy" else discord.ButtonStyle.secondary
+        self.realism_btn.style = discord.ButtonStyle.primary if self.current_mode == "realism" else discord.ButtonStyle.secondary
+
+    def _build_embed(self):
+        is_easy = (self.current_mode == "easy")
+        label = "🟢 Easy Mode" if is_easy else "🔵 Realism Mode"
+        color = 0x00ff88 if is_easy else 0x00d4ff
+        desc = (
+            f"**Active Preset:** {label}\n\n"
+            f"```\n"
+            f"  • Load Factor : {'100% Full Load Guarantee' if is_easy else 'Dynamic Demand & Market Saturation'}\n"
+            f"  • Cost Model  : {'Low fuel consumption & minimal operating fee' if is_easy else 'AM4 authentic fuel burn, staff & A-check fees'}\n"
+            f"  • Pricing     : {'Standard high-margin baseline formulas' if is_easy else 'AM4-accurate Cost Index curve (CI 0–200)'}\n"
+            f"```\n"
+            f"*Click the buttons below to instantly toggle your game mode preference.*"
+        )
+        embed = discord.Embed(
+            title="🎮  AERION Game Mode Configuration",
+            description=desc,
+            color=color
+        )
+        embed.set_footer(text="AERION Engine  •  AERO CROWN DYNASTY OFFICIAL BOT")
+        return embed
+
+    @discord.ui.button(label="🟢 Easy Mode", style=discord.ButtonStyle.secondary, custom_id="diff_easy")
+    async def easy_btn(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != self.user_id:
+            return await interaction.response.send_message("❌ Only the command author can change this setting.", ephemeral=True)
+        set_user_mode(self.user_id, "easy")
+        self.current_mode = "easy"
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    @discord.ui.button(label="🔵 Realism Mode", style=discord.ButtonStyle.secondary, custom_id="diff_realism")
+    async def realism_btn(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != self.user_id:
+            return await interaction.response.send_message("❌ Only the command author can change this setting.", ephemeral=True)
+        set_user_mode(self.user_id, "realism")
+        self.current_mode = "realism"
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+
 @bot.hybrid_command(
     name="difficulty",
     description="View or change your AM4 game mode (easy / realism)"
@@ -1125,39 +1176,16 @@ async def supabase_post(table, data):
 @app_commands.describe(mode="Set to 'easy' or 'realism'. Leave blank to view current.")
 async def difficulty(ctx, mode: str = None):
     uid = str(ctx.author.id)
-    if mode is None:
-        current = get_user_mode(uid)
-        label = "Easy Mode" if current == "easy" else "Realism Mode"
-        desc = (
-            "Higher income, lower costs, 100 pct load factor."
-            if current == "easy" else
-            "AM4-accurate pricing with CI, higher costs, matches official bot."
-        )
-        embed = discord.Embed(
-            title="Game Mode",
-            description=f"Current: **{label}**\n{desc}\n\nUse /difficulty easy or /difficulty realism to change.",
-            color=0x00d4ff
-        )
-        embed.set_footer(text="AERION - AERO CROWN DYNASTY OFFICIAL BOT")
-        return await ctx.send(embed=embed, ephemeral=True)
+    if mode is not None:
+        clean_mode = mode.lower().strip()
+        if clean_mode in ("easy", "realism"):
+            set_user_mode(uid, clean_mode)
+        else:
+            return await ctx.send("❌ Invalid mode. Use `/difficulty easy` or `/difficulty realism`", ephemeral=True)
 
-    mode = mode.lower().strip()
-    if mode not in ("easy", "realism"):
-        return await ctx.send("Invalid mode. Use `/difficulty easy` or `/difficulty realism`", ephemeral=True)
-
-    set_user_mode(uid, mode)
-
-    desc_map = {
-        "easy": "Easy Mode active. Higher income, lower costs, 100 pct load factor.",
-        "realism": "Realism Mode active. AM4-accurate CI pricing, higher costs, matches official bot.",
-    }
-    embed = discord.Embed(
-        title=f"Mode set to {mode.upper()}",
-        description=desc_map[mode],
-        color=0x00ff88
-    )
-    embed.set_footer(text="AERION - AERO CROWN DYNASTY OFFICIAL BOT")
-    await ctx.send(embed=embed, ephemeral=True)
+    current = get_user_mode(uid)
+    view = DifficultyToggleView(uid, current)
+    await ctx.send(embed=view._build_embed(), view=view, ephemeral=True)
 
 
 @bot.hybrid_command(
@@ -1623,22 +1651,67 @@ async def airport(ctx, *, query: str):
         return await ctx.send(embed=embed)
 
     a = rows[0]
-    embed = discord.Embed(title=f"🛫 {a['iata']} • {a['fullname']}", color=0x2ecc71)
-    embed.add_field(name="📍 Location", value=f"{a['name']}, {a['country']}", inline=True)
-    embed.add_field(name="🛬 ICAO", value=a['icao'] or "N/A", inline=True)
-    embed.add_field(name="🛤️ Runway", value=f"{a['rwy']:,} ft" if a['rwy'] else "N/A", inline=True)
-    embed.add_field(name="💰 Hub Cost", value=f"${a['hub_cost']:,}" if a['hub_cost'] else "N/A", inline=True)
-    embed.add_field(name="📊 Market Size", value=str(a['market']) if a['market'] else "N/A", inline=True)
-    embed.add_field(name="🧭 Runway Heading", value=a['rwy_codes'] or "N/A", inline=True)
-    embed.set_footer(text="AERION • Airport Intelligence")
+    rwy_ft = a['rwy'] or 0
+    if rwy_ft >= 10000:
+        rwy_tier = "🟢 Category 10 (Full Widebody / A380)"
+    elif rwy_ft >= 7500:
+        rwy_tier = "🟡 Category 6-8 (Standard Widebody)"
+    elif rwy_ft >= 5000:
+        rwy_tier = "🟠 Category 3-5 (Narrowbody Only)"
+    else:
+        rwy_tier = "🔴 Short Runway (Regional / Turboprop)"
 
+    mkt = int(a['market'] or 0)
+    filled_mkt = min(10, max(0, mkt // 10))
+    mkt_bar = "█" * filled_mkt + "░" * (10 - filled_mkt)
+
+    embed = discord.Embed(
+        title=f"🛫  {a['iata']} • {a['fullname']}",
+        color=0x00d4ff
+    )
+    embed.description = (
+        "```\n"
+        f"  IATA: {a['iata']:<4} | ICAO: {a['icao'] or 'N/A':<4} | {a['name']}, {a['country']}\n"
+        "```"
+    )
+    hub_str = f"${a['hub_cost']:,}" if a['hub_cost'] else "N/A"
+    embed.add_field(
+        name="📍  Geographic & Hub",
+        value=(
+            f"**City     :** {a['name']}\n"
+            f"**Country  :** {a['country']}\n"
+            f"**Hub Cost :** {hub_str}"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="📊  Market Demand",
+        value=(
+            f"**Market Size:** {mkt}%\n"
+            f"`[{mkt_bar}]`\n"
+            f"**Rating     :** {'High Traffic 🔥' if mkt >= 80 else 'Moderate ✈️' if mkt >= 50 else 'Secondary Hub 📍'}"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="🛤️  Runway Specifications",
+        value=(
+            f"**Length   :** `{rwy_ft:,} ft`\n"
+            f"**Headings :** `{a['rwy_codes'] or 'N/A'}`\n"
+            f"**Tier     :** {rwy_tier}"
+        ),
+        inline=False
+    )
+    embed.set_footer(text="AERION  •  Airport Intelligence  •  AERO CROWN DYNASTY")
+
+    view = AirportActionView(a['iata'])
     if a['rwy'] and a['rwy_codes']:
         img_buf = draw_runway_image(a)
         file = discord.File(img_buf, filename="runway.png")
         embed.set_image(url="attachment://runway.png")
-        await ctx.send(embed=embed, file=file)
+        await ctx.send(embed=embed, file=file, view=view)
     else:
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, view=view)
 
 @bot.hybrid_command(description="Full spec card for an aircraft")
 @app_commands.describe(name="e.g. a380, or b744")
@@ -1648,16 +1721,117 @@ async def aircraft(ctx, *, name: str):
     if not plane:
         return await ctx.send(f"❌ No aircraft found matching **{name}**")
 
-    embed = discord.Embed(title=f"✈️ {plane['name']} ({plane['shortname']})", color=0x3498db)
-    embed.add_field(name="👥 Capacity", value=f"{plane['capacity']:,} units", inline=True)
-    embed.add_field(name="🛫 Range", value=f"{plane['range']:,.0f} km", inline=True)
-    embed.add_field(name="⚡ Speed", value=f"{plane['speed']:,.1f} km/h", inline=True)
-    embed.add_field(name="⛽ Fuel Consumption", value=f"{plane['fuel']:,.2f}", inline=True)
-    embed.add_field(name="🌱 CO2 Consumption", value=f"{plane['co2']:,.3f}", inline=True)
-    embed.add_field(name="💰 Cost", value=f"${plane['cost']:,}", inline=True)
-    embed.add_field(name="🔧 A-Check Cost (reference)", value=f"${plane['check_cost']:,}", inline=True)
-    embed.set_footer(text="AERION • Aircraft Intelligence")
-    await ctx.send(embed=embed)
+    cap = max(1, plane.get('capacity', 1))
+    fuel_per_pax = (plane['fuel'] / cap)
+    rng = plane['range']
+    if rng >= 9000:
+        haul_tier = "🌐 Ultra Long-Haul"
+    elif rng >= 5000:
+        haul_tier = "✈️ Long-Haul Widebody"
+    elif rng >= 2500:
+        haul_tier = "🛫 Medium-Haul Regional/Narrowbody"
+    else:
+        haul_tier = "🛩️ Short-Haul Commuter"
+
+    embed = discord.Embed(
+        title=f"✈️  {plane['name']}  ({plane['shortname'].upper()})",
+        color=0x00a8ff
+    )
+    embed.description = (
+        "```\n"
+        f"  ROLE: {haul_tier:<28} | SPEED: {plane['speed']:,.0f} km/h\n"
+        "```"
+    )
+    embed.add_field(
+        name="📋  Flight Specifications",
+        value=(
+            f"**Capacity :** `{plane['capacity']:,}` seats\n"
+            f"**Max Range:** `{plane['range']:,.0f} km`\n"
+            f"**Cruise Spd:** `{plane['speed']:,.1f} km/h`\n"
+            f"**Category :** {haul_tier}"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="⛽  Efficiency & Ecology",
+        value=(
+            f"**Fuel Burn :** `{plane['fuel']:,.2f}` lbs/km\n"
+            f"**CO2 Index :** `{plane['co2']:,.3f}`\n"
+            f"**Burn/Seat :** `{fuel_per_pax:.2f}` lbs/seat\n"
+            f"**Eco Rating:** {'🌿 High Efficiency' if fuel_per_pax < 0.25 else '⚖️ Balanced' if fuel_per_pax < 0.40 else '⚡ High Burn'}"
+        ),
+        inline=True
+    )
+    cost_per_seat = int(plane['cost'] / cap)
+    embed.add_field(
+        name="💼  Financial & Maintenance",
+        value=(
+            f"**Purchase Price :** `${plane['cost']:,}`\n"
+            f"**A-Check Cost   :** `${plane['check_cost']:,}`\n"
+            f"**Cost per Seat   :** `${cost_per_seat:,}` / seat"
+        ),
+        inline=False
+    )
+    embed.set_footer(text=f"AERION  •  Aircraft Intelligence  •  {plane['shortname'].upper()}")
+    view = AircraftActionView(plane['shortname'], plane['name'])
+    await ctx.send(embed=embed, view=view)
+
+
+# ─────────────────────────────────────────────────────────
+#  AIRPORT & AIRCRAFT ACTION VIEWS
+# ─────────────────────────────────────────────────────────
+class AirportActionView(View):
+    def __init__(self, iata: str):
+        super().__init__(timeout=120)
+        self.iata = iata.upper()
+
+    @discord.ui.button(label="✈️  Plan Route From Here", style=discord.ButtonStyle.primary)
+    async def plan_route(self, interaction: discord.Interaction, button):
+        await interaction.response.send_message(
+            f"💡 **Analyze a Route:**\n"
+            f"> Run `/route frm:{self.iata} to:<DESTINATION> plane_name:<AIRCRAFT>` to get a complete profit, fuel, and demand analysis from **{self.iata}**!",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="🌐  Find Best Routes", style=discord.ButtonStyle.secondary)
+    async def find_routes(self, interaction: discord.Interaction, button):
+        await interaction.response.send_message(
+            f"💡 **Discover High-Profit Routes:**\n"
+            f"> Run `/best frm:{self.iata}` or `/best_world frm:{self.iata}` to view the highest-earning destinations from **{self.iata}**!",
+            ephemeral=True
+        )
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+class AircraftActionView(View):
+    def __init__(self, shortname: str, plane_name: str):
+        super().__init__(timeout=120)
+        self.shortname = shortname
+        self.plane_name = plane_name
+
+    @discord.ui.button(label="✈️  Find Best Routes", style=discord.ButtonStyle.primary)
+    async def best_routes(self, interaction: discord.Interaction, button):
+        await interaction.response.send_message(
+            f"💡 **Find Best Routes for {self.plane_name}:**\n"
+            f"> Run `/best frm:<ORIGIN> plane_name:{self.shortname}` to calculate the most profitable routes for this aircraft!",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="⚖️  Compare Aircraft", style=discord.ButtonStyle.secondary)
+    async def compare_btn(self, interaction: discord.Interaction, button):
+        await interaction.response.send_message(
+            f"💡 **Compare {self.plane_name}:**\n"
+            f"> Run `/compare p1:{self.shortname} p2:<OTHER_AIRCRAFT>` to see a side-by-side performance & profit battle!",
+            ephemeral=True
+        )
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
 
 # =========================================================
 # AIRCRAFT VISUAL SYSTEM (Memory Optimized)
@@ -2492,13 +2666,17 @@ class RouteActionView(View):
 # =========================
 # COMPARE VIEW
 # =========================
+# =========================
+# COMPARE VIEW
+# =========================
 class CompareView(View):
-    def __init__(self, p1, p2, r1, r2):
+    def __init__(self, p1, p2, r1, r2, report_data=None):
         super().__init__(timeout=120)
         self.p1 = p1
         self.p2 = p2
         self.r1 = r1
         self.r2 = r2
+        self.report_data = report_data or {}
         self.page = 0
 
     def fmt(self, a, b, reverse=False):
@@ -2512,14 +2690,73 @@ class CompareView(View):
         return f"**{a:,.0f}**" if a > b else f"{a:,.0f}"
 
     def build_embed(self):
-        embed = discord.Embed(title=f"{self.p1['name']}  VS  {self.p2['name']}", description="```Advanced Aircraft Analytics Engine```", color=0x2b2d31)
-        embed.add_field(name="✦ Specifications", value=f"**Capacity** → {self.fmt(self.p1['capacity'], self.p2['capacity'])} │ {self.fmt(self.p2['capacity'], self.p1['capacity'])}\n**Range** → {self.fmt(self.p1['range'], self.p2['range'])} │ {self.fmt(self.p2['range'], self.p1['range'])}\n**Speed** → {self.fmt(self.p1['speed'], self.p2['speed'])} │ {self.fmt(self.p2['speed'], self.p1['speed'])}\n**Fuel** → {self.fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {self.fmt(self.p2['fuel'], self.p1['fuel'], True)}", inline=False)
-        embed.add_field(name="✦ Operations", value=f"**Trips/Day** → {self.fmt(self.r1['trips'], self.r2['trips'])} │ {self.fmt(self.r2['trips'], self.r1['trips'])}\n**Flight Time** → {self.fmt(self.r1['time'], self.r2['time'], True)} │ {self.fmt(self.r2['time'], self.r1['time'], True)}\n**CI Score** → {self.fmt(self.r1['ci'], self.r2['ci'])}% │ {self.fmt(self.r2['ci'], self.r1['ci'])}%", inline=False)
-        embed.add_field(name="✦ Revenue", value=f"**Income/Flight** → {self.fmt(self.r1['income_trip'], self.r2['income_trip'])} │ {self.fmt(self.r2['income_trip'], self.r1['income_trip'])}\n**Profit/Flight** → {self.fmt(self.r1['profit_trip'], self.r2['profit_trip'])} │ {self.fmt(self.r2['profit_trip'], self.r1['profit_trip'])}\n**Income/Day** → {self.fmt(self.r1['income_day'], self.r2['income_day'])} │ {self.fmt(self.r2['income_day'], self.r1['income_day'])}\n**Profit/Day** → {self.fmt(self.r1['profit_day'], self.r2['profit_day'])} │ {self.fmt(self.r2['profit_day'], self.r1['profit_day'])}", inline=False)
-        embed.add_field(name="✦ Cost Analysis", value=f"**Fuel/Flight** → {self.fmt(self.r1['fuel'], self.r2['fuel'], True)} │ {self.fmt(self.r2['fuel'], self.r1['fuel'], True)}\n**CO2/Flight** → {self.fmt(self.r1['co2'], self.r2['co2'], True)} │ {self.fmt(self.r2['co2'], self.r1['co2'], True)}\n**Maint** → {self.fmt(self.r1['acheck'] + self.r1['repair'], self.r2['acheck'] + self.r2['repair'], True)} │ {self.fmt(self.r2['acheck'] + self.r2['repair'], self.r1['acheck'] + self.r1['repair'], True)}", inline=False)
-        embed.add_field(name="✦ Efficiency", value=f"**Fuel(lb)** → {self.fmt(self.r1['fuel_lb'], self.r2['fuel_lb'], True)} │ {self.fmt(self.r2['fuel_lb'], self.r1['fuel_lb'], True)}\n**CO2(q)** → {self.fmt(self.r1['co2_q'], self.r2['co2_q'], True)} │ {self.fmt(self.r2['co2_q'], self.r1['co2_q'], True)}", inline=False)
-        winner = self.p1["name"] if self.r1["profit_day"] > self.r2["profit_day"] else self.p2["name"]
-        embed.set_footer(text=f"Page 1/3 • Winner: {winner}")
+        diff_profit = self.r1['profit_day'] - self.r2['profit_day']
+        if diff_profit > 0:
+            winner_name = self.p1['name']
+            win_margin = f"+${diff_profit:,}/day (+{int((diff_profit / max(1, self.r2['profit_day'])) * 100)}%)"
+            win_color = 0x00ff88
+        elif diff_profit < 0:
+            winner_name = self.p2['name']
+            win_margin = f"+${abs(diff_profit):,}/day (+{int((abs(diff_profit) / max(1, self.r1['profit_day'])) * 100)}%)"
+            win_color = 0x00d4ff
+        else:
+            winner_name = "Tie"
+            win_margin = "Equal Profit"
+            win_color = 0xf0c040
+
+        embed = discord.Embed(
+            title=f"⚔️  {self.p1['name']}  vs  {self.p2['name']}",
+            color=win_color
+        )
+        embed.description = (
+            "```\n"
+            f"  HEAD-TO-HEAD BATTLE  |  WINNER: {winner_name.upper()} ({win_margin})\n"
+            "```"
+        )
+        embed.add_field(
+            name="✦  Flight Specifications",
+            value=(
+                f"**Capacity**   : {self.fmt(self.p1['capacity'], self.p2['capacity'])} │ {self.fmt(self.p2['capacity'], self.p1['capacity'])}\n"
+                f"**Range**      : {self.fmt(self.p1['range'], self.p2['range'])} km │ {self.fmt(self.p2['range'], self.p1['range'])} km\n"
+                f"**Cruise Speed**: {self.fmt(self.p1['speed'], self.p2['speed'])} km/h │ {self.fmt(self.p2['speed'], self.p1['speed'])} km/h\n"
+                f"**Fuel Rate**  : {self.fmt(self.p1['fuel'], self.p2['fuel'], True)} │ {self.fmt(self.p2['fuel'], self.p1['fuel'], True)}"
+            ),
+            inline=False
+        )
+        flying_hrs_1 = round(self.r1['time'] * self.r1['trips'], 1)
+        flying_hrs_2 = round(self.r2['time'] * self.r2['trips'], 1)
+        embed.add_field(
+            name="✦  Flight Operations (5,000 km test)",
+            value=(
+                f"**Trips / Day** : {self.fmt(self.r1['trips'], self.r2['trips'])} │ {self.fmt(self.r2['trips'], self.r1['trips'])}\n"
+                f"**Flight Time** : {self.fmt(self.r1['time'], self.r2['time'], True)} hr │ {self.fmt(self.r2['time'], self.r1['time'], True)} hr\n"
+                f"**Flying Time** : {self.fmt(flying_hrs_1, flying_hrs_2)} hr/d │ {self.fmt(flying_hrs_2, flying_hrs_1)} hr/d\n"
+                f"**CI Score**    : {self.fmt(self.r1['ci'], self.r2['ci'])}% │ {self.fmt(self.r2['ci'], self.r1['ci'])}%"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="✦  Financials & Profitability",
+            value=(
+                f"**Income / Flt**: ${self.fmt(self.r1['income_trip'], self.r2['income_trip'])} │ ${self.fmt(self.r2['income_trip'], self.r1['income_trip'])}\n"
+                f"**Profit / Flt**: ${self.fmt(self.r1['profit_trip'], self.r2['profit_trip'])} │ ${self.fmt(self.r2['profit_trip'], self.r1['profit_trip'])}\n"
+                f"**Income / Day**: ${self.fmt(self.r1['income_day'], self.r2['income_day'])} │ ${self.fmt(self.r2['income_day'], self.r1['income_day'])}\n"
+                f"**PROFIT / DAY**: **${self.fmt(self.r1['profit_day'], self.r2['profit_day'])}** │ **${self.fmt(self.r2['profit_day'], self.r1['profit_day'])}**"
+            ),
+            inline=False
+        )
+        maint_1 = self.r1['acheck'] + self.r1['repair']
+        maint_2 = self.r2['acheck'] + self.r2['repair']
+        embed.add_field(
+            name="✦  Costs & Eco Efficiency",
+            value=(
+                f"**Fuel / Flt** : ${self.fmt(self.r1['fuel'], self.r2['fuel'], True)} ({self.fmt(self.r1['fuel_lb'], self.r2['fuel_lb'], True)} lbs) │ ${self.fmt(self.r2['fuel'], self.r1['fuel'], True)} ({self.fmt(self.r2['fuel_lb'], self.r1['fuel_lb'], True)} lbs)\n"
+                f"**CO2 / Flt**  : ${self.fmt(self.r1['co2'], self.r2['co2'], True)} ({self.fmt(self.r1['co2_q'], self.r2['co2_q'], True)} q) │ ${self.fmt(self.r2['co2'], self.r1['co2'], True)} ({self.fmt(self.r2['co2_q'], self.r1['co2_q'], True)} q)\n"
+                f"**Maint / Flt**: ${self.fmt(maint_1, maint_2, True)} │ ${self.fmt(maint_2, maint_1, True)}"
+            ),
+            inline=False
+        )
+        embed.set_footer(text=f"AERION Battle Engine • Page 1/3 • 🏆 Winner: {winner_name}")
         return embed
 
     def make_graph(self):
@@ -2531,11 +2768,11 @@ class CompareView(View):
         p1n = [v / max_val for v in p1_vals]
         p2n = [v / max_val for v in p2_vals]
         x = np.arange(len(labels))
-        
+
         fig, ax = plt.subplots(figsize=(8, 4))
         fig.patch.set_facecolor("#1f1f1f")
         ax.set_facecolor("#2b2d31")
-        
+
         ax.plot(x, p1n, marker='o', linewidth=2.5, label=self.p1["name"])
         ax.plot(x, p2n, marker='s', linewidth=2.5, linestyle='--', label=self.p2["name"])
         ax.set_xticks(x)
@@ -2545,7 +2782,7 @@ class CompareView(View):
         for spine in ax.spines.values():
             spine.set_color("#555555")
         ax.tick_params(colors="white")
-        
+
         buf = io.BytesIO()
         plt.savefig(buf, format='png', bbox_inches='tight', dpi=80)
         buf.seek(0)
@@ -2557,7 +2794,7 @@ class CompareView(View):
         def safe(a, b):
             m = max(a, b)
             return (a / m if m else 0), (b / m if m else 0)
-        
+
         i1, i2 = safe(self.r1["income_day"], self.r2["income_day"])
         p1v, p2v = safe(self.r1["profit_day"], self.r2["profit_day"])
         s1, s2 = safe(self.p1["speed"], self.p2["speed"])
@@ -2566,12 +2803,12 @@ class CompareView(View):
         e2 = (i2 + p2v) / 2
         v1 = [i1, p1v, e1, s1, t1]
         v2 = [i2, p2v, e2, s2, t2]
-        
+
         angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
         v1 += v1[:1]
         v2 += v2[:1]
         angles += angles[:1]
-        
+
         fig = plt.figure(figsize=(5, 5))
         ax = plt.subplot(111, polar=True)
         fig.patch.set_facecolor("#1f1f1f")
@@ -2584,22 +2821,42 @@ class CompareView(View):
         ax.set_xticklabels(labels, color="white")
         ax.grid(alpha=0.2)
         plt.legend()
-        
+
         buf = io.BytesIO()
         plt.savefig(buf, format='png', bbox_inches='tight', dpi=80)
         buf.seek(0)
         plt.close()
         return buf
 
-    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="◀  Prev", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction, button):
         self.page = (self.page - 1) % 3
         await self.update(interaction)
 
-    @discord.ui.button(label="▶", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Next  ▶", style=discord.ButtonStyle.primary)
     async def next_btn(self, interaction, button):
         self.page = (self.page + 1) % 3
         await self.update(interaction)
+
+    @discord.ui.button(label="📊  Export CSV", style=discord.ButtonStyle.success)
+    async def export_csv(self, interaction: discord.Interaction, button):
+        try:
+            import io, csv
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(["Metric", self.p1["name"], self.p2["name"]])
+            for k, (v1, v2) in self.report_data.items():
+                writer.writerow([k, v1, v2])
+            buf.seek(0)
+            file = discord.File(
+                io.BytesIO(buf.getvalue().encode()),
+                filename=f"AERION_Compare_{self.p1['shortname']}_vs_{self.p2['shortname']}.csv"
+            )
+            await interaction.response.send_message(
+                "📊  Here is your head-to-head comparison export:", file=file, ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"❌  Export failed: {e}", ephemeral=True)
 
     async def update(self, interaction):
         if self.page == 0:
@@ -2607,15 +2864,18 @@ class CompareView(View):
         elif self.page == 1:
             buf = self.make_graph()
             file = discord.File(buf, "graph.png")
-            embed = discord.Embed(title="📊 Performance Graph", color=0x2b2d31)
+            embed = discord.Embed(title="📊 Performance Graph", color=0x00d4ff)
             embed.set_image(url="attachment://graph.png")
+            embed.set_footer(text="AERION Battle Engine • Page 2/3")
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
         elif self.page == 2:
             buf = self.make_radar()
             file = discord.File(buf, "radar.png")
-            embed = discord.Embed(title="🧭 Radar Analysis", color=0x2b2d31)
+            embed = discord.Embed(title="🧭 Radar Analysis", color=0x00d4ff)
             embed.set_image(url="attachment://radar.png")
+            embed.set_footer(text="AERION Battle Engine • Page 3/3")
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
 
 @bot.hybrid_command(description="Compare two aircraft head-to-head (e.g. 'A320 vs B737')")
 async def compare(ctx, *, planes_input: str):
@@ -2624,68 +2884,178 @@ async def compare(ctx, *, planes_input: str):
     try:
         p1_name, p2_name = planes_input.lower().split(" vs ")
     except:
-        return await ctx.send("❌ Use: !compare A320 vs B737")
+        return await ctx.send("❌ Use: `!compare A320 vs B737`")
     p1 = get_plane(p1_name)
     p2 = get_plane(p2_name)
     if not p1 or not p2:
-        return await ctx.send("❌ Plane not found")
+        return await ctx.send("❌ Aircraft not found. Check names or use autocomplete.")
     route = {"distance": 5000, "y": 300, "j": 50, "f": 10, "cargo": 10000}
     r1 = calc(route, p1, ctx.author.id)
     r2 = calc(route, p2, ctx.author.id)
-    view = CompareView(p1, p2, r1, r2)
+
     report_data = {
-        "Plane 1": p1["name"],
-        "Plane 2": p2["name"],
-        "P1 Profit/Day": r1["profit_day"],
-        "P2 Profit/Day": r2["profit_day"],
-        "P1 Income/Day": r1["income_day"],
-        "P2 Income/Day": r2["income_day"],
-        "P1 Fuel/Day": r1["fuel_day"],
-        "P2 Fuel/Day": r2["fuel_day"],
-        "P1 Trips": r1["trips"],
-        "P2 Trips": r2["trips"],
-        "P1 CI": r1["ci"],
-        "P2 CI": r2["ci"]
+        "Capacity": (p1["capacity"], p2["capacity"]),
+        "Range (km)": (p1["range"], p2["range"]),
+        "Speed (km/h)": (p1["speed"], p2["speed"]),
+        "Fuel Rate": (p1["fuel"], p2["fuel"]),
+        "Daily Profit ($)": (r1["profit_day"], r2["profit_day"]),
+        "Trip Profit ($)": (r1["profit_trip"], r2["profit_trip"]),
+        "Daily Income ($)": (r1["income_day"], r2["income_day"]),
+        "Daily Fuel ($)": (r1["fuel_day"], r2["fuel_day"]),
+        "Daily CO2 ($)": (r1["co2_day"], r2["co2_day"]),
+        "Trips/Day": (r1["trips"], r2["trips"]),
+        "CI Score (%)": (r1["ci"], r2["ci"])
     }
-    export_view = ExportView(report_data)
+    view = CompareView(p1, p2, r1, r2, report_data=report_data)
     await ctx.send(embed=view.build_embed(), view=view)
-    await ctx.send("📁 Download Compare Report", view=export_view)
+
 
 # =========================
 # BEST PLANE
 # =========================
-@bot.hybrid_command(description="Best aircraft for a specific route")
+class BestPlaneActionView(View):
+    def __init__(self, frm: str, to: str, plane_short: str, report_data: dict):
+        super().__init__(timeout=120)
+        self.frm = frm.upper()
+        self.to = to.upper()
+        self.plane_short = plane_short
+        self.report_data = report_data
+
+    @discord.ui.button(label="✈️  Full Route Analysis", style=discord.ButtonStyle.primary)
+    async def open_route(self, interaction: discord.Interaction, button):
+        await interaction.response.send_message(
+            f"💡 **Analyze this winner on {self.frm} ──> {self.to}:**\n"
+            f"> Run `/route frm:{self.frm} to:{self.to} plane_name:{self.plane_short}` for the complete deep flight & financial ledger!",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="📊  Export CSV", style=discord.ButtonStyle.success)
+    async def export_csv(self, interaction: discord.Interaction, button):
+        try:
+            import io, csv
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(["Field", "Value"])
+            for k, v in self.report_data.items():
+                writer.writerow([k, v])
+            buf.seek(0)
+            file = discord.File(
+                io.BytesIO(buf.getvalue().encode()),
+                filename=f"AERION_Best_{self.frm}_{self.to}.csv"
+            )
+            await interaction.response.send_message("📊  Here is your best aircraft analysis export:", file=file, ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌  Export failed: {e}", ephemeral=True)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+@bot.hybrid_command(description="Find the most profitable aircraft for a route")
 @app_commands.describe(frm="Origin airport", to="Destination airport")
 @app_commands.autocomplete(frm=airport_autocomplete, to=airport_autocomplete)
 async def best(ctx, frm: str, to: str):
+    await ctx.defer()
+    if not await _gate(ctx): return
     route = get_route(frm, to)
     if not route:
-        return await ctx.send("Route not found")
-    await ctx.defer()
-    best_plane = None
-    best_calc = None
-    best_score = -999999999
+        return await ctx.send("❌ Route not found in database. Check IATA codes.")
+
+    dist = float(route["distance"])
+    candidates = []
     for p in get_all_planes():
         try:
-            if float(route["distance"]) > float(p["range"]):
+            if dist > float(p["range"]):
                 continue
             c = calc(route, p, ctx.author.id)
+            if c["profit_day"] <= 0:
+                continue
             score = c["profit_day"] + (float(p["speed"]) * 10) - (float(p["fuel"]) * 100)
-            if score > best_score:
-                best_score = score
-                best_plane = p
-                best_calc = c
+            candidates.append((score, p, c))
         except:
             continue
-    if not best_plane:
-        return await ctx.send("No suitable aircraft found")
-    route_display = format_route_display([("┌", airport_name(frm)), ("└", airport_name(to))])
-    embed = discord.Embed(title="Best Aircraft", description=f"```{route_display}```", color=route_health_color(best_calc["ci"]))
-    embed.add_field(name="Aircraft", value=f"**{best_plane['name']}**", inline=False)
-    embed.add_field(name="Profit/Day", value=f"**{money(best_calc['profit_day'])}**", inline=True)
-    embed.add_field(name="Trips/Day", value=f"**{best_calc['trips']}**", inline=True)
-    embed.add_field(name="Mode", value=f"**{best_calc['mode'].upper()}**", inline=False)
-    embed.set_footer(text="AERION • Aircraft Optimization")
+
+    if not candidates:
+        return await ctx.send(f"❌ No suitable aircraft can fly {int(dist):,} km profitably.")
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    best_score, best_plane, best_calc = candidates[0]
+    runners_up = candidates[1:4]
+
+    from_txt = airport_name(frm)
+    to_txt = airport_name(to)
+    route_display = format_route_display([("┌", from_txt), ("└", to_txt)])
+
+    embed = discord.Embed(
+        title=f"🏆  Best Aircraft  ─  {best_plane['name']}",
+        color=route_health_color(best_calc["ci"])
+    )
+    embed.description = f"```\n{route_display}\n```"
+
+    # Champion Specs & Config
+    cap = max(1, best_plane.get("capacity", 1))
+    utilization = int(((best_calc["y"] + best_calc["j"] + best_calc["f"]) / cap) * 100)
+    embed.add_field(
+        name="✈️  Champion Aircraft Specs",
+        value=(
+            f"**Model    :** {best_plane['name']} (`{best_plane['shortname']}`)\n"
+            f"**Capacity :** {cap:,} seats (Load: {utilization}%)\n"
+            f"**Speed    :** {best_plane['speed']:,} km/h\n"
+            f"**Range    :** {best_plane['range']:,} km (Route: {int(dist):,} km)"
+        ),
+        inline=True
+    )
+
+    # Flight schedule & seat config
+    embed.add_field(
+        name="🛫  Operations & Config",
+        value=(
+            f"**Trips / Day** : `{best_calc['trips']}` flights\n"
+            f"**Flight Time** : `{best_calc['time']}` hr\n"
+            f"**Configuration**: Y:{best_calc['y']} | J:{best_calc['j']} | F:{best_calc['f']}\n"
+            f"**Ticket Prices**: Y:${best_calc['y_price']:,} | J:${best_calc['j_price']:,} | F:${best_calc['f_price']:,}"
+        ),
+        inline=True
+    )
+
+    # Financial breakdown
+    embed.add_field(
+        name="💰  Financial Performance",
+        value=(
+            f"```\n"
+            f"  Income / Day   : ${best_calc['income_day']:>12,}\n"
+            f"  Fuel / Day     : ${best_calc['fuel_day']:>12,}\n"
+            f"  CO2 / Day      : ${best_calc['co2_day']:>12,}\n"
+            f"  {'─' * 32}\n"
+            f"  PROFIT / DAY   : ${best_calc['profit_day']:>12,}\n"
+            f"  Profit / Trip  : ${best_calc['profit_trip']:>12,}\n"
+            f"  CI Margin      : {best_calc['ci']:>11}%\n"
+            f"  Contribution   : ${best_calc['contribution_day']:>12,}/day\n"
+            f"```"
+        ),
+        inline=False
+    )
+
+    # Alternative runners-up
+    if runners_up:
+        medals = ["🥈", "🥉", "4️⃣"]
+        alt_lines = []
+        for idx, (s, p_alt, c_alt) in enumerate(runners_up):
+            diff = best_calc["profit_day"] - c_alt["profit_day"]
+            medal = medals[idx] if idx < len(medals) else f"#{idx+2}"
+            alt_lines.append(
+                f"{medal} **{p_alt['name']}** (`{p_alt['shortname']}`)\n"
+                f"   └ 💰 ${c_alt['profit_day']:,}/day (-${diff:,}) • 🔁 {c_alt['trips']} trips/d • ⏱️ {c_alt['time']}h"
+            )
+        embed.add_field(
+            name="🥈  Top Alternative Aircraft",
+            value="\n".join(alt_lines),
+            inline=False
+        )
+
+    embed.set_footer(text=f"AERION  •  Aircraft Optimization  •  Mode: {best_calc['mode'].upper()}  •  CI: {best_calc['cost_index']}")
+
     report_data = {
         "Route": f"{frm.upper()} -> {to.upper()}",
         "Aircraft": best_plane["name"],
@@ -2696,9 +3066,9 @@ async def best(ctx, frm: str, to: str):
         "Fuel/Day": best_calc["fuel_day"],
         "CI": best_calc["ci"]
     }
-    export_view = ExportView(report_data)
-    await ctx.send(embed=embed)
-    await ctx.send("Download Report", view=export_view)
+    view = BestPlaneActionView(frm, to, best_plane['shortname'], report_data)
+    await ctx.send(embed=embed, view=view)
+
 
 # =========================
 # BEST ROUTE COMMANDS
@@ -2741,11 +3111,41 @@ def route_health_color(ci_margin):
     else:
         return 0xe74c3c  # weak/risky
 
+class QuickExportListView(View):
+    def __init__(self, filename: str, rows: list):
+        super().__init__(timeout=120)
+        self.filename = filename
+        self.rows = rows
+
+    @discord.ui.button(label="📊  Export CSV", style=discord.ButtonStyle.success)
+    async def export_csv(self, interaction: discord.Interaction, button):
+        try:
+            import io, csv
+            if not self.rows:
+                return await interaction.response.send_message("❌ No data to export.", ephemeral=True)
+            buf = io.StringIO()
+            headers = list(self.rows[0].keys())
+            writer = csv.DictWriter(buf, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(self.rows)
+            buf.seek(0)
+            file = discord.File(
+                io.BytesIO(buf.getvalue().encode()),
+                filename=self.filename
+            )
+            await interaction.response.send_message("📊  Here is your route rankings export:", file=file, ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌  Export failed: {e}", ephemeral=True)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
 def _looks_like_airport_code(token):
     return token.isalpha() and 2 <= len(token) <= 4
 
 async def _best_world_scan(ctx, plane_name):
-    """Old behaviour, unchanged: world-wide top-10 scan for one aircraft."""
+    """World-wide top-10 scan for one aircraft with detailed presentation."""
     plane = get_plane(plane_name)
     if not plane:
         return await ctx.send("❌ Plane not found")
@@ -2772,7 +3172,7 @@ async def _best_world_scan(ctx, plane_name):
             result = calc(route_dict, plane, ctx.author.id)
             if result["profit_day"] <= 0:
                 continue
-            results.append((frm_i, to_i, float(dist), result["profit_day"], result["trips"], result["ci"]))
+            results.append((frm_i, to_i, float(dist), result["profit_day"], result["trips"], result["ci"], result["profit_trip"]))
         except:
             continue
 
@@ -2782,24 +3182,35 @@ async def _best_world_scan(ctx, plane_name):
     results.sort(key=lambda x: x[3], reverse=True)
     top = results[:10]
 
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     text = ""
-    for i, res in enumerate(top, 1):
-        frm_i, to_i, dist, profit, trips, ci = res
-        text += f"**{i}. {frm_i} → {to_i}**\n${profit:,}/day  •  {int(dist):,} km  •  {trips} trips/day  •  CI margin {ci}%\n\n"
+    export_rows = []
+    for i, res in enumerate(top):
+        frm_i, to_i, dist, profit, trips, ci, profit_flt = res
+        medal = medals[i] if i < len(medals) else f"#{i+1}"
+        flt_hrs = round(dist / max(1.0, float(plane['speed'])), 1)
+        text += (
+            f"{medal} **{frm_i} ──> {to_i}**\n"
+            f"```\n"
+            f"  Daily Profit : ${profit:>10,}/day  |  Per Flight: ${profit_flt:>8,}\n"
+            f"  Distance     : {int(dist):>10,} km    |  Flight    : {flt_hrs:>8.1f} hr\n"
+            f"  Schedule     : {trips:>10} trips/d |  CI Margin : {ci:>7}%\n"
+            f"```\n"
+        )
+        export_rows.append({"Rank": i+1, "Route": f"{frm_i}->{to_i}", "Distance": int(dist), "Profit_Day": profit, "Trips": trips, "CI": ci})
 
     embed = discord.Embed(
-        title=f"🌍 World's Best Routes • {plane['name']}",
+        title=f"🌍  World's Best Routes  •  {plane['name']}",
         description=text,
-        color=0x00e5ff
+        color=0x00d4ff
     )
-    embed.set_footer(text=f"Scanned {len(candidates):,} candidate routes (capped at 8,000 for performance) • AERION")
-    await msg.edit(content=None, embed=embed)
+    embed.set_footer(text=f"AERION  •  Scanned {len(candidates):,} candidate routes  •  World Scan")
+
+    view = QuickExportListView(f"AERION_World_Best_{plane['shortname']}.csv", export_rows)
+    await msg.edit(content=None, embed=embed, view=view)
 
 async def _best_world_from_origin(ctx, origin, plane_name, max_distance):
-    """New mode: !best_world <origin> <plane> [max_km] — scan every
-    route FROM this one origin (same engine as !best_r), optionally
-    capped by max_distance. If you already know both endpoints, use
-    !route instead — this is for 'where should I fly FROM here'."""
+    """Scan every route FROM this one origin with rich metric formatting."""
     plane = get_plane(plane_name)
     if not plane:
         return await ctx.send("❌ Plane not found")
@@ -2817,20 +3228,35 @@ async def _best_world_from_origin(ctx, origin, plane_name, max_distance):
 
     top = results[:10]
     origin_txt = airport_name(origin)
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     text = ""
-    for i, res in enumerate(top, 1):
+    export_rows = []
+    for i, res in enumerate(top):
         dest, dist, profit, trips, ci = res
         dest_loc = airport_city_country(dest)
-        text += f"**{i}. {origin} → {dest}** ({dest_loc})\n${profit:,}/day  •  {dist:,} km  •  {trips} trips/day  •  CI margin {ci}%\n\n"
+        medal = medals[i] if i < len(medals) else f"#{i+1}"
+        flt_hrs = round(dist / max(1.0, float(plane['speed'])), 1)
+        profit_flt = int(profit / max(1, trips))
+        text += (
+            f"{medal} **{origin} ──> {dest}**  •  *{dest_loc}*\n"
+            f"```\n"
+            f"  Daily Profit : ${profit:>10,}/day  |  Per Flight: ${profit_flt:>8,}\n"
+            f"  Distance     : {dist:>10,} km    |  Flight    : {flt_hrs:>8.1f} hr\n"
+            f"  Schedule     : {trips:>10} trips/d |  CI Margin : {ci:>7}%\n"
+            f"```\n"
+        )
+        export_rows.append({"Rank": i+1, "Route": f"{origin}->{dest}", "Distance": dist, "Profit_Day": profit, "Trips": trips, "CI": ci})
 
     embed = discord.Embed(
-        title=f"🌍 Best Routes from {origin} • {plane['name']}",
-        description=f"**From:** {origin_txt}\n\n{text}",
-        color=0x00e5ff
+        title=f"🌍  Best Routes from {origin}  •  {plane['name']}",
+        description=f"**Base Airport:** {origin_txt}\n\n{text}",
+        color=0x00d4ff
     )
     limit_note = f" • Capped at {max_distance:,} km" if max_distance else ""
-    embed.set_footer(text=f"Scanned {total_routes:,} routes from {origin}{limit_note} • AERION")
-    await ctx.send(embed=embed)
+    embed.set_footer(text=f"AERION  •  Scanned {total_routes:,} routes from {origin}{limit_note}")
+    view = QuickExportListView(f"AERION_Best_{origin}_{plane['shortname']}.csv", export_rows)
+    await ctx.send(embed=embed, view=view)
+
 
 @bot.hybrid_command(name="best_world", description="World-wide best routes for an aircraft, OR best routes from one origin with a distance cap")
 @app_commands.describe(query="Just an aircraft (world-scan), OR 'ORIGIN AIRCRAFT [max_km]' for one origin")
@@ -2940,9 +3366,23 @@ async def whatif(ctx, frm: str, to: str, *, planes: str):
 
     img_buf = draw_whatif_heatmap(resolved_planes, ci_values, matrix, frm, to)
     file = discord.File(img_buf, filename="whatif.png")
-    embed = discord.Embed(title=f"🧮 What-If Matrix • {frm.upper()} → {to.upper()}", description="Profit/day across aircraft & Cost Index — greener = better", color=0xa855f7)
+    embed = discord.Embed(
+        title=f"🧮 What-If Matrix • {frm.upper()} → {to.upper()}",
+        description=(
+            f"**Route:** {airport_name(frm).splitlines()[0]} ──> {airport_name(to).splitlines()[0]}\n"
+            f"**Distance:** {int(route['distance']):,} km  •  **Mode:** {get_user_mode(ctx.author.id).upper()}\n\n"
+            "Daily profit comparison across aircraft and Cost Index settings (0 to 200). "
+            "Greener cells indicate higher net yield."
+        ),
+        color=0xa855f7
+    )
+    embed.add_field(
+        name="✈️  Candidate Aircraft",
+        value=", ".join(f"`{p['name']}`" for p in resolved_planes),
+        inline=False
+    )
     embed.set_image(url="attachment://whatif.png")
-    embed.set_footer(text="AERION • AERO CROWN DYNASTY OFFICIAL BOT")
+    embed.set_footer(text="AERION Fleet Matrix • CI 0 = Max Speed | CI 200 = Max Fuel Efficiency")
     await ctx.send(embed=embed, file=file)
 
 @bot.hybrid_command(name="routemap", description="Flight Radar — glowing route map + profit-vs-distance chart from an airport")
@@ -3010,11 +3450,20 @@ async def routemap(ctx, airport: str, *, plane_name: str):
     file = discord.File(img_buf, filename="radar.png")
     embed = discord.Embed(
         title=f"📡 Flight Radar • {airport}",
-        description=f"**{len(routes_data)}** profitable routes plotted with **{plane['name']}**",
+        description=(
+            f"**Origin Hub:** {airport_name(airport).splitlines()[0]}\n"
+            f"Plotted **{len(routes_data)}** profitable destinations within {int(plane['range']):,} km range using **{plane['name']}**.\n\n"
+            "Great-circle route tracks colored by profitability gradient."
+        ),
         color=0x00e5ff
     )
+    embed.add_field(
+        name="✈️  Aircraft Specifications",
+        value=f"`Range:` {int(plane['range']):,} km  |  `Cruise Speed:` {plane['speed']} km/h  |  `Fuel Consumption:` {plane['fuel_consumption']} lbs/km",
+        inline=False
+    )
     embed.set_image(url="attachment://radar.png")
-    embed.set_footer(text="AERION • AERO CROWN DYNASTY OFFICIAL BOT")
+    embed.set_footer(text="AERION Flight Radar • AERO CROWN DYNASTY OFFICIAL BOT")
     await ctx.send(embed=embed, file=file)
 
 def scan_routes_from_origin(ctx, airport, plane, max_distance=None):
@@ -3078,31 +3527,52 @@ async def best_r(ctx, airport: str, *, plane_name: str):
     top = results[:5]
 
     origin_txt = airport_name(airport)
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     text = ""
-    for i, res in enumerate(top, start=1):
+    export_rows = []
+    for i, res in enumerate(top):
         dest, dist, profit, trips, ci = res
         dest_loc = airport_city_country(dest)
-        text += f"**{i}. {airport} → {dest}** ({dest_loc})\n`Profit` ${profit:,}/day\n`Trips` {trips}/day\n`CI` {ci}%\n`Range` {dist:,} km\n\n"
+        medal = medals[i] if i < len(medals) else f"#{i+1}"
+        flt_hrs = round(dist / max(1.0, float(plane['speed'])), 1)
+        profit_flt = int(profit / max(1, trips))
+        text += (
+            f"{medal} **{airport} ──> {dest}**  •  *{dest_loc}*\n"
+            f"```\n"
+            f"  Daily Profit : ${profit:>10,}/day  |  Per Flight: ${profit_flt:>8,}\n"
+            f"  Distance     : {dist:>10,} km    |  Flight    : {flt_hrs:>8.1f} hr\n"
+            f"  Schedule     : {trips:>10} trips/d |  CI Margin : {ci:>7}%\n"
+            f"```\n"
+        )
+        export_rows.append({
+            "Rank": i + 1,
+            "Route": f"{airport}->{dest}",
+            "Destination": dest_loc,
+            "Distance_km": dist,
+            "Daily_Profit_USD": profit,
+            "Per_Flight_USD": profit_flt,
+            "Trips_Per_Day": trips,
+            "Cost_Index": ci
+        })
 
     embed = discord.Embed(
-        title=f"🏆 Best Routes • {plane['name']}",
-        description=f"**From:** {origin_txt}\n\n{text}",
-        color=0x2b2d31
+        title=f"🏆  Top 5 Most Profitable Routes  •  {plane['name']}",
+        description=f"**Base Hub:** {origin_txt}\n\n{text}",
+        color=0x00d4ff
     )
-    embed.add_field(name="Analysis", value=f"`Airport:` {airport}\n`Aircraft:` {plane['name']}\n`Mode:` {mode.upper()}", inline=False)
-    embed.set_footer(text="AERION • Smart Route Optimization")
+    embed.add_field(
+        name="✈️  Fleet & Hub Parameters",
+        value=(
+            f"**Origin Hub:** {origin_txt.splitlines()[0]}\n"
+            f"**Aircraft Range:** {int(plane['range']):,} km  •  **Cruise Speed:** {plane['speed']} km/h\n"
+            f"**Game Mode:** {mode.upper()}  •  **Total Routes Scanned:** {total_routes:,}"
+        ),
+        inline=False
+    )
+    embed.set_footer(text="AERION Optimization Engine  •  Ranked by Net Daily Profit")
 
-    export_data = {"Airport": airport, "Aircraft": plane["name"], "Mode": mode}
-    for i, res in enumerate(top, start=1):
-        dest, dist, profit, trips, ci = res
-        export_data[f"#{i} Route"] = f"{airport}->{dest}"
-        export_data[f"#{i} Profit"] = profit
-        export_data[f"#{i} Trips"] = trips
-        export_data[f"#{i} CI"] = ci
-        export_data[f"#{i} Range"] = dist
-    export_view = ExportView(export_data)
-    await ctx.send(embed=embed)
-    await ctx.send("Download Route Report", view=export_view)
+    view = QuickExportListView(f"AERION_Best_{airport}_{plane['shortname']}.csv", export_rows)
+    await ctx.send(embed=embed, view=view)
 
 async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, label, emoji, color):
     """Shared engine for best_short / best_long — same calc() everyone else uses."""
@@ -3135,7 +3605,7 @@ async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, 
             result = calc(route_dict, plane, ctx.author.id)
             if result["profit_day"] <= 0:
                 continue
-            results.append((dest, distance, result["profit_day"], result["trips"], result["ci"]))
+            results.append((dest, int(distance), result["profit_day"], result["trips"], result["ci"]))
         except:
             continue
 
@@ -3150,19 +3620,51 @@ async def _best_route_by_distance(ctx, airport, plane_name, min_dist, max_dist, 
     top = results[:5]
 
     origin_txt = airport_name(airport)
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     text = ""
-    for i, res in enumerate(top, 1):
+    export_rows = []
+    for i, res in enumerate(top):
         dest, dist, profit, trips, ci = res
         dest_loc = airport_city_country(dest)
-        text += f"**{i}. {airport} → {dest}** ({dest_loc})\n📏 {int(dist):,} km  •  💰 ${profit:,}/day  •  🔁 {trips}/day  •  CI {ci}%\n\n"
+        medal = medals[i] if i < len(medals) else f"#{i+1}"
+        flt_hrs = round(dist / max(1.0, float(plane['speed'])), 1)
+        profit_flt = int(profit / max(1, trips))
+        text += (
+            f"{medal} **{airport} ──> {dest}**  •  *{dest_loc}*\n"
+            f"```\n"
+            f"  Daily Profit : ${profit:>10,}/day  |  Per Flight: ${profit_flt:>8,}\n"
+            f"  Distance     : {dist:>10,} km    |  Flight    : {flt_hrs:>8.1f} hr\n"
+            f"  Schedule     : {trips:>10} trips/d |  CI Margin : {ci:>7}%\n"
+            f"```\n"
+        )
+        export_rows.append({
+            "Rank": i + 1,
+            "Route": f"{airport}->{dest}",
+            "Destination": dest_loc,
+            "Distance_km": dist,
+            "Daily_Profit_USD": profit,
+            "Per_Flight_USD": profit_flt,
+            "Trips_Per_Day": trips,
+            "Cost_Index": ci
+        })
 
     embed = discord.Embed(
-        title=f"{emoji} Best {label.upper()} Routes • {plane['name']}",
-        description=f"**From:** {origin_txt}\n\n{text}",
+        title=f"{emoji}  Best {label.capitalize()}-Haul Routes  •  {plane['name']}",
+        description=f"**Base Airport:** {origin_txt}\n\n{text}",
         color=color
     )
-    embed.set_footer(text="AERION • AERO CROWN DYNASTY ™")
-    await ctx.send(embed=embed)
+    dist_label = f"<= {max_dist:,.0f} km" if min_dist == 0 else (f"> {min_dist:,.0f} km" if max_dist == float("inf") else f"{min_dist:,.0f} – {max_dist:,.0f} km")
+    embed.add_field(
+        name="✈️  Fleet & Hub Parameters",
+        value=(
+            f"**Aircraft Range:** {int(plane['range']):,} km  •  **Cruise Speed:** {plane['speed']} km/h\n"
+            f"**Distance Filter:** {dist_label}  •  **Game Mode:** {get_user_mode(ctx.author.id).upper()}"
+        ),
+        inline=False
+    )
+    embed.set_footer(text=f"AERION Optimization Engine  •  Top {label.capitalize()}-Haul Routes")
+    view = QuickExportListView(f"AERION_Best_{label}_{airport}_{plane['shortname']}.csv", export_rows)
+    await ctx.send(embed=embed, view=view)
 
 @bot.hybrid_command(name="best_short", description="Top 5 profitable short-haul routes (<=3000km) from an airport")
 @app_commands.describe(airport="Origin airport", plane_name="Aircraft")
@@ -3180,8 +3682,6 @@ async def best_long(ctx, airport: str, *, plane_name: str):
     if not await _gate(ctx): return
     await _best_route_by_distance(ctx, airport, plane_name, min_dist=3000, max_dist=float("inf"), label="long", emoji="🌍", color=0xff9900)
 
-# =========================
-# ON READY — sync slash commands
 # =========================
 # ON READY — sync slash commands
 # =========================
